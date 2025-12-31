@@ -39,10 +39,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub menu_element: Element<'a, Msg>,
     /// QR codes to display, with their positions relative to this output
     pub qr_codes: Vec<(f32, f32, String)>, // (x, y, content)
-    /// OCR overlays to display (center position, text)
-    pub ocr_overlays: Vec<(f32, f32, String)>,
-    /// Selection rectangle bounds for constraining OCR overlays (output-relative)
-    pub ocr_selection_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
+    /// OCR overlays to display (bounding box + block_num for coloring)
+    pub ocr_overlays: Vec<(f32, f32, f32, f32, i32)>, // (left, top, width, height, block_num)
     /// Whether to show QR overlays (hidden when dragging)
     pub show_qr_overlays: bool,
     /// Whether QR scanning is in progress
@@ -223,36 +221,16 @@ where
             .map(|qr| (qr.center_x, qr.center_y, qr.content.clone()))
             .collect();
         log::debug!("Widget received {} OCR overlays, filtering for output '{}'", ocr_overlays.len(), output.name);
-        let ocr_overlays_for_output: Vec<(f32, f32, String)> = ocr_overlays
+        let ocr_overlays_for_output: Vec<(f32, f32, f32, f32, i32)> = ocr_overlays
             .iter()
             .filter(|o| {
                 let matches = o.output_name == output.name;
-                log::debug!("  Overlay '{}' output '{}' matches: {}", o.text, o.output_name, matches);
+                log::debug!("  Overlay output '{}' matches: {}", o.output_name, matches);
                 matches
             })
-            .map(|o| (o.center_x, o.center_y, o.text.clone()))
+            .map(|o| (o.left, o.top, o.width, o.height, o.block_num))
             .collect();
         log::debug!("After filtering: {} OCR overlays for this output", ocr_overlays_for_output.len());
-        
-        // Calculate selection rectangle relative to this output (for OCR overlay constraining)
-        let ocr_selection_rect = if let Choice::Rectangle(r, _) = &choice {
-            // Convert global rect to output-relative coordinates
-            if let Some(intersection) = r.intersect(output_rect) {
-                let x = (intersection.left - output_rect.left) as f32;
-                let y = (intersection.top - output_rect.top) as f32;
-                let w = intersection.width() as f32;
-                let h = intersection.height() as f32;
-                if w > 0.0 && h > 0.0 {
-                    Some((x, y, w, h))
-                } else {
-                    None
-                }
-            } else {
-                None
-            }
-        } else {
-            None
-        };
         
         Self {
             id: cosmic::widget::Id::unique(),
@@ -263,7 +241,6 @@ where
             fg_element,
             qr_codes: qr_codes_for_output,
             ocr_overlays: ocr_overlays_for_output,
-            ocr_selection_rect,
             show_qr_overlays,
             qr_scanning,
             ocr_status,
@@ -789,74 +766,45 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             });
         }
 
-        // Draw OCR overlays - only when not dragging (same as QR overlays)
+        // Draw OCR overlays as colored rectangles - only when not dragging
         if self.show_qr_overlays {
-            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.ocr_selection_rect {
-                let font_size = 14.0_f32;
-                let padding = 8.0;
-                let border_color = cosmic::iced::Color::from_rgb(0.2, 0.6, 0.9);
+            // Color palette for different block numbers
+            let block_colors = [
+                cosmic::iced::Color::from_rgb(0.2, 0.6, 0.9),  // Blue
+                cosmic::iced::Color::from_rgb(0.9, 0.3, 0.3),  // Red
+                cosmic::iced::Color::from_rgb(0.3, 0.8, 0.3),  // Green
+                cosmic::iced::Color::from_rgb(0.9, 0.6, 0.2),  // Orange
+                cosmic::iced::Color::from_rgb(0.7, 0.3, 0.9),  // Purple
+                cosmic::iced::Color::from_rgb(0.2, 0.8, 0.8),  // Cyan
+                cosmic::iced::Color::from_rgb(0.9, 0.9, 0.2),  // Yellow
+                cosmic::iced::Color::from_rgb(0.9, 0.4, 0.7),  // Pink
+            ];
+            
+            for (left, top, width, height, block_num) in &self.ocr_overlays {
+                let color_idx = (*block_num as usize) % block_colors.len();
+                let border_color = block_colors[color_idx];
                 
-                // Draw each block as a separate overlay, constrained to selection
-                for (x, y, content) in &self.ocr_overlays {
-                    // Calculate text dimensions with wrapping
-                    let max_label_width = (sel_w - padding * 4.0).max(80.0).min(400.0);
-                    let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
-                    let num_lines = (content.len() / chars_per_line).max(1) + 
-                        content.matches('\n').count();
-                    let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.4);
-                    
-                    let bg_width = max_label_width + padding * 2.0;
-                    let bg_height = text_height + padding * 2.0;
-                    
-                    // Position centered on block location, but clamp to selection bounds
-                    let mut label_x = *x - bg_width / 2.0;
-                    let mut label_y = *y - bg_height / 2.0;
-                    
-                    // Clamp to selection rectangle
-                    label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
-                    label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
-                    
-                    let bg_rect = cosmic::iced_core::Rectangle {
-                        x: label_x,
-                        y: label_y,
-                        width: bg_width,
-                        height: bg_height,
-                    };
-                    
-                    renderer.with_layer(*viewport, |renderer| {
-                        renderer.fill_quad(
-                            cosmic::iced_core::renderer::Quad {
-                                bounds: bg_rect,
-                                border: Border {
-                                    radius: cosmic_theme.corner_radii.radius_s.into(),
-                                    width: 2.0,
-                                    color: border_color,
-                                },
-                                shadow: cosmic::iced_core::Shadow::default(),
+                let rect = cosmic::iced_core::Rectangle {
+                    x: *left,
+                    y: *top,
+                    width: *width,
+                    height: *height,
+                };
+                
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: rect,
+                            border: Border {
+                                radius: 2.0.into(),
+                                width: 2.0,
+                                color: border_color,
                             },
-                            Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
-                        );
-                        
-                        let text = Text {
-                            content: content.clone(),
-                            bounds: Size::new(max_label_width, text_height),
-                            size: cosmic::iced::Pixels(font_size),
-                            line_height: cosmic::iced_core::text::LineHeight::Relative(1.3),
-                            font: cosmic::iced::Font::default(),
-                            horizontal_alignment: alignment::Horizontal::Left,
-                            vertical_alignment: alignment::Vertical::Top,
-                            shaping: cosmic::iced_core::text::Shaping::Advanced,
-                            wrapping: cosmic::iced_core::text::Wrapping::Word,
-                        };
-                        
-                        renderer.fill_text(
-                            text,
-                            Point::new(bg_rect.x + padding, bg_rect.y + padding),
-                            cosmic::iced::Color::WHITE,
-                            *viewport,
-                        );
-                    });
-                }
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(cosmic::iced::Color::TRANSPARENT),
+                    );
+                });
             }
         }
 

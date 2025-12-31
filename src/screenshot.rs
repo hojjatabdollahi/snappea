@@ -69,11 +69,15 @@ pub struct DetectedQrCode {
 /// OCR text overlay metadata
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrTextOverlay {
-    /// Center position in logical coordinates (relative to output)
-    pub center_x: f32,
-    pub center_y: f32,
+    /// Bounding box in logical coordinates (relative to output)
+    pub left: f32,
+    pub top: f32,
+    pub width: f32,
+    pub height: f32,
     /// Recognized text for this region
     pub text: String,
+    /// Block number for coloring
+    pub block_num: i32,
     /// Which output this overlay belongs to
     pub output_name: String,
 }
@@ -220,7 +224,6 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
                 
                 if word.line_num != current_line {
                     if current_line != -1 {
-                        // New line - could add newline here if desired
                         text_parts.push(" ".to_string());
                     }
                     current_line = word.line_num;
@@ -235,17 +238,20 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
                 continue;
             }
             
-            // Convert bounding box center to output-relative logical coords
-            let center_x = mapping.origin.0 
-                + ((min_left + max_right) as f32 / 2.0) / mapping.scale;
-            let center_y = mapping.origin.1 
-                + ((min_top + max_bottom) as f32 / 2.0) / mapping.scale;
+            // Convert bounding box to output-relative logical coords
+            let left = mapping.origin.0 + min_left as f32 / mapping.scale;
+            let top = mapping.origin.1 + min_top as f32 / mapping.scale;
+            let width = (max_right - min_left) as f32 / mapping.scale;
+            let height = (max_bottom - min_top) as f32 / mapping.scale;
             
-            log::info!("OCR block {}: '{}' at ({}, {})", block_num, block_text, center_x, center_y);
+            log::info!("OCR block {}: '{}' at ({}, {}, {}x{})", block_num, block_text, left, top, width, height);
             overlays.push(OcrTextOverlay {
-                center_x,
-                center_y,
+                left,
+                top,
+                width,
+                height,
                 text: block_text,
+                block_num,
                 output_name: mapping.output_name.clone(),
             });
         }
@@ -260,11 +266,15 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
             } else {
                 text
             };
-            if overlays.is_empty() {
+            // If no blocks found, create a fallback overlay covering the whole selection
+            if overlays.is_empty() && !text.is_empty() && text != "No text detected" {
                 overlays.push(OcrTextOverlay {
-                    center_x: mapping.center.0,
-                    center_y: mapping.center.1,
+                    left: mapping.origin.0,
+                    top: mapping.origin.1,
+                    width: mapping.size.0,
+                    height: mapping.size.1,
                     text: text.clone(),
+                    block_num: 0,
                     output_name: mapping.output_name.clone(),
                 });
             }
@@ -419,15 +429,22 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
                 text
             };
 
-            // We do not have per-box data from ocrs, so place a label centered on the OCR region
-            let overlay = OcrTextOverlay {
-                center_x: mapping.center.0,
-                center_y: mapping.center.1,
-                text: text.clone(),
-                output_name: mapping.output_name.clone(),
+            // We do not have per-box data from ocrs, so create a box covering the whole selection
+            let overlays = if !text.is_empty() && text != "No text detected" {
+                vec![OcrTextOverlay {
+                    left: mapping.origin.0,
+                    top: mapping.origin.1,
+                    width: mapping.size.0,
+                    height: mapping.size.1,
+                    text: text.clone(),
+                    block_num: 0,
+                    output_name: mapping.output_name.clone(),
+                }]
+            } else {
+                vec![]
             };
 
-            OcrStatus::Done(text, vec![overlay])
+            OcrStatus::Done(text, overlays)
         }
         Err(e) => OcrStatus::Error(format!("Failed to extract text: {}", e)),
     }
@@ -742,12 +759,12 @@ pub enum OcrStatus {
 struct OcrMapping {
     /// Top-left of the cropped OCR region in logical coordinates
     origin: (f32, f32),
+    /// Size of the cropped OCR region in logical coordinates
+    size: (f32, f32),
     /// Pixels-per-logical-unit for this output image
     scale: f32,
     /// Output name this mapping belongs to
     output_name: String,
-    /// Center of the selected region in logical coordinates (fallback label)
-    center: (f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -1321,16 +1338,16 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     // Coordinates relative to this output's origin (like QR codes)
                                     let origin_x = (intersection.left - output_rect.left) as f32;
                                     let origin_y = (intersection.top - output_rect.top) as f32;
-                                    let center_x = origin_x + intersection.width() as f32 / 2.0;
-                                    let center_y = origin_y + intersection.height() as f32 / 2.0;
+                                    let size_w = intersection.width() as f32;
+                                    let size_h = intersection.height() as f32;
                                     
                                     region_data = Some((
                                         cropped,
                                         OcrMapping {
                                             origin: (origin_x, origin_y),
+                                            size: (size_w, size_h),
                                             scale,
                                             output_name: output.name.clone(),
-                                            center: (center_x, center_y),
                                         },
                                     ));
                                     break;
@@ -1359,8 +1376,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 OcrStatus::Done(text, overlays) => {
                     log::info!("OCR Result: {} ({} overlays)", text, overlays.len());
                     for overlay in overlays.iter() {
-                        log::info!("  Overlay: '{}' at ({}, {}) on {}", 
-                            overlay.text, overlay.center_x, overlay.center_y, overlay.output_name);
+                        log::info!("  Overlay block {}: ({}, {}, {}x{}) on {}", 
+                            overlay.block_num, overlay.left, overlay.top, overlay.width, overlay.height, overlay.output_name);
                     }
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status.clone();
