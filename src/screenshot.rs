@@ -159,13 +159,32 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
         return OcrStatus::Error("Invalid OCR mapping scale".to_string());
     }
 
-    log::info!("Running OCR with rusty-tesseract...");
+    log::info!("Running OCR with rusty-tesseract on {}x{} image...", img.width(), img.height());
     
     // Convert RgbaImage to DynamicImage
     let dynamic_img = image::DynamicImage::ImageRgba8(img.clone());
     
+    // For small images, upscale to improve OCR accuracy on small text
+    // Tesseract works best with text that's at least 10-12 pixels tall
+    let min_dimension = img.width().min(img.height());
+    let (processed_img, upscale_factor) = if min_dimension < 100 {
+        // Very small selection - upscale 4x
+        let new_width = img.width() * 4;
+        let new_height = img.height() * 4;
+        log::info!("Upscaling small image 4x to {}x{}", new_width, new_height);
+        (dynamic_img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3), 4.0_f32)
+    } else if min_dimension < 200 {
+        // Small selection - upscale 2x
+        let new_width = img.width() * 2;
+        let new_height = img.height() * 2;
+        log::info!("Upscaling small image 2x to {}x{}", new_width, new_height);
+        (dynamic_img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3), 2.0_f32)
+    } else {
+        (dynamic_img, 1.0_f32)
+    };
+    
     // Create rusty-tesseract Image from DynamicImage
-    let tess_img = match Image::from_dynamic_image(&dynamic_img) {
+    let tess_img = match Image::from_dynamic_image(&processed_img) {
         Ok(img) => img,
         Err(e) => {
             return OcrStatus::Error(format!("Failed to create tesseract image: {}", e));
@@ -173,10 +192,12 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
     };
     
     // Configure tesseract arguments
+    // Use higher DPI for better small text recognition
+    let dpi = if min_dimension < 200 { 300 } else { 150 };
     let args = Args {
         lang: "eng".to_string(),
         config_variables: HashMap::new(),
-        dpi: Some(150),
+        dpi: Some(dpi),
         psm: Some(3), // Fully automatic page segmentation
         oem: Some(3), // Default OCR Engine Mode
     };
@@ -239,10 +260,11 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
             }
             
             // Convert bounding box to output-relative logical coords
-            let left = mapping.origin.0 + min_left as f32 / mapping.scale;
-            let top = mapping.origin.1 + min_top as f32 / mapping.scale;
-            let width = (max_right - min_left) as f32 / mapping.scale;
-            let height = (max_bottom - min_top) as f32 / mapping.scale;
+            // Divide by upscale_factor first since tesseract coords are in upscaled image space
+            let left = mapping.origin.0 + min_left as f32 / upscale_factor / mapping.scale;
+            let top = mapping.origin.1 + min_top as f32 / upscale_factor / mapping.scale;
+            let width = (max_right - min_left) as f32 / upscale_factor / mapping.scale;
+            let height = (max_bottom - min_top) as f32 / upscale_factor / mapping.scale;
             
             log::info!("OCR block {}: '{}' at ({}, {}, {}x{})", block_num, block_text, left, top, width, height);
             overlays.push(OcrTextOverlay {
