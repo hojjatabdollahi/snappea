@@ -20,7 +20,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{Choice, DetectedQrCode, OcrStatus, Rect, ScreenshotImage},
+    screenshot::{Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -39,6 +39,10 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub menu_element: Element<'a, Msg>,
     /// QR codes to display, with their positions relative to this output
     pub qr_codes: Vec<(f32, f32, String)>, // (x, y, content)
+    /// OCR overlays to display (center position, text)
+    pub ocr_overlays: Vec<(f32, f32, String)>,
+    /// Selection rectangle bounds for constraining OCR overlays (output-relative)
+    pub ocr_selection_rect: Option<(f32, f32, f32, f32)>, // (x, y, width, height)
     /// Whether to show QR overlays (hidden when dragging)
     pub show_qr_overlays: bool,
     /// Whether QR scanning is in progress
@@ -70,6 +74,7 @@ where
         dnd_id: u128,
         qr_codes: &[DetectedQrCode],
         qr_scanning: bool,
+        ocr_overlays: &[OcrTextOverlay],
         ocr_status: OcrStatus,
     ) -> Self {
         let space_l = spacing.space_l;
@@ -214,6 +219,37 @@ where
             .filter(|qr| qr.output_name == output.name)
             .map(|qr| (qr.center_x, qr.center_y, qr.content.clone()))
             .collect();
+        log::debug!("Widget received {} OCR overlays, filtering for output '{}'", ocr_overlays.len(), output.name);
+        let ocr_overlays_for_output: Vec<(f32, f32, String)> = ocr_overlays
+            .iter()
+            .filter(|o| {
+                let matches = o.output_name == output.name;
+                log::debug!("  Overlay '{}' output '{}' matches: {}", o.text, o.output_name, matches);
+                matches
+            })
+            .map(|o| (o.center_x, o.center_y, o.text.clone()))
+            .collect();
+        log::debug!("After filtering: {} OCR overlays for this output", ocr_overlays_for_output.len());
+        
+        // Calculate selection rectangle relative to this output (for OCR overlay constraining)
+        let ocr_selection_rect = if let Choice::Rectangle(r, _) = &choice {
+            // Convert global rect to output-relative coordinates
+            if let Some(intersection) = r.intersect(output_rect) {
+                let x = (intersection.left - output_rect.left) as f32;
+                let y = (intersection.top - output_rect.top) as f32;
+                let w = intersection.width() as f32;
+                let h = intersection.height() as f32;
+                if w > 0.0 && h > 0.0 {
+                    Some((x, y, w, h))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
         
         Self {
             id: cosmic::widget::Id::unique(),
@@ -223,6 +259,8 @@ where
             bg_element,
             fg_element,
             qr_codes: qr_codes_for_output,
+            ocr_overlays: ocr_overlays_for_output,
+            ocr_selection_rect,
             show_qr_overlays,
             qr_scanning,
             ocr_status,
@@ -550,11 +588,11 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             });
         }
 
-        // Draw QR scanning status or detected QR codes
+        let cosmic_theme = theme.cosmic();
+        let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+
+        // Draw QR scanning status or QR overlays (toggled off while dragging)
         if self.show_qr_overlays {
-            let cosmic_theme = theme.cosmic();
-            let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
-            
             // Show scanning indicator in top-left corner
             if self.qr_scanning {
                 let scanning_text = "Scanning for QR codes...";
@@ -591,78 +629,6 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     
                     let text = Text {
                         content: scanning_text.to_string(),
-                        bounds: Size::new(bg_width, bg_height),
-                        size: cosmic::iced::Pixels(font_size),
-                        line_height: cosmic::iced_core::text::LineHeight::default(),
-                        font: cosmic::iced::Font::default(),
-                        horizontal_alignment: alignment::Horizontal::Center,
-                        vertical_alignment: alignment::Vertical::Center,
-                        shaping: cosmic::iced_core::text::Shaping::Advanced,
-                        wrapping: cosmic::iced_core::text::Wrapping::None,
-                    };
-                    
-                    renderer.fill_text(
-                        text,
-                        Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
-                        cosmic::iced::Color::WHITE,
-                        *viewport,
-                    );
-                });
-            }
-            
-            // Show OCR status indicator
-            if self.ocr_status != OcrStatus::Idle {
-                let status_text = match &self.ocr_status {
-                    OcrStatus::DownloadingModels => "Downloading OCR models...".to_string(),
-                    OcrStatus::Running => "Running OCR...".to_string(),
-                    OcrStatus::Done(text) => format!("OCR done! Copied: {}", if text.len() > 40 { format!("{}...", &text[..37]) } else { text.clone() }),
-                    OcrStatus::Error(err) => format!("OCR error: {}", if err.len() > 40 { format!("{}...", &err[..37]) } else { err.clone() }),
-                    OcrStatus::Idle => unreachable!(),
-                };
-                
-                let font_size = 16.0_f32;
-                let char_width = font_size * 0.55;
-                let text_width = status_text.len() as f32 * char_width;
-                let text_height = font_size * 1.4;
-                let padding_h = 16.0;
-                let padding_v = 10.0;
-                
-                let bg_width = text_width + padding_h * 2.0;
-                let bg_height = text_height + padding_v * 2.0;
-                
-                // Position below QR scanning indicator if it's showing
-                let y_offset = if self.qr_scanning { 60.0 } else { 20.0 };
-                
-                let bg_rect = cosmic::iced_core::Rectangle {
-                    x: 20.0,
-                    y: y_offset,
-                    width: bg_width,
-                    height: bg_height,
-                };
-                
-                // Choose border color based on status
-                let border_color = match &self.ocr_status {
-                    OcrStatus::Done(_) => cosmic::iced::Color::from_rgb(0.2, 0.8, 0.2), // Green
-                    OcrStatus::Error(_) => cosmic::iced::Color::from_rgb(0.9, 0.2, 0.2), // Red
-                    _ => accent_color, // Accent for in-progress
-                };
-                
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.fill_quad(
-                        cosmic::iced_core::renderer::Quad {
-                            bounds: bg_rect,
-                            border: Border {
-                                radius: cosmic_theme.corner_radii.radius_s.into(),
-                                width: 2.0,
-                                color: border_color,
-                            },
-                            shadow: cosmic::iced_core::Shadow::default(),
-                        },
-                        Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
-                    );
-                    
-                    let text = Text {
-                        content: status_text,
                         bounds: Size::new(bg_width, bg_height),
                         size: cosmic::iced::Pixels(font_size),
                         line_height: cosmic::iced_core::text::LineHeight::default(),
@@ -745,6 +711,149 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         *viewport,
                     );
                 });
+            }
+        }
+
+        // Show OCR status indicator (hidden only when Idle)
+        if self.ocr_status != OcrStatus::Idle {
+            let status_text = match &self.ocr_status {
+                OcrStatus::DownloadingModels => "Downloading OCR models...".to_string(),
+                OcrStatus::Running => "Running OCR...".to_string(),
+                OcrStatus::Done(_, _) => "✓ Text copied to clipboard!".to_string(),
+                OcrStatus::Error(err) => format!("OCR error: {}", if err.len() > 40 { format!("{}...", &err[..37]) } else { err.clone() }),
+                OcrStatus::Idle => unreachable!(),
+            };
+            
+            let font_size = 16.0_f32;
+            let char_width = font_size * 0.55;
+            let text_width = status_text.len() as f32 * char_width;
+            let text_height = font_size * 1.4;
+            let padding_h = 16.0;
+            let padding_v = 10.0;
+            
+            let bg_width = text_width + padding_h * 2.0;
+            let bg_height = text_height + padding_v * 2.0;
+            
+            // Position below QR scanning indicator if it's showing
+            let y_offset = if self.qr_scanning { 60.0 } else { 20.0 };
+            
+            let bg_rect = cosmic::iced_core::Rectangle {
+                x: 20.0,
+                y: y_offset,
+                width: bg_width,
+                height: bg_height,
+            };
+            
+            // Choose border color based on status
+            let border_color = match &self.ocr_status {
+                OcrStatus::Done(..) => cosmic::iced::Color::from_rgb(0.2, 0.8, 0.2), // Green
+                OcrStatus::Error(_) => cosmic::iced::Color::from_rgb(0.9, 0.2, 0.2), // Red
+                _ => accent_color, // Accent for in-progress
+            };
+            
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: bg_rect,
+                        border: Border {
+                            radius: cosmic_theme.corner_radii.radius_s.into(),
+                            width: 2.0,
+                            color: border_color,
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
+                );
+                
+                let text = Text {
+                    content: status_text,
+                    bounds: Size::new(bg_width, bg_height),
+                    size: cosmic::iced::Pixels(font_size),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                };
+                
+                renderer.fill_text(
+                    text,
+                    Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
+                    cosmic::iced::Color::WHITE,
+                    *viewport,
+                );
+            });
+        }
+
+        // Draw OCR overlays - only when not dragging (same as QR overlays)
+        if self.show_qr_overlays {
+            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.ocr_selection_rect {
+                let font_size = 14.0_f32;
+                let padding = 8.0;
+                let border_color = cosmic::iced::Color::from_rgb(0.2, 0.6, 0.9);
+                
+                // Draw each block as a separate overlay, constrained to selection
+                for (x, y, content) in &self.ocr_overlays {
+                    // Calculate text dimensions with wrapping
+                    let max_label_width = (sel_w - padding * 4.0).max(80.0).min(400.0);
+                    let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
+                    let num_lines = (content.len() / chars_per_line).max(1) + 
+                        content.matches('\n').count();
+                    let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.4);
+                    
+                    let bg_width = max_label_width + padding * 2.0;
+                    let bg_height = text_height + padding * 2.0;
+                    
+                    // Position centered on block location, but clamp to selection bounds
+                    let mut label_x = *x - bg_width / 2.0;
+                    let mut label_y = *y - bg_height / 2.0;
+                    
+                    // Clamp to selection rectangle
+                    label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
+                    label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
+                    
+                    let bg_rect = cosmic::iced_core::Rectangle {
+                        x: label_x,
+                        y: label_y,
+                        width: bg_width,
+                        height: bg_height,
+                    };
+                    
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.fill_quad(
+                            cosmic::iced_core::renderer::Quad {
+                                bounds: bg_rect,
+                                border: Border {
+                                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                                    width: 2.0,
+                                    color: border_color,
+                                },
+                                shadow: cosmic::iced_core::Shadow::default(),
+                            },
+                            Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
+                        );
+                        
+                        let text = Text {
+                            content: content.clone(),
+                            bounds: Size::new(max_label_width, text_height),
+                            size: cosmic::iced::Pixels(font_size),
+                            line_height: cosmic::iced_core::text::LineHeight::Relative(1.3),
+                            font: cosmic::iced::Font::default(),
+                            horizontal_alignment: alignment::Horizontal::Left,
+                            vertical_alignment: alignment::Vertical::Top,
+                            shaping: cosmic::iced_core::text::Shaping::Advanced,
+                            wrapping: cosmic::iced_core::text::Wrapping::Word,
+                        };
+                        
+                        renderer.fill_text(
+                            text,
+                            Point::new(bg_rect.x + padding, bg_rect.y + padding),
+                            cosmic::iced::Color::WHITE,
+                            *viewport,
+                        );
+                    });
+                }
             }
         }
 

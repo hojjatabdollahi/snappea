@@ -66,6 +66,18 @@ pub struct DetectedQrCode {
     pub output_name: String,
 }
 
+/// OCR text overlay metadata
+#[derive(Clone, Debug, PartialEq)]
+pub struct OcrTextOverlay {
+    /// Center position in logical coordinates (relative to output)
+    pub center_x: f32,
+    pub center_y: f32,
+    /// Recognized text for this region
+    pub text: String,
+    /// Which output this overlay belongs to
+    pub output_name: String,
+}
+
 /// Detect QR codes in an image at a specific resolution
 /// max_dim: maximum dimension to downsample to (0 = no downsampling)
 pub fn detect_qr_codes_at_resolution(
@@ -125,9 +137,152 @@ fn is_duplicate_qr(existing: &[DetectedQrCode], new: &DetectedQrCode) -> bool {
     })
 }
 
+// ============================================================================
+// OCR Backend: rusty-tesseract (default)
+// ============================================================================
+#[cfg(not(feature = "ocrs"))]
+fn models_need_download() -> bool {
+    // rusty-tesseract uses system tesseract, no model download needed
+    false
+}
+
+#[cfg(not(feature = "ocrs"))]
+fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStatus {
+    use rusty_tesseract::{Args, Image};
+    use std::collections::HashMap;
+    
+    if mapping.scale <= 0.0 {
+        return OcrStatus::Error("Invalid OCR mapping scale".to_string());
+    }
+
+    log::info!("Running OCR with rusty-tesseract...");
+    
+    // Convert RgbaImage to DynamicImage
+    let dynamic_img = image::DynamicImage::ImageRgba8(img.clone());
+    
+    // Create rusty-tesseract Image from DynamicImage
+    let tess_img = match Image::from_dynamic_image(&dynamic_img) {
+        Ok(img) => img,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to create tesseract image: {}", e));
+        }
+    };
+    
+    // Configure tesseract arguments
+    let args = Args {
+        lang: "eng".to_string(),
+        config_variables: HashMap::new(),
+        dpi: Some(150),
+        psm: Some(3), // Fully automatic page segmentation
+        oem: Some(3), // Default OCR Engine Mode
+    };
+    
+    // Run OCR for text
+    let text_result = rusty_tesseract::image_to_string(&tess_img, &args);
+    let data_result = rusty_tesseract::image_to_data(&tess_img, &args);
+
+    let mut overlays = Vec::new();
+    if let Ok(data_output) = data_result {
+        log::info!("Tesseract returned {} data entries", data_output.data.len());
+        
+        // Group words by block_num to create block-level overlays
+        let mut blocks: std::collections::HashMap<i32, Vec<_>> = std::collections::HashMap::new();
+        for d in data_output.data.into_iter().filter(|d| !d.text.trim().is_empty() && d.conf > 0.0) {
+            blocks.entry(d.block_num).or_default().push(d);
+        }
+        
+        for (block_num, words) in blocks {
+            if words.is_empty() {
+                continue;
+            }
+            
+            // Calculate bounding box for the entire block
+            let mut min_left = i32::MAX;
+            let mut min_top = i32::MAX;
+            let mut max_right = i32::MIN;
+            let mut max_bottom = i32::MIN;
+            
+            // Sort words by line_num then word_num for proper text ordering
+            let mut sorted_words = words;
+            sorted_words.sort_by(|a, b| {
+                a.line_num.cmp(&b.line_num).then(a.word_num.cmp(&b.word_num))
+            });
+            
+            // Build combined text and bounding box
+            let mut text_parts: Vec<String> = Vec::new();
+            let mut current_line = -1;
+            
+            for word in &sorted_words {
+                min_left = min_left.min(word.left);
+                min_top = min_top.min(word.top);
+                max_right = max_right.max(word.left + word.width);
+                max_bottom = max_bottom.max(word.top + word.height);
+                
+                if word.line_num != current_line {
+                    if current_line != -1 {
+                        // New line - could add newline here if desired
+                        text_parts.push(" ".to_string());
+                    }
+                    current_line = word.line_num;
+                } else {
+                    text_parts.push(" ".to_string());
+                }
+                text_parts.push(word.text.clone());
+            }
+            
+            let block_text = text_parts.concat().trim().to_string();
+            if block_text.is_empty() {
+                continue;
+            }
+            
+            // Convert bounding box center to output-relative logical coords
+            let center_x = mapping.origin.0 
+                + ((min_left + max_right) as f32 / 2.0) / mapping.scale;
+            let center_y = mapping.origin.1 
+                + ((min_top + max_bottom) as f32 / 2.0) / mapping.scale;
+            
+            log::info!("OCR block {}: '{}' at ({}, {})", block_num, block_text, center_x, center_y);
+            overlays.push(OcrTextOverlay {
+                center_x,
+                center_y,
+                text: block_text,
+                output_name: mapping.output_name.clone(),
+            });
+        }
+        log::info!("Generated {} block-level OCR overlays", overlays.len());
+    }
+
+    match text_result {
+        Ok(text) => {
+            let text = text.trim().to_string();
+            let text = if text.is_empty() {
+                "No text detected".to_string()
+            } else {
+                text
+            };
+            if overlays.is_empty() {
+                overlays.push(OcrTextOverlay {
+                    center_x: mapping.center.0,
+                    center_y: mapping.center.1,
+                    text: text.clone(),
+                    output_name: mapping.output_name.clone(),
+                });
+            }
+            OcrStatus::Done(text, overlays)
+        }
+        Err(e) => OcrStatus::Error(format!("Tesseract OCR failed: {}", e)),
+    }
+}
+
+// ============================================================================
+// OCR Backend: ocrs (feature = "ocrs")
+// ============================================================================
+#[cfg(feature = "ocrs")]
 const DETECTION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
+#[cfg(feature = "ocrs")]
 const RECOGNITION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
 
+#[cfg(feature = "ocrs")]
 fn get_model_cache_dir() -> std::path::PathBuf {
     dirs::cache_dir()
         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
@@ -135,6 +290,7 @@ fn get_model_cache_dir() -> std::path::PathBuf {
         .join("models")
 }
 
+#[cfg(feature = "ocrs")]
 fn download_model(url: &str, path: &std::path::Path) -> Result<(), String> {
     log::info!("Downloading OCR model from {} to {:?}", url, path);
     
@@ -163,6 +319,7 @@ fn download_model(url: &str, path: &std::path::Path) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(feature = "ocrs")]
 fn models_need_download() -> bool {
     let cache_dir = get_model_cache_dir();
     let detection_path = cache_dir.join("text-detection.rten");
@@ -170,6 +327,7 @@ fn models_need_download() -> bool {
     !detection_path.exists() || !recognition_path.exists()
 }
 
+#[cfg(feature = "ocrs")]
 fn ensure_models_downloaded() -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
     let cache_dir = get_model_cache_dir();
     let detection_path = cache_dir.join("text-detection.rten");
@@ -186,93 +344,15 @@ fn ensure_models_downloaded() -> Result<(std::path::PathBuf, std::path::PathBuf)
     Ok((detection_path, recognition_path))
 }
 
-/// Run OCR on an image and return the detected text
-fn run_ocr_on_image(img: &RgbaImage) -> String {
+#[cfg(feature = "ocrs")]
+fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStatus {
     use ocrs::{OcrEngine, OcrEngineParams, ImageSource};
     use rten::Model;
     
-    // Ensure models are downloaded
-    let (detection_path, recognition_path) = match ensure_models_downloaded() {
-        Ok(paths) => paths,
-        Err(e) => {
-            log::error!("Failed to download OCR models: {}", e);
-            return format!("Failed to download OCR models: {}", e);
-        }
-    };
-    
-    // Load models
-    let detection_model = match Model::load_file(&detection_path) {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("Failed to load detection model: {}", e);
-            return format!("Failed to load detection model: {}", e);
-        }
-    };
-    
-    let recognition_model = match Model::load_file(&recognition_path) {
-        Ok(m) => m,
-        Err(e) => {
-            log::error!("Failed to load recognition model: {}", e);
-            return format!("Failed to load recognition model: {}", e);
-        }
-    };
-    
-    // Create OCR engine with loaded models
-    let engine = match OcrEngine::new(OcrEngineParams {
-        detection_model: Some(detection_model),
-        recognition_model: Some(recognition_model),
-        ..Default::default()
-    }) {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("Failed to create OCR engine: {}", e);
-            return format!("Failed to create OCR engine: {}", e);
-        }
-    };
-    
-    // Convert to RGB8 for OCR
-    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-    let (width, height) = rgb.dimensions();
-    
-    // Create image source from raw pixels
-    let img_source = match ImageSource::from_bytes(rgb.as_raw(), (width, height)) {
-        Ok(src) => src,
-        Err(e) => {
-            log::error!("Failed to create image source: {}", e);
-            return format!("Failed to create image source: {}", e);
-        }
-    };
-    
-    // Prepare input
-    let ocr_input = match engine.prepare_input(img_source) {
-        Ok(input) => input,
-        Err(e) => {
-            log::error!("Failed to prepare OCR input: {}", e);
-            return format!("Failed to prepare OCR input: {}", e);
-        }
-    };
-    
-    // Use the simpler get_text method
-    match engine.get_text(&ocr_input) {
-        Ok(text) => {
-            if text.trim().is_empty() {
-                "No text detected".to_string()
-            } else {
-                text
-            }
-        }
-        Err(e) => {
-            log::error!("Failed to extract text: {}", e);
-            format!("Failed to extract text: {}", e)
-        }
+    if mapping.scale <= 0.0 {
+        return OcrStatus::Error("Invalid OCR mapping scale".to_string());
     }
-}
 
-/// Run OCR on an image and return status (for UI feedback)
-fn run_ocr_on_image_with_status(img: &RgbaImage) -> OcrStatus {
-    use ocrs::{OcrEngine, OcrEngineParams, ImageSource};
-    use rten::Model;
-    
     // Ensure models are downloaded
     let (detection_path, recognition_path) = match ensure_models_downloaded() {
         Ok(paths) => paths,
@@ -332,15 +412,24 @@ fn run_ocr_on_image_with_status(img: &RgbaImage) -> OcrStatus {
     // Use the simpler get_text method
     match engine.get_text(&ocr_input) {
         Ok(text) => {
-            if text.trim().is_empty() {
-                OcrStatus::Done("No text detected".to_string())
+            let text = text.trim().to_string();
+            let text = if text.is_empty() {
+                "No text detected".to_string()
             } else {
-                OcrStatus::Done(text)
-            }
+                text
+            };
+
+            // We do not have per-box data from ocrs, so place a label centered on the OCR region
+            let overlay = OcrTextOverlay {
+                center_x: mapping.center.0,
+                center_y: mapping.center.1,
+                text: text.clone(),
+                output_name: mapping.output_name.clone(),
+            };
+
+            OcrStatus::Done(text, vec![overlay])
         }
-        Err(e) => {
-            OcrStatus::Error(format!("Failed to extract text: {}", e))
-        }
+        Err(e) => OcrStatus::Error(format!("Failed to extract text: {}", e)),
     }
 }
 
@@ -394,7 +483,7 @@ pub struct Rect {
 }
 
 impl Rect {
-    fn intersect(&self, other: Rect) -> Option<Rect> {
+    pub fn intersect(&self, other: Rect) -> Option<Rect> {
         let left = self.left.max(other.left);
         let top = self.top.max(other.top);
         let right = self.right.min(other.right);
@@ -420,11 +509,11 @@ impl Rect {
         }
     }
 
-    fn width(&self) -> i32 {
+    pub fn width(&self) -> i32 {
         self.right - self.left
     }
 
-    fn height(&self) -> i32 {
+    pub fn height(&self) -> i32 {
         self.bottom - self.top
     }
 
@@ -645,8 +734,20 @@ pub enum OcrStatus {
     Idle,
     DownloadingModels,
     Running,
-    Done(String),
+    Done(String, Vec<OcrTextOverlay>),
     Error(String),
+}
+
+#[derive(Clone, Debug)]
+struct OcrMapping {
+    /// Top-left of the cropped OCR region in logical coordinates
+    origin: (f32, f32),
+    /// Pixels-per-logical-unit for this output image
+    scale: f32,
+    /// Output name this mapping belongs to
+    output_name: String,
+    /// Center of the selected region in logical coordinates (fallback label)
+    center: (f32, f32),
 }
 
 #[derive(Debug, Clone)]
@@ -660,6 +761,7 @@ pub enum Msg {
     QrCodesDetected(Vec<DetectedQrCode>),
     OcrRequested,
     OcrStatus(OcrStatus),
+    OcrStatusClear,
 }
 
 #[derive(Debug, Clone)]
@@ -695,6 +797,7 @@ pub struct Args {
     pub qr_codes: Vec<DetectedQrCode>,
     pub qr_scanning: bool,
     pub ocr_status: OcrStatus,
+    pub ocr_overlays: Vec<OcrTextOverlay>,
 }
 
 struct Output {
@@ -785,6 +888,7 @@ impl Screenshot {
                 qr_codes: Vec::new(),
                 qr_scanning: true,
                 ocr_status: OcrStatus::Idle,
+                ocr_overlays: Vec::new(),
             }))
             .await
         {
@@ -847,6 +951,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             i as u128,
             &args.qr_codes,
             args.qr_scanning,
+            &args.ocr_overlays,
             args.ocr_status.clone(),
         ),
         |key| match key {
@@ -1008,6 +1113,22 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::Choice(c) => {
             if let Some(args) = app.screenshot_args.as_mut() {
+                // Clear OCR overlays when rectangle changes (new selection started)
+                if let Choice::Rectangle(new_r, new_s) = &c {
+                    if let Choice::Rectangle(old_r, _) = &args.choice {
+                        // If the rectangle position/size changed significantly, clear OCR
+                        if new_r.left != old_r.left || new_r.top != old_r.top 
+                            || new_r.right != old_r.right || new_r.bottom != old_r.bottom {
+                            args.ocr_overlays.clear();
+                            args.ocr_status = OcrStatus::Idle;
+                        }
+                    }
+                    // Also clear if we're starting a new drag from None state
+                    if *new_s != DragState::None {
+                        args.ocr_overlays.clear();
+                        args.ocr_status = OcrStatus::Idle;
+                    }
+                }
                 args.choice = c;
                 if let Choice::Rectangle(r, s) = &args.choice {
                     app.prev_rectangle = Some(*r);
@@ -1089,6 +1210,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 } else {
                     OcrStatus::Running
                 };
+                // Clear previous OCR overlays when starting a new run
+                args.ocr_overlays.clear();
             }
             
             // Get the rectangle selection and run OCR on that area
@@ -1096,7 +1219,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 if let Choice::Rectangle(rect, _) = &args.choice {
                     if rect.width() > 0 && rect.height() > 0 {
                         // Collect image data for the selected rectangle
-                        let mut region_data: Option<(RgbaImage, Rect)> = None;
+                        let mut region_data: Option<(RgbaImage, OcrMapping)> = None;
                         
                         for output in &app.outputs {
                             if let Some(img) = args.output_images.get(&output.name) {
@@ -1116,18 +1239,33 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     let h = (intersection.height() as f32 * scale) as u32;
                                     
                                     let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
-                                    region_data = Some((cropped, *rect));
+                                    
+                                    // Coordinates relative to this output's origin (like QR codes)
+                                    let origin_x = (intersection.left - output_rect.left) as f32;
+                                    let origin_y = (intersection.top - output_rect.top) as f32;
+                                    let center_x = origin_x + intersection.width() as f32 / 2.0;
+                                    let center_y = origin_y + intersection.height() as f32 / 2.0;
+                                    
+                                    region_data = Some((
+                                        cropped,
+                                        OcrMapping {
+                                            origin: (origin_x, origin_y),
+                                            scale,
+                                            output_name: output.name.clone(),
+                                            center: (center_x, center_y),
+                                        },
+                                    ));
                                     break;
                                 }
                             }
                         }
                         
-                        if let Some((cropped_img, _rect)) = region_data {
+                        if let Some((cropped_img, mapping)) = region_data {
                             // Run OCR in background with status updates
                             return cosmic::Task::perform(
                                 async move {
                                     tokio::task::spawn_blocking(move || {
-                                        run_ocr_on_image_with_status(&cropped_img)
+                                        run_ocr_on_image_with_status(&cropped_img, mapping)
                                     }).await.unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
                                 },
                                 |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status))
@@ -1140,18 +1278,35 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::OcrStatus(status) => {
             match &status {
-                OcrStatus::Done(text) => {
-                    log::info!("OCR Result: {}", text);
+                OcrStatus::Done(text, overlays) => {
+                    log::info!("OCR Result: {} ({} overlays)", text, overlays.len());
+                    for overlay in overlays.iter() {
+                        log::info!("  Overlay: '{}' at ({}, {}) on {}", 
+                            overlay.text, overlay.center_x, overlay.center_y, overlay.output_name);
+                    }
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status.clone();
+                        args.ocr_overlays = overlays.clone();
+                        log::info!("Stored {} overlays in args", args.ocr_overlays.len());
                     }
                     // Copy to clipboard
-                    return clipboard::write(text.clone());
+                    let copy_task = clipboard::write(text.clone());
+                    // Schedule clearing the status banner after 1.5s
+                    let clear_task = cosmic::Task::perform(
+                        async {
+                            tokio::task::spawn_blocking(|| {
+                                std::thread::sleep(std::time::Duration::from_millis(1500));
+                            }).await.ok();
+                        },
+                        |_| crate::app::Msg::Screenshot(Msg::OcrStatusClear),
+                    );
+                    return cosmic::Task::batch(vec![copy_task, clear_task]);
                 }
                 OcrStatus::Error(err) => {
                     log::error!("OCR Error: {}", err);
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status;
+                        args.ocr_overlays.clear();
                     }
                 }
                 _ => {
@@ -1159,6 +1314,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         args.ocr_status = status;
                     }
                 }
+            }
+            cosmic::Task::none()
+        }
+        Msg::OcrStatusClear => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ocr_status = OcrStatus::Idle;
             }
             cosmic::Task::none()
         }
@@ -1180,6 +1341,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         qr_codes: _,
         qr_scanning: _,
         ocr_status: _,
+        ocr_overlays: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

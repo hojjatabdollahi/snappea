@@ -8,6 +8,10 @@ description = "Screenshot portal implementation for COSMIC desktop"
 [features]
 default = ["wgpu"]
 wgpu = ["cosmic/wgpu"]
+# OCR backend selection - only one should be enabled
+# ocrs: Uses ocrs + rten neural network models (downloads models from S3)
+# By default, rusty-tesseract is used (requires system tesseract installation)
+ocrs = ["dep:ocrs", "dep:rten"]
 
 [dependencies]
 anyhow = "1.0.100"
@@ -22,8 +26,10 @@ futures = "0.3"
 image = "0.25"
 log = "0.4.28"
 memmap2 = "0.9.8"
-ocrs = "0.12"
-rten = "0.24"
+# OCR backends
+rusty-tesseract = "1.1.10"
+ocrs = { version = "0.12", optional = true }
+rten = { version = "0.24", optional = true }
 png = "0.18"
 rqrr = "0.10"
 rustix = { version = "1.1", features = ["fs"] }
@@ -54,6 +60,7 @@ lto = "thin"
 panic = "abort"
 
 # Build rten dependencies in release mode even in debug builds for performance
+# (only applies when building with --features ocrs)
 [profile.dev.package.rten]
 opt-level = 3
 [profile.dev.package.rten-imageproc]
