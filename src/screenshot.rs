@@ -1060,6 +1060,31 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 }
                 Choice::Rectangle(r, s) => {
                     if let Some(RectDimension { width, height }) = r.dimensions() {
+                        // Calculate the scale factor from the first intersecting output
+                        // to determine target resolution
+                        let target_scale = images
+                            .iter()
+                            .find_map(|(name, raw_img)| {
+                                let output = outputs.iter().find(|o| o.name == *name)?;
+                                let output_rect = Rect {
+                                    left: output.logical_pos.0,
+                                    top: output.logical_pos.1,
+                                    right: output.logical_pos.0 + output.logical_size.0 as i32,
+                                    bottom: output.logical_pos.1 + output.logical_size.1 as i32,
+                                };
+                                r.intersect(output_rect)?;
+                                Some(raw_img.rgba.width() as f32 / output.logical_size.0 as f32)
+                            })
+                            .unwrap_or(1.0);
+                        
+                        // Scale selection rect to physical coordinates
+                        let physical_bounds = Rect {
+                            left: (r.left as f32 * target_scale) as i32,
+                            top: (r.top as f32 * target_scale) as i32,
+                            right: (r.right as f32 * target_scale) as i32,
+                            bottom: (r.bottom as f32 * target_scale) as i32,
+                        };
+                        
                         let frames = images
                             .into_iter()
                             .filter_map(|(name, raw_img)| {
@@ -1073,11 +1098,30 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 };
 
                                 let intersect = r.intersect(output_rect)?;
+                                
+                                // Crop to intersection in physical coordinates
+                                let scale_x = raw_img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                let scale_y = raw_img.rgba.height() as f32 / output.logical_size.1 as f32;
+                                
+                                let img_x = ((intersect.left - output_rect.left) as f32 * scale_x) as u32;
+                                let img_y = ((intersect.top - output_rect.top) as f32 * scale_y) as u32;
+                                let img_w = (intersect.width() as f32 * scale_x) as u32;
+                                let img_h = (intersect.height() as f32 * scale_y) as u32;
+                                
+                                let cropped = image::imageops::crop_imm(&raw_img.rgba, img_x, img_y, img_w, img_h).to_image();
+                                
+                                // Physical rect for this cropped portion
+                                let physical_intersect = Rect {
+                                    left: (intersect.left as f32 * target_scale) as i32,
+                                    top: (intersect.top as f32 * target_scale) as i32,
+                                    right: (intersect.right as f32 * target_scale) as i32,
+                                    bottom: (intersect.bottom as f32 * target_scale) as i32,
+                                };
 
-                                Some((raw_img.rgba, output_rect))
+                                Some((cropped, physical_intersect))
                             })
                             .collect::<Vec<_>>();
-                        let img = combined_image(r, frames);
+                        let img = combined_image(physical_bounds, frames);
 
                         if let Some(ref image_path) = image_path {
                             if let Err(err) = Screenshot::save_rgba(&img, image_path) {

@@ -616,7 +616,6 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         };
         #[cfg(feature = "wgpu")]
         {
-            use cosmic::iced_core::Transformation;
             use cosmic::iced_widget::graphics::{
                 Mesh,
                 color::pack,
@@ -625,33 +624,60 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             let mut overlay = Color::BLACK;
             overlay.a = 0.3;
 
-            let outer_bottom_right = (outer_size.width, outer_size.height);
-            let inner_top_left = (inner_rect.x, inner_rect.y);
-            let outer_top_left = (outer_rect.x, outer_rect.y);
-            let inner_bottom_right = (
-                inner_rect.x + inner_rect.width,
-                inner_rect.y + inner_rect.height,
+            // Use output-relative coordinates for the mesh
+            // Outer rectangle corners (0,0) to (width, height)
+            let outer_tl = (0.0_f32, 0.0_f32);
+            let outer_tr = (outer_size.width, 0.0_f32);
+            let outer_br = (outer_size.width, outer_size.height);
+            let outer_bl = (0.0_f32, outer_size.height);
+            
+            // Inner rectangle (selection) translated to output-relative coords
+            let inner_tl = (
+                clipped_inner_rect.x - outer_rect.x,
+                clipped_inner_rect.y - outer_rect.y,
             );
+            let inner_tr = (
+                clipped_inner_rect.x + clipped_inner_rect.width - outer_rect.x,
+                clipped_inner_rect.y - outer_rect.y,
+            );
+            let inner_br = (
+                clipped_inner_rect.x + clipped_inner_rect.width - outer_rect.x,
+                clipped_inner_rect.y + clipped_inner_rect.height - outer_rect.y,
+            );
+            let inner_bl = (
+                clipped_inner_rect.x - outer_rect.x,
+                clipped_inner_rect.y + clipped_inner_rect.height - outer_rect.y,
+            );
+            
+            // 8 vertices (0-based indices):
+            // Outer: 0=TL, 1=TR, 2=BR, 3=BL
+            // Inner: 4=TL, 5=TR, 6=BR, 7=BL
             let vertices = vec![
-                outer_top_left,
-                (outer_bottom_right.0, outer_top_left.1),
-                outer_bottom_right,
-                (outer_top_left.0, outer_bottom_right.1),
-                inner_top_left,
-                (inner_bottom_right.0, inner_top_left.1),
-                inner_bottom_right,
-                (inner_top_left.0, inner_bottom_right.1),
+                outer_tl,  // 0
+                outer_tr,  // 1
+                outer_br,  // 2
+                outer_bl,  // 3
+                inner_tl,  // 4
+                inner_tr,  // 5
+                inner_br,  // 6
+                inner_bl,  // 7
             ];
+            
+            // 8 triangles forming the frame around selection (0-based indices)
             #[rustfmt::skip]
-            let indices = vec![
-                5, 2, 1,
-                5, 6, 2,
-                6, 4, 2,
-                6, 8, 4,
-                8, 3, 4,
-                8, 7, 3,
-                7, 1, 3,
-                7, 5, 1,
+            let indices: Vec<u32> = vec![
+                // Top strip
+                0, 1, 5,
+                0, 5, 4,
+                // Right strip
+                1, 2, 6,
+                1, 6, 5,
+                // Bottom strip
+                2, 3, 7,
+                2, 7, 6,
+                // Left strip
+                3, 0, 4,
+                3, 4, 7,
             ];
 
             renderer.draw_mesh(Mesh::Solid {
@@ -665,7 +691,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         .collect(),
                     indices,
                 },
-                transformation: Transformation::IDENTITY,
+                transformation: cosmic::iced_core::Transformation::IDENTITY,
                 clip_bounds: Rectangle::new(Point::ORIGIN, outer_size),
             })
         }
