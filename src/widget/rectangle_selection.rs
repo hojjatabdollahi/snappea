@@ -85,6 +85,7 @@ pub struct RectangleSelection<Msg> {
     window_id: iced_core::window::Id,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
     on_ocr: Option<Msg>,
+    on_qr: Option<Msg>,
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
@@ -99,10 +100,12 @@ impl<Msg: Clone> RectangleSelection<Msg> {
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
         on_ocr: Option<Msg>,
+        on_qr: Option<Msg>,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
             on_ocr,
+            on_qr,
             drag_state: drag_direction,
             rectangle_selection,
             output_rect,
@@ -279,6 +282,26 @@ impl<Msg: Clone> RectangleSelection<Msg> {
             false
         }
     }
+    
+    /// Calculate QR button bounds (positioned below OCR button)
+    fn qr_button_bounds(&self) -> Option<Rectangle> {
+        let ocr_bounds = self.ocr_button_bounds()?;
+        let button_spacing = 4.0_f32;
+        
+        Some(Rectangle::new(
+            Point::new(ocr_bounds.x, ocr_bounds.y + ocr_bounds.height + button_spacing),
+            Size::new(ocr_bounds.width, ocr_bounds.height),
+        ))
+    }
+    
+    /// Check if cursor is over the QR button
+    fn is_over_qr_button(&self, cursor: mouse::Cursor) -> bool {
+        if let Some(bounds) = self.qr_button_bounds() {
+            cursor.is_over(bounds)
+        } else {
+            false
+        }
+    }
 
     fn handle_drag_pos(&mut self, x: i32, y: i32, shell: &mut iced_core::Shell<'_, Msg>) {
         let prev = self.rectangle_selection;
@@ -399,8 +422,8 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> iced_core::mouse::Interaction {
-        // Check OCR button first
-        if self.is_over_ocr_button(cursor) {
+        // Check OCR/QR buttons first
+        if self.is_over_ocr_button(cursor) || self.is_over_qr_button(cursor) {
             return iced_core::mouse::Interaction::Pointer;
         }
         
@@ -494,6 +517,14 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     // Check if clicking on OCR button
                     if self.is_over_ocr_button(cursor) {
                         if let Some(msg) = &self.on_ocr {
+                            shell.publish(msg.clone());
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    
+                    // Check if clicking on QR button
+                    if self.is_over_qr_button(cursor) {
+                        if let Some(msg) = &self.on_qr {
                             shell.publish(msg.clone());
                         }
                         return cosmic::iced_core::event::Status::Captured;
@@ -679,6 +710,56 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
             
             let button_text = "OCR";
+            let font_size = 14.0_f32;
+            
+            // Check if button is within screen bounds
+            if button_rect.x >= 0.0 && button_rect.y >= 0.0 
+                && button_rect.x + button_rect.width <= outer_size.width
+                && button_rect.y + button_rect.height <= outer_size.height {
+                
+                // Draw button background
+                let button_quad = Quad {
+                    bounds: button_rect,
+                    border: Border {
+                        radius: radius_s.into(),
+                        width: 2.0,
+                        color: accent,
+                    },
+                    shadow: Shadow::default(),
+                };
+                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
+                
+                // Draw button text
+                let text = Text {
+                    content: button_text.to_string(),
+                    bounds: Size::new(button_rect.width, button_rect.height),
+                    size: cosmic::iced::Pixels(font_size),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                };
+                
+                renderer.fill_text(
+                    text,
+                    Point::new(
+                        button_rect.x + button_rect.width / 2.0,
+                        button_rect.y + button_rect.height / 2.0,
+                    ),
+                    Color::WHITE,
+                    Rectangle::new(Point::ORIGIN, outer_size),
+                );
+            }
+        }
+        
+        // Draw QR button below OCR button
+        if let Some(button_rect) = self.qr_button_bounds() {
+            use cosmic::iced_core::alignment;
+            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
+            
+            let button_text = "QR";
             let font_size = 14.0_f32;
             
             // Check if button is within screen bounds

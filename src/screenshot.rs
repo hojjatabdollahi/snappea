@@ -759,6 +759,7 @@ pub enum Msg {
     WindowChosen(String, usize),
     Location(usize),
     QrCodesDetected(Vec<DetectedQrCode>),
+    QrRequested,
     OcrRequested,
     OcrStatus(OcrStatus),
     OcrStatusClear,
@@ -886,7 +887,7 @@ impl Screenshot {
                 location: ImageSaveLocation::Pictures,
                 choice,
                 qr_codes: Vec::new(),
-                qr_scanning: true,
+                qr_scanning: false,
                 ocr_status: OcrStatus::Idle,
                 ocr_overlays: Vec::new(),
             }))
@@ -938,6 +939,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::Capture,
             Msg::Cancel,
             Msg::OcrRequested,
+            Msg::QrRequested,
             output,
             id,
             Msg::OutputChanged,
@@ -1113,20 +1115,22 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::Choice(c) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // Clear OCR overlays when rectangle changes (new selection started)
+                // Clear OCR/QR overlays when rectangle changes (new selection started)
                 if let Choice::Rectangle(new_r, new_s) = &c {
                     if let Choice::Rectangle(old_r, _) = &args.choice {
-                        // If the rectangle position/size changed significantly, clear OCR
+                        // If the rectangle position/size changed significantly, clear overlays
                         if new_r.left != old_r.left || new_r.top != old_r.top 
                             || new_r.right != old_r.right || new_r.bottom != old_r.bottom {
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
+                            args.qr_codes.clear();
                         }
                     }
                     // Also clear if we're starting a new drag from None state
                     if *new_s != DragState::None {
                         args.ocr_overlays.clear();
                         args.ocr_status = OcrStatus::Idle;
+                        args.qr_codes.clear();
                     }
                 }
                 args.choice = c;
@@ -1186,10 +1190,84 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 cosmic::Task::none()
             }
         }
+        Msg::QrRequested => {
+            // Clear previous QR codes and start scanning
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.qr_codes.clear();
+                args.qr_scanning = true;
+            }
+            
+            // Get the rectangle selection and run QR detection on that area
+            if let Some(args) = app.screenshot_args.as_ref() {
+                if let Choice::Rectangle(rect, _) = &args.choice {
+                    if rect.width() > 0 && rect.height() > 0 {
+                        // Collect image data for the selected rectangle
+                        for output in &app.outputs {
+                            if let Some(img) = args.output_images.get(&output.name) {
+                                let output_rect = Rect {
+                                    left: output.logical_pos.0,
+                                    top: output.logical_pos.1,
+                                    right: output.logical_pos.0 + output.logical_size.0 as i32,
+                                    bottom: output.logical_pos.1 + output.logical_size.1 as i32,
+                                };
+                                
+                                if let Some(intersection) = rect.intersect(output_rect) {
+                                    // Scale to image coordinates
+                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                    let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
+                                    let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
+                                    let w = (intersection.width() as f32 * scale) as u32;
+                                    let h = (intersection.height() as f32 * scale) as u32;
+                                    
+                                    let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
+                                    let output_name = output.name.clone();
+                                    
+                                    // Origin relative to output for QR overlay positions
+                                    let origin_x = (intersection.left - output_rect.left) as f32;
+                                    let origin_y = (intersection.top - output_rect.top) as f32;
+                                    
+                                    // Spawn progressive QR detection tasks (3 passes with increasing resolution)
+                                    let resolutions = [500u32, 1500, 0]; // 0 = full resolution
+                                    let mut qr_detection_tasks = Vec::new();
+                                    
+                                    for (pass_idx, max_dim) in resolutions.into_iter().enumerate() {
+                                        let cropped_clone = cropped.clone();
+                                        let output_name_clone = output_name.clone();
+                                        let task = cosmic::Task::perform(
+                                            async move {
+                                                tokio::task::spawn_blocking(move || {
+                                                    // Detect QR in cropped image, then adjust coordinates
+                                                    let detected = detect_qr_codes_at_resolution(
+                                                        &cropped_clone, 
+                                                        &output_name_clone, 
+                                                        scale, 
+                                                        max_dim
+                                                    );
+                                                    // Adjust coordinates to be relative to output (add origin offset)
+                                                    detected.into_iter().map(|mut qr| {
+                                                        qr.center_x += origin_x;
+                                                        qr.center_y += origin_y;
+                                                        qr
+                                                    }).collect::<Vec<_>>()
+                                                }).await.unwrap_or_default()
+                                            },
+                                            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
+                                        );
+                                        qr_detection_tasks.push(task);
+                                    }
+                                    
+                                    return cosmic::Task::batch(qr_detection_tasks);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
         Msg::QrCodesDetected(new_qr_codes) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // First pass completed - hide scanning indicator
-                // (more passes may still add QR codes in the background)
+                // Scanning pass completed - hide scanning indicator after first pass
                 args.qr_scanning = false;
                 
                 // Merge new QR codes, avoiding duplicates
@@ -1389,42 +1467,6 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         fl!("save-to", "documents"),
     ];
 
-    // Spawn progressive QR detection tasks (3 passes with increasing resolution)
-    // Pass 1: 500px (fast, catches large QR codes)
-    // Pass 2: 1500px (medium, catches most QR codes)  
-    // Pass 3: full resolution (slow, catches small QR codes)
-    let detection_data: Vec<_> = app.outputs.iter().filter_map(|o| {
-        images.get(&o.name).map(|img| {
-            let scale = img.rgba.width() as f32 / o.logical_size.0 as f32;
-            (img.rgba.clone(), o.name.clone(), scale)
-        })
-    }).collect();
-    
-    let resolutions = [500u32, 1500, 0]; // 0 = full resolution
-    let mut qr_detection_tasks = Vec::new();
-    
-    for (pass_idx, max_dim) in resolutions.into_iter().enumerate() {
-        let data = detection_data.clone();
-        let task = cosmic::Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    let mut pass_results = Vec::new();
-                    for (rgba, name, scale) in data {
-                        let detected = detect_qr_codes_at_resolution(&rgba, &name, scale, max_dim);
-                        pass_results.extend(detected);
-                    }
-                    let res_label = if max_dim == 0 { "full".to_string() } else { format!("{}px", max_dim) };
-                    log::info!("QR pass {} ({}): found {} codes", pass_idx + 1, res_label, pass_results.len());
-                    pass_results
-                }).await.unwrap_or_default()
-            },
-            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
-        );
-        qr_detection_tasks.push(task);
-    }
-    
-    let qr_detection_task = cosmic::Task::batch(qr_detection_tasks);
-
     if app.screenshot_args.replace(args).is_none() {
         let cmds: Vec<_> = app
             .outputs
@@ -1449,9 +1491,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
                 },
             )
             .collect();
-        cosmic::Task::batch(cmds.into_iter().chain(std::iter::once(qr_detection_task)))
+        cosmic::Task::batch(cmds)
     } else {
         log::info!("Existing screenshot args updated");
-        qr_detection_task
+        cosmic::Task::none()
     }
 }
