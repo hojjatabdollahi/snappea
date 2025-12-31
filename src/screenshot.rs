@@ -54,6 +54,77 @@ impl ScreenshotImage {
     }
 }
 
+/// Detected QR code with position and content
+#[derive(Clone, Debug)]
+pub struct DetectedQrCode {
+    /// Center position in logical coordinates (relative to output)
+    pub center_x: f32,
+    pub center_y: f32,
+    /// The decoded content of the QR code
+    pub content: String,
+    /// Which output this QR code is on
+    pub output_name: String,
+}
+
+/// Detect QR codes in an image at a specific resolution
+/// max_dim: maximum dimension to downsample to (0 = no downsampling)
+pub fn detect_qr_codes_at_resolution(
+    img: &RgbaImage, 
+    output_name: &str, 
+    scale: f32,
+    max_dim: u32,
+) -> Vec<DetectedQrCode> {
+    use rqrr::PreparedImage;
+    
+    let (orig_w, orig_h) = (img.width(), img.height());
+    let downsample_factor = if max_dim > 0 && (orig_w > max_dim || orig_h > max_dim) {
+        orig_w.max(orig_h) as f32 / max_dim as f32
+    } else {
+        1.0
+    };
+    
+    let gray = if downsample_factor > 1.0 {
+        let new_w = (orig_w as f32 / downsample_factor) as u32;
+        let new_h = (orig_h as f32 / downsample_factor) as u32;
+        let resized = image::imageops::resize(img, new_w, new_h, image::imageops::FilterType::Nearest);
+        image::DynamicImage::ImageRgba8(resized).to_luma8()
+    } else {
+        image::DynamicImage::ImageRgba8(img.clone()).to_luma8()
+    };
+    
+    let mut prepared = PreparedImage::prepare(gray);
+    let grids = prepared.detect_grids();
+    
+    let mut results = Vec::new();
+    for grid in grids {
+        if let Ok((_, content)) = grid.decode() {
+            let bounds = &grid.bounds;
+            let cx = (bounds[0].x + bounds[1].x + bounds[2].x + bounds[3].x) as f32 / 4.0;
+            let cy = (bounds[0].y + bounds[1].y + bounds[2].y + bounds[3].y) as f32 / 4.0;
+            
+            results.push(DetectedQrCode {
+                center_x: (cx * downsample_factor) / scale,
+                center_y: (cy * downsample_factor) / scale,
+                content,
+                output_name: output_name.to_string(),
+            });
+        }
+    }
+    
+    results
+}
+
+/// Check if a QR code is a duplicate (same content at similar position)
+fn is_duplicate_qr(existing: &[DetectedQrCode], new: &DetectedQrCode) -> bool {
+    const POSITION_THRESHOLD: f32 = 50.0; // pixels
+    existing.iter().any(|e| {
+        e.content == new.content 
+            && e.output_name == new.output_name
+            && (e.center_x - new.center_x).abs() < POSITION_THRESHOLD
+            && (e.center_y - new.center_y).abs() < POSITION_THRESHOLD
+    })
+}
+
 #[derive(zvariant::DeserializeDict, zvariant::Type, Clone, Debug)]
 #[zvariant(signature = "a{sv}")]
 pub struct ScreenshotOptions {
@@ -357,6 +428,7 @@ pub enum Msg {
     OutputChanged(WlOutput),
     WindowChosen(String, usize),
     Location(usize),
+    QrCodesDetected(Vec<DetectedQrCode>),
 }
 
 #[derive(Debug, Clone)]
@@ -389,6 +461,8 @@ pub struct Args {
     pub choice: Choice,
     pub location: ImageSaveLocation,
     pub action: Action,
+    pub qr_codes: Vec<DetectedQrCode>,
+    pub qr_scanning: bool,
 }
 
 struct Output {
@@ -458,6 +532,7 @@ impl Screenshot {
         
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
         
+        // Send UI immediately with empty QR codes, detection happens async
         if let Err(err) = self
             .tx
             .send(Event::Screenshot(Args {
@@ -475,6 +550,8 @@ impl Screenshot {
                 tx,
                 location: ImageSaveLocation::Pictures,
                 choice,
+                qr_codes: Vec::new(),
+                qr_scanning: true,
             }))
             .await
         {
@@ -534,6 +611,8 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::Location,
             theme.spacing,
             i as u128,
+            &args.qr_codes,
+            args.qr_scanning,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -751,6 +830,21 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 cosmic::Task::none()
             }
         }
+        Msg::QrCodesDetected(new_qr_codes) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // First pass completed - hide scanning indicator
+                // (more passes may still add QR codes in the background)
+                args.qr_scanning = false;
+                
+                // Merge new QR codes, avoiding duplicates
+                for qr in new_qr_codes {
+                    if !is_duplicate_qr(&args.qr_codes, &qr) {
+                        args.qr_codes.push(qr);
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -766,6 +860,8 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         action,
         location,
         toplevel_images,
+        qr_codes: _,
+        qr_scanning: _,
     } = &args;
 
     if app.outputs.len() != images.len() {
@@ -813,6 +909,42 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         fl!("save-to", "documents"),
     ];
 
+    // Spawn progressive QR detection tasks (3 passes with increasing resolution)
+    // Pass 1: 500px (fast, catches large QR codes)
+    // Pass 2: 1500px (medium, catches most QR codes)  
+    // Pass 3: full resolution (slow, catches small QR codes)
+    let detection_data: Vec<_> = app.outputs.iter().filter_map(|o| {
+        images.get(&o.name).map(|img| {
+            let scale = img.rgba.width() as f32 / o.logical_size.0 as f32;
+            (img.rgba.clone(), o.name.clone(), scale)
+        })
+    }).collect();
+    
+    let resolutions = [500u32, 1500, 0]; // 0 = full resolution
+    let mut qr_detection_tasks = Vec::new();
+    
+    for (pass_idx, max_dim) in resolutions.into_iter().enumerate() {
+        let data = detection_data.clone();
+        let task = cosmic::Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    let mut pass_results = Vec::new();
+                    for (rgba, name, scale) in data {
+                        let detected = detect_qr_codes_at_resolution(&rgba, &name, scale, max_dim);
+                        pass_results.extend(detected);
+                    }
+                    let res_label = if max_dim == 0 { "full".to_string() } else { format!("{}px", max_dim) };
+                    log::info!("QR pass {} ({}): found {} codes", pass_idx + 1, res_label, pass_results.len());
+                    pass_results
+                }).await.unwrap_or_default()
+            },
+            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
+        );
+        qr_detection_tasks.push(task);
+    }
+    
+    let qr_detection_task = cosmic::Task::batch(qr_detection_tasks);
+
     if app.screenshot_args.replace(args).is_none() {
         let cmds: Vec<_> = app
             .outputs
@@ -837,9 +969,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
                 },
             )
             .collect();
-        cosmic::Task::batch(cmds)
+        cosmic::Task::batch(cmds.into_iter().chain(std::iter::once(qr_detection_task)))
     } else {
         log::info!("Existing screenshot args updated");
-        cosmic::Task::none()
+        qr_detection_task
     }
 }

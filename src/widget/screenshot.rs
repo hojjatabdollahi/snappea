@@ -20,7 +20,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{Choice, Rect, ScreenshotImage},
+    screenshot::{Choice, DetectedQrCode, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -37,6 +37,12 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub bg_element: Element<'a, Msg>,
     pub fg_element: Element<'a, Msg>,
     pub menu_element: Element<'a, Msg>,
+    /// QR codes to display, with their positions relative to this output
+    pub qr_codes: Vec<(f32, f32, String)>, // (x, y, content)
+    /// Whether to show QR overlays (hidden when dragging)
+    pub show_qr_overlays: bool,
+    /// Whether QR scanning is in progress
+    pub qr_scanning: bool,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -59,6 +65,8 @@ where
         dropdown_selected: impl Fn(usize) -> Msg + 'static + Clone,
         spacing: Spacing,
         dnd_id: u128,
+        qr_codes: &[DetectedQrCode],
+        qr_scanning: bool,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -186,6 +194,21 @@ where
             cosmic::theme::Svg::Custom(Rc::new(|t| cosmic::iced_widget::svg::Style {
                 color: Some(t.cosmic().accent_color().into()),
             }));
+        
+        // Build QR overlay - only show when not actively dragging a rectangle
+        let show_qr_overlays = match choice {
+            Choice::Rectangle(_, DragState::None) => true,
+            Choice::Rectangle(_, _) => false, // Hide when dragging
+            _ => true,
+        };
+        
+        // Filter and prepare QR codes for this output
+        let qr_codes_for_output: Vec<(f32, f32, String)> = qr_codes
+            .iter()
+            .filter(|qr| qr.output_name == output.name)
+            .map(|qr| (qr.center_x, qr.center_y, qr.content.clone()))
+            .collect();
+        
         Self {
             id: cosmic::widget::Id::unique(),
             choices: Vec::new(),
@@ -193,6 +216,9 @@ where
             choice_labels: Vec::new(),
             bg_element,
             fg_element,
+            qr_codes: qr_codes_for_output,
+            show_qr_overlays,
+            qr_scanning,
             menu_element: cosmic::widget::container(
                 row![
                     row![
@@ -493,17 +519,158 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         viewport: &cosmic::iced_core::Rectangle,
     ) {
         use cosmic::iced_core::Renderer;
+        use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
+        
         let children = &[&self.bg_element, &self.fg_element, &self.menu_element];
-        let mut children = layout.children().zip(children).enumerate();
+        let mut children_iter = layout.children().zip(children).enumerate();
+        
+        // Draw bg_element first (screenshot background)
         {
-            let (i, (layout, child)) = children.next().unwrap();
+            let (i, (layout, child)) = children_iter.next().unwrap();
             let bg_tree = &tree.children[i];
             child
                 .as_widget()
                 .draw(bg_tree, renderer, theme, style, layout, cursor, viewport);
         }
 
-        for (i, (layout, child)) in children {
+        // Draw fg_element (rectangle selection overlay)
+        if let Some((i, (layout, child))) = children_iter.next() {
+            renderer.with_layer(layout.bounds(), |renderer| {
+                let tree = &tree.children[i];
+                child
+                    .as_widget()
+                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
+            });
+        }
+
+        // Draw QR scanning status or detected QR codes
+        if self.show_qr_overlays {
+            let cosmic_theme = theme.cosmic();
+            let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+            
+            // Show scanning indicator in top-left corner
+            if self.qr_scanning {
+                let scanning_text = "Scanning for QR codes...";
+                let font_size = 16.0_f32;
+                let char_width = font_size * 0.55;
+                let text_width = scanning_text.len() as f32 * char_width;
+                let text_height = font_size * 1.4;
+                let padding_h = 16.0;
+                let padding_v = 10.0;
+                
+                let bg_width = text_width + padding_h * 2.0;
+                let bg_height = text_height + padding_v * 2.0;
+                
+                let bg_rect = cosmic::iced_core::Rectangle {
+                    x: 20.0,
+                    y: 20.0,
+                    width: bg_width,
+                    height: bg_height,
+                };
+                
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: bg_rect,
+                            border: Border {
+                                radius: cosmic_theme.corner_radii.radius_s.into(),
+                                width: 2.0,
+                                color: accent_color,
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
+                    );
+                    
+                    let text = Text {
+                        content: scanning_text.to_string(),
+                        bounds: Size::new(bg_width, bg_height),
+                        size: cosmic::iced::Pixels(font_size),
+                        line_height: cosmic::iced_core::text::LineHeight::default(),
+                        font: cosmic::iced::Font::default(),
+                        horizontal_alignment: alignment::Horizontal::Center,
+                        vertical_alignment: alignment::Vertical::Center,
+                        shaping: cosmic::iced_core::text::Shaping::Advanced,
+                        wrapping: cosmic::iced_core::text::Wrapping::None,
+                    };
+                    
+                    renderer.fill_text(
+                        text,
+                        Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
+                        cosmic::iced::Color::WHITE,
+                        *viewport,
+                    );
+                });
+            }
+            
+            // Draw detected QR codes
+            for (x, y, content) in &self.qr_codes {
+                // Truncate long content
+                let display_text = if content.len() > 50 {
+                    format!("{}...", &content[..47])
+                } else {
+                    content.clone()
+                };
+                
+                // Estimate text size for background rectangle
+                let font_size = 14.0_f32;
+                let char_width = font_size * 0.6; // Approximate character width
+                let text_width = display_text.len() as f32 * char_width;
+                let text_height = font_size * 1.4;
+                let padding_h = 12.0;
+                let padding_v = 8.0;
+                
+                let bg_width = text_width + padding_h * 2.0;
+                let bg_height = text_height + padding_v * 2.0;
+                
+                let bg_rect = cosmic::iced_core::Rectangle {
+                    x: *x - bg_width / 2.0,
+                    y: *y - bg_height / 2.0,
+                    width: bg_width,
+                    height: bg_height,
+                };
+                
+                // Draw in a layer to ensure proper rendering
+                renderer.with_layer(*viewport, |renderer| {
+                    // Draw background with 80% opacity
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: bg_rect,
+                            border: Border {
+                                radius: cosmic_theme.corner_radii.radius_s.into(),
+                                width: 2.0,
+                                color: accent_color,
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
+                    );
+                    
+                    // Draw text centered in the background rect
+                    let text = Text {
+                        content: display_text.clone(),
+                        bounds: Size::new(bg_width, bg_height),
+                        size: cosmic::iced::Pixels(font_size),
+                        line_height: cosmic::iced_core::text::LineHeight::default(),
+                        font: cosmic::iced::Font::default(),
+                        horizontal_alignment: alignment::Horizontal::Center,
+                        vertical_alignment: alignment::Vertical::Center,
+                        shaping: cosmic::iced_core::text::Shaping::Advanced,
+                        wrapping: cosmic::iced_core::text::Wrapping::None,
+                    };
+                    
+                    renderer.fill_text(
+                        text,
+                        Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
+                        cosmic::iced::Color::WHITE,
+                        *viewport,
+                    );
+                });
+            }
+        }
+
+        // Draw menu_element last (toolbar at bottom)
+        for (i, (layout, child)) in children_iter {
             renderer.with_layer(layout.bounds(), |renderer| {
                 let tree = &tree.children[i];
                 child

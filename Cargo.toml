@@ -23,6 +23,7 @@ image = "0.25"
 log = "0.4.28"
 memmap2 = "0.9.8"
 png = "0.18"
+rqrr = "0.9"
 rustix = { version = "1.1", features = ["fs"] }
 serde = { version = "1.0", features = ["derive"] }
 tempfile = "3.23.0"
