@@ -1,0 +1,55 @@
+[package]
+name = "blazingshot"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Screenshot portal implementation for COSMIC desktop"
+
+[features]
+default = ["wgpu"]
+wgpu = ["cosmic/wgpu"]
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = "0.4"
+cosmic-bg-config = { git = "https://github.com/pop-os/cosmic-bg" }
+cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
+dirs = "6.0.0"
+env_logger = "0.11.8"
+futures = "0.3"
+image = "0.25"
+log = "0.4.28"
+memmap2 = "0.9.8"
+png = "0.18"
+rustix = { version = "1.1", features = ["fs"] }
+serde = { version = "1.0", features = ["derive"] }
+tempfile = "3.23.0"
+tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
+wayland-client = "0.31.11"
+wayland-protocols = "0.32.9"
+zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
+
+# i18n
+i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10"
+rust-embed = "8.7.2"
+
+[dependencies.cosmic]
+package = "libcosmic"
+git = "https://github.com/pop-os/libcosmic"
+default-features = false
+features = [
+    "dbus-config",
+    "multi-window",
+    "tokio",
+    "wayland",
+    "wgpu",
+    "winit",
+]
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+panic = "abort"

@@ -1,0 +1,4 @@
+[portal]
+DBusName=org.freedesktop.impl.portal.blazingshot
+Interfaces=org.freedesktop.impl.portal.Screenshot
+UseIn=COSMIC
