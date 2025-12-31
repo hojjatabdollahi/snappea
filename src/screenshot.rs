@@ -125,6 +125,225 @@ fn is_duplicate_qr(existing: &[DetectedQrCode], new: &DetectedQrCode) -> bool {
     })
 }
 
+const DETECTION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
+const RECOGNITION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
+
+fn get_model_cache_dir() -> std::path::PathBuf {
+    dirs::cache_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
+        .join("blazingshot")
+        .join("models")
+}
+
+fn download_model(url: &str, path: &std::path::Path) -> Result<(), String> {
+    log::info!("Downloading OCR model from {} to {:?}", url, path);
+    
+    // Create parent directories
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("Failed to create model directory: {}", e))?;
+    }
+    
+    // Use curl or wget via subprocess (blocking, but we're in spawn_blocking)
+    let output = std::process::Command::new("curl")
+        .args(["-L", "-o"])
+        .arg(path)
+        .arg(url)
+        .output()
+        .map_err(|e| format!("Failed to run curl: {}", e))?;
+    
+    if !output.status.success() {
+        return Err(format!(
+            "curl failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    
+    log::info!("Downloaded model to {:?}", path);
+    Ok(())
+}
+
+fn models_need_download() -> bool {
+    let cache_dir = get_model_cache_dir();
+    let detection_path = cache_dir.join("text-detection.rten");
+    let recognition_path = cache_dir.join("text-recognition.rten");
+    !detection_path.exists() || !recognition_path.exists()
+}
+
+fn ensure_models_downloaded() -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
+    let cache_dir = get_model_cache_dir();
+    let detection_path = cache_dir.join("text-detection.rten");
+    let recognition_path = cache_dir.join("text-recognition.rten");
+    
+    if !detection_path.exists() {
+        download_model(DETECTION_MODEL_URL, &detection_path)?;
+    }
+    
+    if !recognition_path.exists() {
+        download_model(RECOGNITION_MODEL_URL, &recognition_path)?;
+    }
+    
+    Ok((detection_path, recognition_path))
+}
+
+/// Run OCR on an image and return the detected text
+fn run_ocr_on_image(img: &RgbaImage) -> String {
+    use ocrs::{OcrEngine, OcrEngineParams, ImageSource};
+    use rten::Model;
+    
+    // Ensure models are downloaded
+    let (detection_path, recognition_path) = match ensure_models_downloaded() {
+        Ok(paths) => paths,
+        Err(e) => {
+            log::error!("Failed to download OCR models: {}", e);
+            return format!("Failed to download OCR models: {}", e);
+        }
+    };
+    
+    // Load models
+    let detection_model = match Model::load_file(&detection_path) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("Failed to load detection model: {}", e);
+            return format!("Failed to load detection model: {}", e);
+        }
+    };
+    
+    let recognition_model = match Model::load_file(&recognition_path) {
+        Ok(m) => m,
+        Err(e) => {
+            log::error!("Failed to load recognition model: {}", e);
+            return format!("Failed to load recognition model: {}", e);
+        }
+    };
+    
+    // Create OCR engine with loaded models
+    let engine = match OcrEngine::new(OcrEngineParams {
+        detection_model: Some(detection_model),
+        recognition_model: Some(recognition_model),
+        ..Default::default()
+    }) {
+        Ok(e) => e,
+        Err(e) => {
+            log::error!("Failed to create OCR engine: {}", e);
+            return format!("Failed to create OCR engine: {}", e);
+        }
+    };
+    
+    // Convert to RGB8 for OCR
+    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
+    let (width, height) = rgb.dimensions();
+    
+    // Create image source from raw pixels
+    let img_source = match ImageSource::from_bytes(rgb.as_raw(), (width, height)) {
+        Ok(src) => src,
+        Err(e) => {
+            log::error!("Failed to create image source: {}", e);
+            return format!("Failed to create image source: {}", e);
+        }
+    };
+    
+    // Prepare input
+    let ocr_input = match engine.prepare_input(img_source) {
+        Ok(input) => input,
+        Err(e) => {
+            log::error!("Failed to prepare OCR input: {}", e);
+            return format!("Failed to prepare OCR input: {}", e);
+        }
+    };
+    
+    // Use the simpler get_text method
+    match engine.get_text(&ocr_input) {
+        Ok(text) => {
+            if text.trim().is_empty() {
+                "No text detected".to_string()
+            } else {
+                text
+            }
+        }
+        Err(e) => {
+            log::error!("Failed to extract text: {}", e);
+            format!("Failed to extract text: {}", e)
+        }
+    }
+}
+
+/// Run OCR on an image and return status (for UI feedback)
+fn run_ocr_on_image_with_status(img: &RgbaImage) -> OcrStatus {
+    use ocrs::{OcrEngine, OcrEngineParams, ImageSource};
+    use rten::Model;
+    
+    // Ensure models are downloaded
+    let (detection_path, recognition_path) = match ensure_models_downloaded() {
+        Ok(paths) => paths,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to download OCR models: {}", e));
+        }
+    };
+    
+    // Load models
+    log::info!("Loading OCR models...");
+    let detection_model = match Model::load_file(&detection_path) {
+        Ok(m) => m,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to load detection model: {}", e));
+        }
+    };
+    
+    let recognition_model = match Model::load_file(&recognition_path) {
+        Ok(m) => m,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to load recognition model: {}", e));
+        }
+    };
+    
+    // Create OCR engine with loaded models
+    let engine = match OcrEngine::new(OcrEngineParams {
+        detection_model: Some(detection_model),
+        recognition_model: Some(recognition_model),
+        ..Default::default()
+    }) {
+        Ok(e) => e,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to create OCR engine: {}", e));
+        }
+    };
+    
+    // Convert to RGB8 for OCR
+    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
+    let (width, height) = rgb.dimensions();
+    
+    // Create image source from raw pixels
+    let img_source = match ImageSource::from_bytes(rgb.as_raw(), (width, height)) {
+        Ok(src) => src,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to create image source: {}", e));
+        }
+    };
+    
+    // Prepare input
+    let ocr_input = match engine.prepare_input(img_source) {
+        Ok(input) => input,
+        Err(e) => {
+            return OcrStatus::Error(format!("Failed to prepare OCR input: {}", e));
+        }
+    };
+    
+    // Use the simpler get_text method
+    match engine.get_text(&ocr_input) {
+        Ok(text) => {
+            if text.trim().is_empty() {
+                OcrStatus::Done("No text detected".to_string())
+            } else {
+                OcrStatus::Done(text)
+            }
+        }
+        Err(e) => {
+            OcrStatus::Error(format!("Failed to extract text: {}", e))
+        }
+    }
+}
+
 #[derive(zvariant::DeserializeDict, zvariant::Type, Clone, Debug)]
 #[zvariant(signature = "a{sv}")]
 pub struct ScreenshotOptions {
@@ -420,6 +639,16 @@ fn write_png<W: io::Write>(w: W, image: &RgbaImage) -> Result<(), png::EncodingE
     writer.write_image_data(image.as_raw())
 }
 
+#[derive(Debug, Clone, Default, PartialEq)]
+pub enum OcrStatus {
+    #[default]
+    Idle,
+    DownloadingModels,
+    Running,
+    Done(String),
+    Error(String),
+}
+
 #[derive(Debug, Clone)]
 pub enum Msg {
     Capture,
@@ -429,6 +658,8 @@ pub enum Msg {
     WindowChosen(String, usize),
     Location(usize),
     QrCodesDetected(Vec<DetectedQrCode>),
+    OcrRequested,
+    OcrStatus(OcrStatus),
 }
 
 #[derive(Debug, Clone)]
@@ -463,6 +694,7 @@ pub struct Args {
     pub action: Action,
     pub qr_codes: Vec<DetectedQrCode>,
     pub qr_scanning: bool,
+    pub ocr_status: OcrStatus,
 }
 
 struct Output {
@@ -552,6 +784,7 @@ impl Screenshot {
                 choice,
                 qr_codes: Vec::new(),
                 qr_scanning: true,
+                ocr_status: OcrStatus::Idle,
             }))
             .await
         {
@@ -600,6 +833,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             img,
             Msg::Capture,
             Msg::Cancel,
+            Msg::OcrRequested,
             output,
             id,
             Msg::OutputChanged,
@@ -613,6 +847,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             i as u128,
             &args.qr_codes,
             args.qr_scanning,
+            args.ocr_status.clone(),
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -845,6 +1080,88 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::OcrRequested => {
+            // Check if models need downloading and set appropriate status
+            let needs_download = models_need_download();
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ocr_status = if needs_download {
+                    OcrStatus::DownloadingModels
+                } else {
+                    OcrStatus::Running
+                };
+            }
+            
+            // Get the rectangle selection and run OCR on that area
+            if let Some(args) = app.screenshot_args.as_ref() {
+                if let Choice::Rectangle(rect, _) = &args.choice {
+                    if rect.width() > 0 && rect.height() > 0 {
+                        // Collect image data for the selected rectangle
+                        let mut region_data: Option<(RgbaImage, Rect)> = None;
+                        
+                        for output in &app.outputs {
+                            if let Some(img) = args.output_images.get(&output.name) {
+                                let output_rect = Rect {
+                                    left: output.logical_pos.0,
+                                    top: output.logical_pos.1,
+                                    right: output.logical_pos.0 + output.logical_size.0 as i32,
+                                    bottom: output.logical_pos.1 + output.logical_size.1 as i32,
+                                };
+                                
+                                if let Some(intersection) = rect.intersect(output_rect) {
+                                    // Scale to image coordinates
+                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                    let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
+                                    let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
+                                    let w = (intersection.width() as f32 * scale) as u32;
+                                    let h = (intersection.height() as f32 * scale) as u32;
+                                    
+                                    let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
+                                    region_data = Some((cropped, *rect));
+                                    break;
+                                }
+                            }
+                        }
+                        
+                        if let Some((cropped_img, _rect)) = region_data {
+                            // Run OCR in background with status updates
+                            return cosmic::Task::perform(
+                                async move {
+                                    tokio::task::spawn_blocking(move || {
+                                        run_ocr_on_image_with_status(&cropped_img)
+                                    }).await.unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
+                                },
+                                |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status))
+                            );
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::OcrStatus(status) => {
+            match &status {
+                OcrStatus::Done(text) => {
+                    log::info!("OCR Result: {}", text);
+                    if let Some(args) = app.screenshot_args.as_mut() {
+                        args.ocr_status = status.clone();
+                    }
+                    // Copy to clipboard
+                    return clipboard::write(text.clone());
+                }
+                OcrStatus::Error(err) => {
+                    log::error!("OCR Error: {}", err);
+                    if let Some(args) = app.screenshot_args.as_mut() {
+                        args.ocr_status = status;
+                    }
+                }
+                _ => {
+                    if let Some(args) = app.screenshot_args.as_mut() {
+                        args.ocr_status = status;
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -862,6 +1179,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         toplevel_images,
         qr_codes: _,
         qr_scanning: _,
+        ocr_status: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

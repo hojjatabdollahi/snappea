@@ -22,18 +22,23 @@ futures = "0.3"
 image = "0.25"
 log = "0.4.28"
 memmap2 = "0.9.8"
+ocrs = "0.12"
+rten = "0.24"
 png = "0.18"
-rqrr = "0.9"
+rqrr = "0.10"
 rustix = { version = "1.1", features = ["fs"] }
 serde = { version = "1.0", features = ["derive"] }
-tempfile = "3.23.0"
+tempfile = "3"
 tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
 wayland-client = "0.31.11"
 wayland-protocols = "0.32.9"
 zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
 
 # i18n
-i18n-embed = { version = "0.16", features = ["fluent-system", "desktop-requester"] }
+i18n-embed = { version = "0.16", features = [
+  "fluent-system",
+  "desktop-requester",
+] }
 i18n-embed-fl = "0.10"
 rust-embed = "8.7.2"
 
@@ -41,16 +46,17 @@ rust-embed = "8.7.2"
 package = "libcosmic"
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
-features = [
-    "dbus-config",
-    "multi-window",
-    "tokio",
-    "wayland",
-    "wgpu",
-    "winit",
-]
+features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
 
 [profile.release]
 opt-level = 3
 lto = "thin"
 panic = "abort"
+
+# Build rten dependencies in release mode even in debug builds for performance
+[profile.dev.package.rten]
+opt-level = 3
+[profile.dev.package.rten-imageproc]
+opt-level = 3
+[profile.dev.package.ocrs]
+opt-level = 3

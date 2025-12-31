@@ -84,12 +84,13 @@ pub struct RectangleSelection<Msg> {
     rectangle_selection: Rect,
     window_id: iced_core::window::Id,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
+    on_ocr: Option<Msg>,
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
 }
 
-impl<Msg> RectangleSelection<Msg> {
+impl<Msg: Clone> RectangleSelection<Msg> {
     pub fn new(
         output_rect: Rect,
         rectangle_selection: Rect,
@@ -97,9 +98,11 @@ impl<Msg> RectangleSelection<Msg> {
         window_id: iced_core::window::Id,
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
+        on_ocr: Option<Msg>,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
+            on_ocr,
             drag_state: drag_direction,
             rectangle_selection,
             output_rect,
@@ -212,6 +215,69 @@ impl<Msg> RectangleSelection<Msg> {
             return DragState::E;
         };
         DragState::None
+    }
+
+    /// Calculate OCR button bounds in widget-local coordinates
+    /// Returns None if button shouldn't be shown
+    fn ocr_button_bounds(&self) -> Option<Rectangle> {
+        let sel = self.rectangle_selection;
+        let width = (sel.right - sel.left).abs() as f32;
+        let height = (sel.bottom - sel.top).abs() as f32;
+        
+        if width <= 10.0 || height <= 10.0 {
+            return None;
+        }
+        
+        // Convert to widget-local coordinates (subtract output offset)
+        let outer_x = self.output_rect.left as f32;
+        let outer_y = self.output_rect.top as f32;
+        let outer_width = (self.output_rect.right - self.output_rect.left).abs() as f32;
+        
+        // Rectangle in widget-local coordinates
+        let rect_left = sel.left as f32 - outer_x;
+        let rect_right = sel.right as f32 - outer_x;
+        let rect_top = sel.top as f32 - outer_y;
+        
+        let button_width = 50.0_f32;
+        let button_height = 28.0_f32;
+        let margin = 8.0_f32;
+        
+        let min_rect_width_for_inside = button_width + margin * 2.0;
+        let min_rect_height_for_inside = button_height + margin * 2.0;
+        
+        let (button_x, button_y) = if rect_right + margin + button_width <= outer_width {
+            // Right side outside
+            (rect_right + margin, rect_top)
+        } else if width >= min_rect_width_for_inside 
+            && height >= min_rect_height_for_inside {
+            // Inside at top-right
+            (rect_right - button_width - margin, rect_top + margin)
+        } else if rect_left - margin - button_width >= 0.0 {
+            // Left side outside
+            (rect_left - button_width - margin, rect_top)
+        } else {
+            // Fallback: inside at top-left
+            (rect_left + margin, rect_top + margin)
+        };
+        
+        // Check bounds are valid
+        if button_x < 0.0 || button_y < 0.0 {
+            return None;
+        }
+        
+        Some(Rectangle::new(
+            Point::new(button_x, button_y),
+            Size::new(button_width, button_height),
+        ))
+    }
+    
+    /// Check if cursor is over the OCR button
+    fn is_over_ocr_button(&self, cursor: mouse::Cursor) -> bool {
+        if let Some(bounds) = self.ocr_button_bounds() {
+            cursor.is_over(bounds)
+        } else {
+            false
+        }
     }
 
     fn handle_drag_pos(&mut self, x: i32, y: i32, shell: &mut iced_core::Shell<'_, Msg>) {
@@ -333,6 +399,11 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> iced_core::mouse::Interaction {
+        // Check OCR button first
+        if self.is_over_ocr_button(cursor) {
+            return iced_core::mouse::Interaction::Pointer;
+        }
+        
         match self.drag_state(cursor) {
             DragState::None => {
                 if self.drag_state == DragState::None {
@@ -420,6 +491,14 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
 
                 if let iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) = e {
+                    // Check if clicking on OCR button
+                    if self.is_over_ocr_button(cursor) {
+                        if let Some(msg) = &self.on_ocr {
+                            shell.publish(msg.clone());
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    
                     let window_id = self.window_id;
 
                     clipboard.start_dnd(
@@ -592,6 +671,56 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 shadow: Shadow::default(),
             };
             renderer.fill_quad(quad, accent);
+        }
+
+        // Draw OCR button using the same bounds calculation as hit testing
+        if let Some(button_rect) = self.ocr_button_bounds() {
+            use cosmic::iced_core::alignment;
+            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
+            
+            let button_text = "OCR";
+            let font_size = 14.0_f32;
+            
+            // Check if button is within screen bounds
+            if button_rect.x >= 0.0 && button_rect.y >= 0.0 
+                && button_rect.x + button_rect.width <= outer_size.width
+                && button_rect.y + button_rect.height <= outer_size.height {
+                
+                // Draw button background
+                let button_quad = Quad {
+                    bounds: button_rect,
+                    border: Border {
+                        radius: radius_s.into(),
+                        width: 2.0,
+                        color: accent,
+                    },
+                    shadow: Shadow::default(),
+                };
+                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
+                
+                // Draw button text
+                let text = Text {
+                    content: button_text.to_string(),
+                    bounds: Size::new(button_rect.width, button_rect.height),
+                    size: cosmic::iced::Pixels(font_size),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                };
+                
+                renderer.fill_text(
+                    text,
+                    Point::new(
+                        button_rect.x + button_rect.width / 2.0,
+                        button_rect.y + button_rect.height / 2.0,
+                    ),
+                    Color::WHITE,
+                    Rectangle::new(Point::ORIGIN, outer_size),
+                );
+            }
         }
     }
 
