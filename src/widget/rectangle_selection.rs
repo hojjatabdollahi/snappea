@@ -84,8 +84,12 @@ pub struct RectangleSelection<Msg> {
     rectangle_selection: Rect,
     window_id: iced_core::window::Id,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
-    on_ocr: Option<Msg>,
-    on_qr: Option<Msg>,
+    on_ocr: Msg,
+    on_ocr_copy: Msg,
+    on_qr: Msg,
+    on_qr_copy: Msg,
+    has_ocr_text: bool,
+    has_qr_codes: bool,
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
@@ -99,13 +103,21 @@ impl<Msg: Clone> RectangleSelection<Msg> {
         window_id: iced_core::window::Id,
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
-        on_ocr: Option<Msg>,
-        on_qr: Option<Msg>,
+        on_ocr: Msg,
+        on_ocr_copy: Msg,
+        on_qr: Msg,
+        on_qr_copy: Msg,
+        has_ocr_text: bool,
+        has_qr_codes: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
             on_ocr,
+            on_ocr_copy,
             on_qr,
+            on_qr_copy,
+            has_ocr_text,
+            has_qr_codes,
             drag_state: drag_direction,
             rectangle_selection,
             output_rect,
@@ -516,16 +528,22 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 if let iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) = e {
                     // Check if clicking on OCR button
                     if self.is_over_ocr_button(cursor) {
-                        if let Some(msg) = &self.on_ocr {
-                            shell.publish(msg.clone());
+                        // If we have OCR results, copy and close; otherwise run OCR
+                        if self.has_ocr_text {
+                            shell.publish(self.on_ocr_copy.clone());
+                        } else {
+                            shell.publish(self.on_ocr.clone());
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
                     
                     // Check if clicking on QR button
                     if self.is_over_qr_button(cursor) {
-                        if let Some(msg) = &self.on_qr {
-                            shell.publish(msg.clone());
+                        // If we have QR codes, copy and close; otherwise run QR detection
+                        if self.has_qr_codes {
+                            shell.publish(self.on_qr_copy.clone());
+                        } else {
+                            shell.publish(self.on_qr.clone());
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -709,8 +727,14 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
             
-            let button_text = "OCR";
-            let font_size = 14.0_f32;
+            // Show "copy text" if we have OCR results, otherwise "OCR"
+            let button_text = if self.has_ocr_text { "copy text" } else { "OCR" };
+            let font_size = if self.has_ocr_text { 11.0_f32 } else { 14.0_f32 };
+            let border_color = if self.has_ocr_text { 
+                Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
+            } else { 
+                accent 
+            };
             
             // Check if button is within screen bounds
             if button_rect.x >= 0.0 && button_rect.y >= 0.0 
@@ -723,7 +747,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     border: Border {
                         radius: radius_s.into(),
                         width: 2.0,
-                        color: accent,
+                        color: border_color,
                     },
                     shadow: Shadow::default(),
                 };
@@ -759,8 +783,14 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
             
-            let button_text = "QR";
-            let font_size = 14.0_f32;
+            // Show "copy qr" if we have QR results, otherwise "QR"
+            let button_text = if self.has_qr_codes { "copy qr" } else { "QR" };
+            let font_size = if self.has_qr_codes { 11.0_f32 } else { 14.0_f32 };
+            let border_color = if self.has_qr_codes { 
+                Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
+            } else { 
+                accent 
+            };
             
             // Check if button is within screen bounds
             if button_rect.x >= 0.0 && button_rect.y >= 0.0 
@@ -773,7 +803,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     border: Border {
                         radius: radius_s.into(),
                         width: 2.0,
-                        color: accent,
+                        color: border_color,
                     },
                     shadow: Shadow::default(),
                 };

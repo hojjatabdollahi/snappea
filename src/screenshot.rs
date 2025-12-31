@@ -777,7 +777,9 @@ pub enum Msg {
     Location(usize),
     QrCodesDetected(Vec<DetectedQrCode>),
     QrRequested,
+    QrCopyAndClose,
     OcrRequested,
+    OcrCopyAndClose,
     OcrStatus(OcrStatus),
     OcrStatusClear,
 }
@@ -816,6 +818,8 @@ pub struct Args {
     pub qr_scanning: bool,
     pub ocr_status: OcrStatus,
     pub ocr_overlays: Vec<OcrTextOverlay>,
+    /// OCR text result for copying (stored separately from status)
+    pub ocr_text: Option<String>,
 }
 
 struct Output {
@@ -907,6 +911,7 @@ impl Screenshot {
                 qr_scanning: false,
                 ocr_status: OcrStatus::Idle,
                 ocr_overlays: Vec::new(),
+                ocr_text: None,
             }))
             .await
         {
@@ -956,7 +961,9 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::Capture,
             Msg::Cancel,
             Msg::OcrRequested,
+            Msg::OcrCopyAndClose,
             Msg::QrRequested,
+            Msg::QrCopyAndClose,
             output,
             id,
             Msg::OutputChanged,
@@ -972,6 +979,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.qr_scanning,
             &args.ocr_overlays,
             args.ocr_status.clone(),
+            args.ocr_text.is_some(),
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -1208,10 +1216,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
         }
         Msg::QrRequested => {
-            // Clear previous QR codes and start scanning
+            // Clear previous QR codes and OCR overlays, start scanning
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.qr_codes.clear();
                 args.qr_scanning = true;
+                // Hide OCR overlays when running QR
+                args.ocr_overlays.clear();
+                args.ocr_status = OcrStatus::Idle;
+                args.ocr_text = None;
             }
             
             // Get the rectangle selection and run QR detection on that area
@@ -1307,6 +1319,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 };
                 // Clear previous OCR overlays when starting a new run
                 args.ocr_overlays.clear();
+                args.ocr_text = None;
+                // Hide QR codes when running OCR
+                args.qr_codes.clear();
             }
             
             // Get the rectangle selection and run OCR on that area
@@ -1382,26 +1397,20 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status.clone();
                         args.ocr_overlays = overlays.clone();
+                        // Store text for later copying when user clicks the button
+                        if !text.is_empty() && text != "No text detected" {
+                            args.ocr_text = Some(text.clone());
+                        }
                         log::info!("Stored {} overlays in args", args.ocr_overlays.len());
                     }
-                    // Copy to clipboard
-                    let copy_task = clipboard::write(text.clone());
-                    // Schedule clearing the status banner after 1.5s
-                    let clear_task = cosmic::Task::perform(
-                        async {
-                            tokio::task::spawn_blocking(|| {
-                                std::thread::sleep(std::time::Duration::from_millis(1500));
-                            }).await.ok();
-                        },
-                        |_| crate::app::Msg::Screenshot(Msg::OcrStatusClear),
-                    );
-                    return cosmic::Task::batch(vec![copy_task, clear_task]);
+                    // Don't auto-copy - user will click "copy text" button
                 }
                 OcrStatus::Error(err) => {
                     log::error!("OCR Error: {}", err);
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status;
                         args.ocr_overlays.clear();
+                        args.ocr_text = None;
                     }
                 }
                 _ => {
@@ -1417,6 +1426,53 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.ocr_status = OcrStatus::Idle;
             }
             cosmic::Task::none()
+        }
+        Msg::OcrCopyAndClose => {
+            // Copy OCR text and close the app
+            let mut cmds: Vec<cosmic::Task<crate::app::Msg>> = app
+                .outputs
+                .iter()
+                .map(|o| destroy_layer_surface(o.id))
+                .collect();
+            
+            if let Some(args) = app.screenshot_args.take() {
+                let Args { tx, ocr_text, .. } = args;
+                
+                if let Some(text) = ocr_text {
+                    cmds.push(clipboard::write(text));
+                }
+                
+                tokio::spawn(async move {
+                    if let Err(err) = tx.send(PortalResponse::Cancelled).await {
+                        log::error!("Failed to send screenshot event");
+                    }
+                });
+            }
+            cosmic::Task::batch(cmds)
+        }
+        Msg::QrCopyAndClose => {
+            // Copy first QR code content and close the app
+            let mut cmds: Vec<cosmic::Task<crate::app::Msg>> = app
+                .outputs
+                .iter()
+                .map(|o| destroy_layer_surface(o.id))
+                .collect();
+            
+            if let Some(args) = app.screenshot_args.take() {
+                let Args { tx, qr_codes, .. } = args;
+                
+                // Copy first QR code content
+                if let Some(qr) = qr_codes.first() {
+                    cmds.push(clipboard::write(qr.content.clone()));
+                }
+                
+                tokio::spawn(async move {
+                    if let Err(err) = tx.send(PortalResponse::Cancelled).await {
+                        log::error!("Failed to send screenshot event");
+                    }
+                });
+            }
+            cosmic::Task::batch(cmds)
         }
     }
 }
@@ -1437,6 +1493,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         qr_scanning: _,
         ocr_status: _,
         ocr_overlays: _,
+        ocr_text: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

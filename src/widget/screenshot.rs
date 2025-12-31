@@ -59,7 +59,9 @@ where
         on_capture: Msg,
         on_cancel: Msg,
         on_ocr: Msg,
+        on_ocr_copy: Msg,
         on_qr: Msg,
+        on_qr_copy: Msg,
         output: &OutputState,
         window_id: window::Id,
         on_output_change: impl Fn(WlOutput) -> Msg,
@@ -75,6 +77,7 @@ where
         qr_scanning: bool,
         ocr_overlays: &[OcrTextOverlay],
         ocr_status: OcrStatus,
+        has_ocr_text: bool,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -89,8 +92,7 @@ where
         };
 
         let on_choice_change_clone = on_choice_change.clone();
-        let on_ocr_clone = on_ocr.clone();
-        let on_qr_clone = on_qr.clone();
+        let has_qr_codes = !qr_codes.is_empty();
         let fg_element = match choice {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -99,8 +101,12 @@ where
                 window_id,
                 dnd_id,
                 move |s, r| on_choice_change_clone(Choice::Rectangle(r, s)),
-                Some(on_ocr_clone),
-                Some(on_qr_clone),
+                on_ocr.clone(),
+                on_ocr_copy.clone(),
+                on_qr.clone(),
+                on_qr_copy.clone(),
+                has_ocr_text,
+                has_qr_codes,
             )
             .into(),
             Choice::Output(_) => {
