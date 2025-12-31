@@ -727,9 +727,12 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
             
-            // Show "copy text" if we have OCR results, otherwise "OCR"
-            let button_text = if self.has_ocr_text { "copy text" } else { "OCR" };
-            let font_size = if self.has_ocr_text { 11.0_f32 } else { 14.0_f32 };
+            // Show copy icon if we have OCR results, otherwise "OCR"
+            let (button_text, font_size) = if self.has_ocr_text { 
+                ("📋", 16.0_f32)  // Clipboard emoji as copy icon
+            } else { 
+                ("OCR", 14.0_f32)
+            };
             let border_color = if self.has_ocr_text { 
                 Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
             } else { 
@@ -753,7 +756,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 };
                 renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
                 
-                // Draw button text
+                // Draw button text/icon
                 let text = Text {
                     content: button_text.to_string(),
                     bounds: Size::new(button_rect.width, button_rect.height),
@@ -783,9 +786,12 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
             
-            // Show "copy qr" if we have QR results, otherwise "QR"
-            let button_text = if self.has_qr_codes { "copy qr" } else { "QR" };
-            let font_size = if self.has_qr_codes { 11.0_f32 } else { 14.0_f32 };
+            // Show copy icon if we have QR results, otherwise "QR"
+            let (button_text, font_size) = if self.has_qr_codes { 
+                ("📋", 16.0_f32)  // Clipboard emoji as copy icon
+            } else { 
+                ("QR", 14.0_f32)
+            };
             let border_color = if self.has_qr_codes { 
                 Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
             } else { 
@@ -809,7 +815,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 };
                 renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
                 
-                // Draw button text
+                // Draw button text/icon
                 let text = Text {
                     content: button_text.to_string(),
                     bounds: Size::new(button_rect.width, button_rect.height),
