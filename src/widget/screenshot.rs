@@ -57,7 +57,7 @@ where
 {
     pub fn new(
         choice: Choice,
-        image: &ScreenshotImage,
+        image: &'a ScreenshotImage,
         on_capture: Msg,
         on_cancel: Msg,
         on_ocr: Msg,
@@ -95,6 +95,9 @@ where
 
         let on_choice_change_clone = on_choice_change.clone();
         let has_qr_codes = !qr_codes.is_empty();
+        // Calculate scale factor (physical pixels per logical pixel)
+        let image_scale = image.rgba.width() as f32 / output.logical_size.0 as f32;
+        
         let fg_element = match choice {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -109,6 +112,8 @@ where
                 on_qr_copy.clone(),
                 has_ocr_text,
                 has_qr_codes,
+                &image.rgba,
+                image_scale,
             )
             .into(),
             Choice::Output(_) => {

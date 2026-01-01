@@ -8,11 +8,11 @@ use cosmic::{
         },
         mouse,
     },
-    iced_core::{
-        self, Border, Color, Length, Point, Rectangle, Shadow, Size,
-        clipboard::DndSource, layout::Node, renderer::Quad,
-    },
     iced_core::Renderer,
+    iced_core::{
+        self, Border, Color, Length, Point, Rectangle, Shadow, Size, clipboard::DndSource,
+        layout::Node, renderer::Quad,
+    },
     iced_widget::graphics::mesh::Renderer as MeshRenderer,
     widget::{self, Widget},
 };
@@ -78,8 +78,10 @@ impl From<u8> for DragState {
 
 const EDGE_GRAB_THICKNESS: f32 = 8.0;
 const CORNER_DIAMETER: f32 = 16.0;
+const MAGNIFIER_RADIUS: f32 = 60.0;
+const MAGNIFIER_ZOOM: f32 = 2.5;
 
-pub struct RectangleSelection<Msg> {
+pub struct RectangleSelection<'a, Msg> {
     output_rect: Rect,
     rectangle_selection: Rect,
     window_id: iced_core::window::Id,
@@ -93,9 +95,13 @@ pub struct RectangleSelection<Msg> {
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
+    /// Screenshot image for magnifier
+    screenshot_image: &'a image::RgbaImage,
+    /// Scale factor (physical pixels per logical pixel)
+    image_scale: f32,
 }
 
-impl<Msg: Clone> RectangleSelection<Msg> {
+impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
     pub fn new(
         output_rect: Rect,
         rectangle_selection: Rect,
@@ -109,6 +115,8 @@ impl<Msg: Clone> RectangleSelection<Msg> {
         on_qr_copy: Msg,
         has_ocr_text: bool,
         has_qr_codes: bool,
+        screenshot_image: &'a image::RgbaImage,
+        image_scale: f32,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -124,6 +132,8 @@ impl<Msg: Clone> RectangleSelection<Msg> {
             window_id,
             drag_id,
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
+            screenshot_image,
+            image_scale,
         }
     }
 
@@ -238,33 +248,32 @@ impl<Msg: Clone> RectangleSelection<Msg> {
         let sel = self.rectangle_selection;
         let width = (sel.right - sel.left).abs() as f32;
         let height = (sel.bottom - sel.top).abs() as f32;
-        
+
         if width <= 10.0 || height <= 10.0 {
             return None;
         }
-        
+
         // Convert to widget-local coordinates (subtract output offset)
         let outer_x = self.output_rect.left as f32;
         let outer_y = self.output_rect.top as f32;
         let outer_width = (self.output_rect.right - self.output_rect.left).abs() as f32;
-        
+
         // Rectangle in widget-local coordinates
         let rect_left = sel.left as f32 - outer_x;
         let rect_right = sel.right as f32 - outer_x;
         let rect_top = sel.top as f32 - outer_y;
-        
+
         let button_width = 50.0_f32;
         let button_height = 28.0_f32;
         let margin = 8.0_f32;
-        
+
         let min_rect_width_for_inside = button_width + margin * 2.0;
         let min_rect_height_for_inside = button_height + margin * 2.0;
-        
+
         let (button_x, button_y) = if rect_right + margin + button_width <= outer_width {
             // Right side outside
             (rect_right + margin, rect_top)
-        } else if width >= min_rect_width_for_inside 
-            && height >= min_rect_height_for_inside {
+        } else if width >= min_rect_width_for_inside && height >= min_rect_height_for_inside {
             // Inside at top-right
             (rect_right - button_width - margin, rect_top + margin)
         } else if rect_left - margin - button_width >= 0.0 {
@@ -274,18 +283,18 @@ impl<Msg: Clone> RectangleSelection<Msg> {
             // Fallback: inside at top-left
             (rect_left + margin, rect_top + margin)
         };
-        
+
         // Check bounds are valid
         if button_x < 0.0 || button_y < 0.0 {
             return None;
         }
-        
+
         Some(Rectangle::new(
             Point::new(button_x, button_y),
             Size::new(button_width, button_height),
         ))
     }
-    
+
     /// Check if cursor is over the OCR button
     fn is_over_ocr_button(&self, cursor: mouse::Cursor) -> bool {
         if let Some(bounds) = self.ocr_button_bounds() {
@@ -294,18 +303,21 @@ impl<Msg: Clone> RectangleSelection<Msg> {
             false
         }
     }
-    
+
     /// Calculate QR button bounds (positioned below OCR button)
     fn qr_button_bounds(&self) -> Option<Rectangle> {
         let ocr_bounds = self.ocr_button_bounds()?;
         let button_spacing = 4.0_f32;
-        
+
         Some(Rectangle::new(
-            Point::new(ocr_bounds.x, ocr_bounds.y + ocr_bounds.height + button_spacing),
+            Point::new(
+                ocr_bounds.x,
+                ocr_bounds.y + ocr_bounds.height + button_spacing,
+            ),
             Size::new(ocr_bounds.width, ocr_bounds.height),
         ))
     }
-    
+
     /// Check if cursor is over the QR button
     fn is_over_qr_button(&self, cursor: mouse::Cursor) -> bool {
         if let Some(bounds) = self.qr_button_bounds() {
@@ -401,8 +413,8 @@ impl<Msg: Clone> RectangleSelection<Msg> {
     }
 }
 
-impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
-    for RectangleSelection<Msg>
+impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
+    for RectangleSelection<'a, Msg>
 {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
@@ -438,7 +450,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         if self.is_over_ocr_button(cursor) || self.is_over_qr_button(cursor) {
             return iced_core::mouse::Interaction::Pointer;
         }
-        
+
         match self.drag_state(cursor) {
             DragState::None => {
                 if self.drag_state == DragState::None {
@@ -536,7 +548,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
-                    
+
                     // Check if clicking on QR button
                     if self.is_over_qr_button(cursor) {
                         // If we have QR codes, copy and close; otherwise run QR detection
@@ -547,7 +559,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
-                    
+
                     let window_id = self.window_id;
 
                     clipboard.start_dnd(
@@ -630,7 +642,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             let outer_tr = (outer_size.width, 0.0_f32);
             let outer_br = (outer_size.width, outer_size.height);
             let outer_bl = (0.0_f32, outer_size.height);
-            
+
             // Inner rectangle (selection) translated to output-relative coords
             let inner_tl = (
                 clipped_inner_rect.x - outer_rect.x,
@@ -648,21 +660,21 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 clipped_inner_rect.x - outer_rect.x,
                 clipped_inner_rect.y + clipped_inner_rect.height - outer_rect.y,
             );
-            
+
             // 8 vertices (0-based indices):
             // Outer: 0=TL, 1=TR, 2=BR, 3=BL
             // Inner: 4=TL, 5=TR, 6=BR, 7=BL
             let vertices = vec![
-                outer_tl,  // 0
-                outer_tr,  // 1
-                outer_br,  // 2
-                outer_bl,  // 3
-                inner_tl,  // 4
-                inner_tr,  // 5
-                inner_br,  // 6
-                inner_bl,  // 7
+                outer_tl, // 0
+                outer_tr, // 1
+                outer_br, // 2
+                outer_bl, // 3
+                inner_tl, // 4
+                inner_tr, // 5
+                inner_br, // 6
+                inner_bl, // 7
             ];
-            
+
             // 8 triangles forming the frame around selection (0-based indices)
             #[rustfmt::skip]
             let indices: Vec<u32> = vec![
@@ -707,7 +719,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             bounds: translated_clipped_inner_rect,
             border: Border {
                 radius: 0.0.into(),
-                width: 4.0,
+                width: 2.0,
                 color: accent,
             },
             shadow: Shadow::default(),
@@ -752,24 +764,25 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         if let Some(button_rect) = self.ocr_button_bounds() {
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-            
+
             // Show copy icon if we have OCR results, otherwise "OCR"
-            let (button_text, font_size) = if self.has_ocr_text { 
-                ("📋", 16.0_f32)  // Clipboard emoji as copy icon
-            } else { 
+            let (button_text, font_size) = if self.has_ocr_text {
+                ("📋", 16.0_f32) // Clipboard emoji as copy icon
+            } else {
                 ("OCR", 14.0_f32)
             };
-            let border_color = if self.has_ocr_text { 
+            let border_color = if self.has_ocr_text {
                 Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
-            } else { 
-                accent 
+            } else {
+                accent
             };
-            
+
             // Check if button is within screen bounds
-            if button_rect.x >= 0.0 && button_rect.y >= 0.0 
+            if button_rect.x >= 0.0
+                && button_rect.y >= 0.0
                 && button_rect.x + button_rect.width <= outer_size.width
-                && button_rect.y + button_rect.height <= outer_size.height {
-                
+                && button_rect.y + button_rect.height <= outer_size.height
+            {
                 // Draw button background
                 let button_quad = Quad {
                     bounds: button_rect,
@@ -781,7 +794,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     shadow: Shadow::default(),
                 };
                 renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
-                
+
                 // Draw button text/icon
                 let text = Text {
                     content: button_text.to_string(),
@@ -794,7 +807,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     shaping: cosmic::iced_core::text::Shaping::Advanced,
                     wrapping: cosmic::iced_core::text::Wrapping::None,
                 };
-                
+
                 renderer.fill_text(
                     text,
                     Point::new(
@@ -806,29 +819,30 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 );
             }
         }
-        
+
         // Draw QR button below OCR button
         if let Some(button_rect) = self.qr_button_bounds() {
             use cosmic::iced_core::alignment;
             use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-            
+
             // Show copy icon if we have QR results, otherwise "QR"
-            let (button_text, font_size) = if self.has_qr_codes { 
-                ("📋", 16.0_f32)  // Clipboard emoji as copy icon
-            } else { 
+            let (button_text, font_size) = if self.has_qr_codes {
+                ("📋", 16.0_f32) // Clipboard emoji as copy icon
+            } else {
                 ("QR", 14.0_f32)
             };
-            let border_color = if self.has_qr_codes { 
+            let border_color = if self.has_qr_codes {
                 Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
-            } else { 
-                accent 
+            } else {
+                accent
             };
-            
+
             // Check if button is within screen bounds
-            if button_rect.x >= 0.0 && button_rect.y >= 0.0 
+            if button_rect.x >= 0.0
+                && button_rect.y >= 0.0
                 && button_rect.x + button_rect.width <= outer_size.width
-                && button_rect.y + button_rect.height <= outer_size.height {
-                
+                && button_rect.y + button_rect.height <= outer_size.height
+            {
                 // Draw button background
                 let button_quad = Quad {
                     bounds: button_rect,
@@ -840,7 +854,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     shadow: Shadow::default(),
                 };
                 renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
-                
+
                 // Draw button text/icon
                 let text = Text {
                     content: button_text.to_string(),
@@ -853,7 +867,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     shaping: cosmic::iced_core::text::Shaping::Advanced,
                     wrapping: cosmic::iced_core::text::Wrapping::None,
                 };
-                
+
                 renderer.fill_text(
                     text,
                     Point::new(
@@ -863,6 +877,184 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     Color::WHITE,
                     Rectangle::new(Point::ORIGIN, outer_size),
                 );
+            }
+        }
+
+        // Draw magnifier when dragging a corner or initially drawing
+        // Use a layer to ensure magnifier is on top of everything (including button text)
+        if self.drag_state != DragState::None {
+            // Get the position of the corner being dragged (in global coords from rectangle_selection)
+            let drag_corner = match self.drag_state {
+                DragState::NW => {
+                    Some((self.rectangle_selection.left, self.rectangle_selection.top))
+                }
+                DragState::NE => {
+                    Some((self.rectangle_selection.right, self.rectangle_selection.top))
+                }
+                DragState::SW => Some((
+                    self.rectangle_selection.left,
+                    self.rectangle_selection.bottom,
+                )),
+                DragState::SE => Some((
+                    self.rectangle_selection.right,
+                    self.rectangle_selection.bottom,
+                )),
+                DragState::N => Some((
+                    (self.rectangle_selection.left + self.rectangle_selection.right) / 2,
+                    self.rectangle_selection.top,
+                )),
+                DragState::S => Some((
+                    (self.rectangle_selection.left + self.rectangle_selection.right) / 2,
+                    self.rectangle_selection.bottom,
+                )),
+                DragState::E => Some((
+                    self.rectangle_selection.right,
+                    (self.rectangle_selection.top + self.rectangle_selection.bottom) / 2,
+                )),
+                DragState::W => Some((
+                    self.rectangle_selection.left,
+                    (self.rectangle_selection.top + self.rectangle_selection.bottom) / 2,
+                )),
+                DragState::None => None,
+            };
+
+            if let Some((drag_x, drag_y)) = drag_corner {
+                renderer.with_layer(Rectangle::new(Point::ORIGIN, outer_size), |renderer| {
+                    // Convert to widget-local coordinates
+                    let cursor_pos =
+                        Point::new(drag_x as f32 - outer_rect.x, drag_y as f32 - outer_rect.y);
+
+                    // Position magnifier offset from cursor
+                    let magnifier_offset = MAGNIFIER_RADIUS + 20.0;
+                    let mag_center_x = (cursor_pos.x + magnifier_offset)
+                        .min(outer_size.width - MAGNIFIER_RADIUS - 5.0);
+                    let mag_center_y =
+                        (cursor_pos.y - magnifier_offset).max(MAGNIFIER_RADIUS + 5.0);
+
+                    // Sample from the screenshot image at the drag position
+                    // Convert to image coordinates
+                    let img_x =
+                        ((drag_x - self.output_rect.left) as f32 * self.image_scale) as i32;
+                    let img_y = ((drag_y - self.output_rect.top) as f32 * self.image_scale) as i32;
+
+                    let img_width = self.screenshot_image.width() as i32;
+                    let img_height = self.screenshot_image.height() as i32;
+
+                    // Draw magnifier background (dark circle, no border yet)
+                    let mag_bounds = Rectangle::new(
+                        Point::new(
+                            mag_center_x - MAGNIFIER_RADIUS,
+                            mag_center_y - MAGNIFIER_RADIUS,
+                        ),
+                        Size::new(MAGNIFIER_RADIUS * 2.0, MAGNIFIER_RADIUS * 2.0),
+                    );
+
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: mag_bounds,
+                            border: Border {
+                                radius: MAGNIFIER_RADIUS.into(),
+                                width: 0.0,
+                                color: Color::TRANSPARENT,
+                            },
+                            shadow: Shadow::default(),
+                        },
+                        Color::from_rgba(0.0, 0.0, 0.0, 0.9),
+                    );
+
+                    // Draw pixels inside magnifier
+                    let pixels_to_draw = (MAGNIFIER_RADIUS * 2.0 / MAGNIFIER_ZOOM) as i32;
+                    for dy in -pixels_to_draw / 2..=pixels_to_draw / 2 {
+                        for dx in -pixels_to_draw / 2..=pixels_to_draw / 2 {
+                            let src_x = img_x + dx;
+                            let src_y = img_y + dy;
+
+                            // Check if within magnifier circle (with margin for border)
+                            let dist = ((dx * dx + dy * dy) as f32).sqrt() * MAGNIFIER_ZOOM;
+                            if dist > MAGNIFIER_RADIUS - 3.0 {
+                                continue;
+                            }
+
+                            // Sample pixel if in bounds
+                            if src_x >= 0 && src_x < img_width && src_y >= 0 && src_y < img_height {
+                                let pixel =
+                                    self.screenshot_image.get_pixel(src_x as u32, src_y as u32);
+                                let color = Color::from_rgba8(
+                                    pixel[0],
+                                    pixel[1],
+                                    pixel[2],
+                                    pixel[3] as f32 / 255.0,
+                                );
+
+                                // Calculate position in magnifier
+                                let mag_px = mag_center_x + dx as f32 * MAGNIFIER_ZOOM;
+                                let mag_py = mag_center_y + dy as f32 * MAGNIFIER_ZOOM;
+
+                                // Draw zoomed pixel
+                                let pixel_bounds = Rectangle::new(
+                                    Point::new(
+                                        mag_px - MAGNIFIER_ZOOM / 2.0,
+                                        mag_py - MAGNIFIER_ZOOM / 2.0,
+                                    ),
+                                    Size::new(MAGNIFIER_ZOOM, MAGNIFIER_ZOOM),
+                                );
+
+                                renderer.fill_quad(
+                                    Quad {
+                                        bounds: pixel_bounds,
+                                        border: Border::default(),
+                                        shadow: Shadow::default(),
+                                    },
+                                    color,
+                                );
+                            }
+                        }
+                    }
+
+                    // Draw crosshair in center
+                    let crosshair_size = 8.0;
+                    let crosshair_color = Color::from_rgba(1.0, 1.0, 1.0, 0.8);
+
+                    // Horizontal line
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle::new(
+                                Point::new(mag_center_x - crosshair_size, mag_center_y - 0.5),
+                                Size::new(crosshair_size * 2.0, 1.0),
+                            ),
+                            border: Border::default(),
+                            shadow: Shadow::default(),
+                        },
+                        crosshair_color,
+                    );
+
+                    // Vertical line
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle::new(
+                                Point::new(mag_center_x - 0.5, mag_center_y - crosshair_size),
+                                Size::new(1.0, crosshair_size * 2.0),
+                            ),
+                            border: Border::default(),
+                            shadow: Shadow::default(),
+                        },
+                        crosshair_color,
+                    );
+
+                    // Draw border on top of everything
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: mag_bounds,
+                            border: Border {
+                                radius: MAGNIFIER_RADIUS.into(),
+                                width: 2.0,
+                                color: accent,
+                            },
+                            shadow: Shadow::default(),
+                        },
+                        Color::TRANSPARENT,
+                    );
+                });
             }
         }
     }
@@ -894,11 +1086,11 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
     }
 }
 
-impl<'a, Message> From<RectangleSelection<Message>> for cosmic::Element<'a, Message>
+impl<'a, Message> From<RectangleSelection<'a, Message>> for cosmic::Element<'a, Message>
 where
     Message: 'static + Clone,
 {
-    fn from(w: RectangleSelection<Message>) -> cosmic::Element<'a, Message> {
+    fn from(w: RectangleSelection<'a, Message>) -> cosmic::Element<'a, Message> {
         cosmic::Element::new(w)
     }
 }
