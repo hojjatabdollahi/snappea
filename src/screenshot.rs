@@ -789,6 +789,28 @@ struct OcrMapping {
     output_name: String,
 }
 
+/// Radial menu option
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RadialMenuOption {
+    Region,
+    Window,
+    Display,
+    Cancel,
+}
+
+/// Radial menu state for right-click context menu
+#[derive(Debug, Clone, Default)]
+pub struct RadialMenuState {
+    /// Whether the menu is visible
+    pub visible: bool,
+    /// Center position of the menu (in global logical coordinates)
+    pub center: (f32, f32),
+    /// Currently highlighted option (based on mouse position)
+    pub highlighted: Option<RadialMenuOption>,
+    /// Current output name where menu was opened
+    pub output_name: String,
+}
+
 #[derive(Debug, Clone)]
 pub enum Msg {
     Capture,
@@ -804,6 +826,9 @@ pub enum Msg {
     OcrCopyAndClose,
     OcrStatus(OcrStatus),
     OcrStatusClear,
+    RadialMenuOpen(f32, f32, String),  // x, y, output_name
+    RadialMenuUpdate(Option<RadialMenuOption>),  // highlighted option
+    RadialMenuSelect,  // select current highlighted option
 }
 
 #[derive(Debug, Clone)]
@@ -842,6 +867,8 @@ pub struct Args {
     pub ocr_overlays: Vec<OcrTextOverlay>,
     /// OCR text result for copying (stored separately from status)
     pub ocr_text: Option<String>,
+    /// Radial menu state for right-click context menu
+    pub radial_menu: RadialMenuState,
 }
 
 struct Output {
@@ -934,6 +961,7 @@ impl Screenshot {
                 ocr_status: OcrStatus::Idle,
                 ocr_overlays: Vec::new(),
                 ocr_text: None,
+                radial_menu: RadialMenuState::default(),
             }))
             .await
         {
@@ -976,6 +1004,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         return horizontal_space().width(Length::Fixed(1.0)).into();
     };
     let theme = app.core.system_theme().cosmic();
+    let output_name = output.name.clone();
     KeyboardWrapper::new(
         crate::widget::screenshot::ScreenshotSelection::new(
             args.choice.clone(),
@@ -1002,6 +1031,10 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             &args.ocr_overlays,
             args.ocr_status.clone(),
             args.ocr_text.is_some(),
+            &args.radial_menu,
+            move |x, y, name| Msg::RadialMenuOpen(x, y, name),
+            Msg::RadialMenuUpdate,
+            Msg::RadialMenuSelect,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -1540,6 +1573,51 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::batch(cmds)
         }
+        Msg::RadialMenuOpen(x, y, output_name) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.radial_menu = RadialMenuState {
+                    visible: true,
+                    center: (x, y),
+                    highlighted: Some(RadialMenuOption::Cancel),
+                    output_name,
+                };
+            }
+            cosmic::Task::none()
+        }
+        Msg::RadialMenuUpdate(option) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.radial_menu.highlighted = option;
+            }
+            cosmic::Task::none()
+        }
+        Msg::RadialMenuSelect => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                let selected = args.radial_menu.highlighted;
+                let output_name = args.radial_menu.output_name.clone();
+                
+                // Hide the menu
+                args.radial_menu.visible = false;
+                
+                match selected {
+                    Some(RadialMenuOption::Region) => {
+                        // Switch to rectangle selection mode
+                        args.choice = Choice::Rectangle(Rect::default(), DragState::None);
+                    }
+                    Some(RadialMenuOption::Window) => {
+                        // Switch to window selection mode
+                        args.choice = Choice::Window(output_name, None);
+                    }
+                    Some(RadialMenuOption::Display) => {
+                        // Switch to output/display selection mode
+                        args.choice = Choice::Output(output_name);
+                    }
+                    Some(RadialMenuOption::Cancel) | None => {
+                        // Do nothing, just close menu
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -1560,6 +1638,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         ocr_status: _,
         ocr_overlays: _,
         ocr_text: _,
+        radial_menu: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

@@ -20,7 +20,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, ScreenshotImage},
+    screenshot::{Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -49,6 +49,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub qr_scanning: bool,
     /// OCR status for display
     pub ocr_status: OcrStatus,
+    /// Radial menu state
+    pub radial_menu: RadialMenuState,
+    /// Output rect for this widget
+    pub output_rect: Rect,
+    /// Output name for this widget
+    pub output_name: String,
+    /// Callbacks for radial menu
+    pub on_radial_open: Option<Box<dyn Fn(f32, f32, String) -> Msg + 'a>>,
+    pub on_radial_update: Option<Box<dyn Fn(Option<RadialMenuOption>) -> Msg + 'a>>,
+    pub on_radial_select: Option<Msg>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -80,6 +90,10 @@ where
         ocr_overlays: &[OcrTextOverlay],
         ocr_status: OcrStatus,
         has_ocr_text: bool,
+        radial_menu: &RadialMenuState,
+        on_radial_open: impl Fn(f32, f32, String) -> Msg + 'a,
+        on_radial_update: impl Fn(Option<RadialMenuOption>) -> Msg + 'a,
+        on_radial_select: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -380,11 +394,17 @@ where
             })))
             .into(),
             choice,
+            radial_menu: radial_menu.clone(),
+            output_rect,
+            output_name: output.name.clone(),
+            on_radial_open: Some(Box::new(on_radial_open)),
+            on_radial_update: Some(Box::new(on_radial_update)),
+            on_radial_select: Some(on_radial_select),
         }
     }
 }
 
-impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
+impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
     for ScreenshotSelection<'a, Msg>
 {
     fn children(&self) -> Vec<cosmic::iced_core::widget::Tree> {
@@ -439,6 +459,74 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         viewport: &cosmic::iced_core::Rectangle,
     ) -> cosmic::iced_core::event::Status {
+        use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
+        
+        // Handle radial menu events
+        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event {
+            if let Some(pos) = cursor.position() {
+                // Check if menu is visible
+                if self.radial_menu.visible {
+                    // Handle mouse move to update highlighted option
+                    if let MouseEvent::CursorMoved { .. } = mouse_event {
+                        let (cx, cy) = self.radial_menu.center;
+                        // Convert to output-local coordinates
+                        let local_cx = cx - self.output_rect.left as f32;
+                        let local_cy = cy - self.output_rect.top as f32;
+                        
+                        let dx = pos.x - local_cx;
+                        let dy = pos.y - local_cy;
+                        let distance = (dx * dx + dy * dy).sqrt();
+                        
+                        let option = if distance < 30.0 {
+                            // Center - cancel
+                            Some(RadialMenuOption::Cancel)
+                        } else {
+                            // Calculate angle (0 = right, counter-clockwise)
+                            let angle = dy.atan2(dx);
+                            // Convert to degrees and normalize to 0-360
+                            let degrees = (angle.to_degrees() + 360.0) % 360.0;
+                            
+                            // 3 segments: Region (top: 210-330), Window (bottom-right: 330-90), Display (bottom-left: 90-210)
+                            // Adjusted for visual layout where top is Region
+                            if degrees >= 210.0 && degrees < 330.0 {
+                                Some(RadialMenuOption::Region) // Top segment
+                            } else if degrees >= 330.0 || degrees < 90.0 {
+                                Some(RadialMenuOption::Window) // Right segment
+                            } else {
+                                Some(RadialMenuOption::Display) // Left segment
+                            }
+                        };
+                        
+                        if let Some(ref on_radial_update) = self.on_radial_update {
+                            shell.publish(on_radial_update(option));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    
+                    // Handle mouse release to select option
+                    if let MouseEvent::ButtonReleased(Button::Right) = mouse_event {
+                        if let Some(ref on_radial_select) = self.on_radial_select {
+                            shell.publish(on_radial_select.clone());
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+                
+                // Handle right-click press to open menu
+                if let MouseEvent::ButtonPressed(Button::Right) = mouse_event {
+                    // Convert local position to global
+                    let global_x = pos.x + self.output_rect.left as f32;
+                    let global_y = pos.y + self.output_rect.top as f32;
+                    
+                    if let Some(ref on_radial_open) = self.on_radial_open {
+                        let output_name = self.output_name.clone();
+                        shell.publish(on_radial_open(global_x, global_y, output_name));
+                    }
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+        }
+        
         let children = [
             &mut self.bg_element,
             &mut self.fg_element,
@@ -853,6 +941,146 @@ impl<'a, Msg> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 child
                     .as_widget()
                     .draw(tree, renderer, theme, style, layout, cursor, viewport);
+            });
+        }
+
+        // Draw radial menu on top of everything if visible
+        if self.radial_menu.visible {
+            let (cx, cy) = self.radial_menu.center;
+            // Convert to output-local coordinates
+            let local_cx = cx - self.output_rect.left as f32;
+            let local_cy = cy - self.output_rect.top as f32;
+            
+            let outer_radius = 100.0_f32;
+            let inner_radius = 30.0_f32;
+            
+            renderer.with_layer(*viewport, |renderer| {
+                // Draw semi-transparent background circle
+                let bg_rect = cosmic::iced_core::Rectangle {
+                    x: local_cx - outer_radius,
+                    y: local_cy - outer_radius,
+                    width: outer_radius * 2.0,
+                    height: outer_radius * 2.0,
+                };
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: bg_rect,
+                        border: Border {
+                            radius: outer_radius.into(),
+                            width: 2.0,
+                            color: accent_color,
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
+                );
+                
+                // Draw center "cancel" circle
+                let center_color = if self.radial_menu.highlighted == Some(RadialMenuOption::Cancel) {
+                    cosmic::iced::Color::from_rgba(0.3, 0.3, 0.3, 1.0)
+                } else {
+                    cosmic::iced::Color::from_rgba(0.15, 0.15, 0.15, 1.0)
+                };
+                let center_rect = cosmic::iced_core::Rectangle {
+                    x: local_cx - inner_radius,
+                    y: local_cy - inner_radius,
+                    width: inner_radius * 2.0,
+                    height: inner_radius * 2.0,
+                };
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: center_rect,
+                        border: Border {
+                            radius: inner_radius.into(),
+                            width: 1.0,
+                            color: cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.8),
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(center_color),
+                );
+                
+                // Draw X icon in center
+                let x_text = Text {
+                    content: "✕".to_string(),
+                    bounds: Size::new(inner_radius * 2.0, inner_radius * 2.0),
+                    size: cosmic::iced::Pixels(20.0),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                };
+                renderer.fill_text(
+                    x_text,
+                    Point::new(local_cx, local_cy),
+                    cosmic::iced::Color::from_rgba(0.7, 0.7, 0.7, 1.0),
+                    *viewport,
+                );
+                
+                // Draw 3 segments with labels
+                // Segment positions: Region (top), Window (bottom-right), Display (bottom-left)
+                let segment_distance = (outer_radius + inner_radius) / 2.0 + 5.0;
+                let segments = [
+                    (RadialMenuOption::Region, "Region", -90.0_f32),   // Top
+                    (RadialMenuOption::Window, "Window", 30.0_f32),    // Bottom-right
+                    (RadialMenuOption::Display, "Display", 150.0_f32), // Bottom-left
+                ];
+                
+                for (option, label, angle_deg) in segments {
+                    let is_highlighted = self.radial_menu.highlighted == Some(option);
+                    let angle_rad = angle_deg.to_radians();
+                    let text_x = local_cx + angle_rad.cos() * segment_distance;
+                    let text_y = local_cy + angle_rad.sin() * segment_distance;
+                    
+                    // Draw highlight background if selected
+                    if is_highlighted {
+                        let highlight_size = 40.0_f32;
+                        let highlight_rect = cosmic::iced_core::Rectangle {
+                            x: text_x - highlight_size,
+                            y: text_y - highlight_size / 2.0,
+                            width: highlight_size * 2.0,
+                            height: highlight_size,
+                        };
+                        renderer.fill_quad(
+                            cosmic::iced_core::renderer::Quad {
+                                bounds: highlight_rect,
+                                border: Border {
+                                    radius: 8.0.into(),
+                                    width: 0.0,
+                                    color: cosmic::iced::Color::TRANSPARENT,
+                                },
+                                shadow: cosmic::iced_core::Shadow::default(),
+                            },
+                            Background::Color(accent_color),
+                        );
+                    }
+                    
+                    let text_color = if is_highlighted {
+                        cosmic::iced::Color::WHITE
+                    } else {
+                        cosmic::iced::Color::from_rgba(0.8, 0.8, 0.8, 1.0)
+                    };
+                    
+                    let label_text = Text {
+                        content: label.to_string(),
+                        bounds: Size::new(100.0, 30.0),
+                        size: cosmic::iced::Pixels(14.0),
+                        line_height: cosmic::iced_core::text::LineHeight::default(),
+                        font: cosmic::iced::Font::default(),
+                        horizontal_alignment: alignment::Horizontal::Center,
+                        vertical_alignment: alignment::Vertical::Center,
+                        shaping: cosmic::iced_core::text::Shaping::Advanced,
+                        wrapping: cosmic::iced_core::text::Wrapping::None,
+                    };
+                    renderer.fill_text(
+                        label_text,
+                        Point::new(text_x, text_y),
+                        text_color,
+                        *viewport,
+                    );
+                }
             });
         }
     }
