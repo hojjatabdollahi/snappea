@@ -936,15 +936,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
-        // Draw menu_element last (toolbar at bottom)
-        for (i, (layout, child)) in children_iter {
-            renderer.with_layer(layout.bounds(), |renderer| {
-                let tree = &tree.children[i];
-                child
-                    .as_widget()
-                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
-            });
-        }
+        // Menu bar hidden - using radial menu instead (right-click)
+        // Consume the iterator to avoid unused variable warning
+        let _ = children_iter;
 
         // Draw radial menu on top of everything if visible
         if self.radial_menu.visible {
