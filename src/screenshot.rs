@@ -795,6 +795,7 @@ pub enum RadialMenuOption {
     Region,
     Window,
     Display,
+    Exit,
     Cancel,
 }
 
@@ -1610,6 +1611,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     Some(RadialMenuOption::Display) => {
                         // Switch to output/display selection mode
                         args.choice = Choice::Output(output_name);
+                    }
+                    Some(RadialMenuOption::Exit) => {
+                        // Exit - same as pressing cancel button
+                        return update_msg(app, Msg::Cancel);
                     }
                     Some(RadialMenuOption::Cancel) | None => {
                         // Do nothing, just close menu

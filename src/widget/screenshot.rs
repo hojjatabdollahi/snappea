@@ -486,14 +486,16 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             // Convert to degrees and normalize to 0-360
                             let degrees = (angle.to_degrees() + 360.0) % 360.0;
                             
-                            // 3 segments: Region (top: 210-330), Window (bottom-right: 330-90), Display (bottom-left: 90-210)
-                            // Adjusted for visual layout where top is Region
-                            if degrees >= 210.0 && degrees < 330.0 {
+                            // 4 segments of 90 degrees each:
+                            // Region (top): 225-315, Window (right): 315-45, Display (bottom): 45-135, Exit (left): 135-225
+                            if degrees >= 225.0 && degrees < 315.0 {
                                 Some(RadialMenuOption::Region) // Top segment
-                            } else if degrees >= 330.0 || degrees < 90.0 {
+                            } else if degrees >= 315.0 || degrees < 45.0 {
                                 Some(RadialMenuOption::Window) // Right segment
+                            } else if degrees >= 45.0 && degrees < 135.0 {
+                                Some(RadialMenuOption::Display) // Bottom segment
                             } else {
-                                Some(RadialMenuOption::Display) // Left segment
+                                Some(RadialMenuOption::Exit) // Left segment
                             }
                         };
                         
@@ -1019,13 +1021,14 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     *viewport,
                 );
                 
-                // Draw 3 segments with labels
-                // Segment positions: Region (top), Window (bottom-right), Display (bottom-left)
+                // Draw 4 segments with labels
+                // Segment positions: Region (top), Window (right), Display (bottom), Exit (left)
                 let segment_distance = (outer_radius + inner_radius) / 2.0 + 5.0;
                 let segments = [
                     (RadialMenuOption::Region, "Region", -90.0_f32),   // Top
-                    (RadialMenuOption::Window, "Window", 30.0_f32),    // Bottom-right
-                    (RadialMenuOption::Display, "Display", 150.0_f32), // Bottom-left
+                    (RadialMenuOption::Window, "Window", 0.0_f32),     // Right
+                    (RadialMenuOption::Display, "Display", 90.0_f32), // Bottom
+                    (RadialMenuOption::Exit, "Exit", 180.0_f32),      // Left
                 ];
                 
                 for (option, label, angle_deg) in segments {
