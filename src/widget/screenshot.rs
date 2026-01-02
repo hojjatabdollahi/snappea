@@ -559,24 +559,34 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     return cosmic::iced_core::event::Status::Captured;
                 }
                 
-                // Handle arrow drawing mode
+                // Handle arrow drawing mode - only allow clicks inside the selection rectangle
                 if self.arrow_mode {
                     if let MouseEvent::ButtonPressed(Button::Left) = mouse_event {
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        
-                        if self.arrow_drawing.is_some() {
-                            // Finish the arrow
-                            if let Some(ref on_arrow_end) = self.on_arrow_end {
-                                shell.publish(on_arrow_end(global_x, global_y));
-                            }
+                        // Check if click is inside selection rectangle
+                        let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            pos.x >= sel_x && pos.x <= sel_x + sel_w &&
+                            pos.y >= sel_y && pos.y <= sel_y + sel_h
                         } else {
-                            // Start a new arrow
-                            if let Some(ref on_arrow_start) = self.on_arrow_start {
-                                shell.publish(on_arrow_start(global_x, global_y));
+                            false
+                        };
+                        
+                        if inside_selection {
+                            let global_x = pos.x + self.output_rect.left as f32;
+                            let global_y = pos.y + self.output_rect.top as f32;
+                            
+                            if self.arrow_drawing.is_some() {
+                                // Finish the arrow
+                                if let Some(ref on_arrow_end) = self.on_arrow_end {
+                                    shell.publish(on_arrow_end(global_x, global_y));
+                                }
+                            } else {
+                                // Start a new arrow
+                                if let Some(ref on_arrow_start) = self.on_arrow_start {
+                                    shell.publish(on_arrow_start(global_x, global_y));
+                                }
                             }
+                            return cosmic::iced_core::event::Status::Captured;
                         }
-                        return cosmic::iced_core::event::Status::Captured;
                     }
                 }
             }

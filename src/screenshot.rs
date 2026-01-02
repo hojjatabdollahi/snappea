@@ -93,6 +93,155 @@ pub struct ArrowAnnotation {
     pub end_y: f32,
 }
 
+/// Draw arrows onto an image
+/// selection_rect: the selection rectangle in logical coordinates (used as origin)
+/// scale: pixels per logical unit
+fn draw_arrows_on_image(
+    img: &mut RgbaImage,
+    arrows: &[ArrowAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    let arrow_color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let thickness = (4.0 * scale) as i32;
+    let head_size = 16.0 * scale;
+
+    for arrow in arrows {
+        // Convert from global logical to image pixel coordinates
+        let start_x = ((arrow.start_x - selection_rect.left as f32) * scale) as i32;
+        let start_y = ((arrow.start_y - selection_rect.top as f32) * scale) as i32;
+        let end_x = ((arrow.end_x - selection_rect.left as f32) * scale) as i32;
+        let end_y = ((arrow.end_y - selection_rect.top as f32) * scale) as i32;
+
+        // Draw the shaft using Bresenham's line with thickness
+        draw_thick_line(img, start_x, start_y, end_x, end_y, thickness, arrow_color);
+
+        // Draw arrowhead
+        let dx = (end_x - start_x) as f32;
+        let dy = (end_y - start_y) as f32;
+        let length = (dx * dx + dy * dy).sqrt();
+        if length < 1.0 {
+            continue;
+        }
+
+        let nx = dx / length;
+        let ny = dy / length;
+
+        // Arrowhead base point
+        let base_x = end_x as f32 - nx * head_size;
+        let base_y = end_y as f32 - ny * head_size;
+
+        // Perpendicular for arrowhead wings
+        let px = -ny * head_size * 0.5;
+        let py = nx * head_size * 0.5;
+
+        let wing1_x = (base_x + px) as i32;
+        let wing1_y = (base_y + py) as i32;
+        let wing2_x = (base_x - px) as i32;
+        let wing2_y = (base_y - py) as i32;
+
+        // Draw filled triangle for arrowhead
+        draw_filled_triangle(img, end_x, end_y, wing1_x, wing1_y, wing2_x, wing2_y, arrow_color);
+    }
+}
+
+/// Draw a thick line using multiple parallel lines
+fn draw_thick_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, thickness: i32, color: image::Rgba<u8>) {
+    let half = thickness / 2;
+    for offset in -half..=half {
+        // Calculate perpendicular offset
+        let dx = (x1 - x0) as f32;
+        let dy = (y1 - y0) as f32;
+        let len = (dx * dx + dy * dy).sqrt();
+        if len < 0.001 {
+            continue;
+        }
+        let px = (-dy / len) * offset as f32;
+        let py = (dx / len) * offset as f32;
+        
+        draw_line(img, 
+            x0 + px as i32, y0 + py as i32,
+            x1 + px as i32, y1 + py as i32,
+            color);
+    }
+}
+
+/// Draw a line using Bresenham's algorithm
+fn draw_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, color: image::Rgba<u8>) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    
+    let dx = (x1 - x0).abs();
+    let dy = -(y1 - y0).abs();
+    let sx = if x0 < x1 { 1 } else { -1 };
+    let sy = if y0 < y1 { 1 } else { -1 };
+    let mut err = dx + dy;
+    
+    let mut x = x0;
+    let mut y = y0;
+    
+    loop {
+        if x >= 0 && x < w && y >= 0 && y < h {
+            img.put_pixel(x as u32, y as u32, color);
+        }
+        
+        if x == x1 && y == y1 {
+            break;
+        }
+        
+        let e2 = 2 * err;
+        if e2 >= dy {
+            err += dy;
+            x += sx;
+        }
+        if e2 <= dx {
+            err += dx;
+            y += sy;
+        }
+    }
+}
+
+/// Draw a filled triangle using scanline algorithm
+fn draw_filled_triangle(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: image::Rgba<u8>) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    
+    // Sort vertices by y coordinate
+    let mut verts = [(x0, y0), (x1, y1), (x2, y2)];
+    verts.sort_by_key(|v| v.1);
+    let [(x0, y0), (x1, y1), (x2, y2)] = verts;
+    
+    // Helper to interpolate x for a given y on edge from (xa,ya) to (xb,yb)
+    let interp_x = |y: i32, xa: i32, ya: i32, xb: i32, yb: i32| -> i32 {
+        if ya == yb {
+            xa
+        } else {
+            xa + (xb - xa) * (y - ya) / (yb - ya)
+        }
+    };
+    
+    for y in y0.max(0)..=y2.min(h - 1) {
+        let mut x_left;
+        let mut x_right;
+        
+        if y < y1 {
+            // Upper part of triangle
+            x_left = interp_x(y, x0, y0, x1, y1);
+            x_right = interp_x(y, x0, y0, x2, y2);
+        } else {
+            // Lower part of triangle
+            x_left = interp_x(y, x1, y1, x2, y2);
+            x_right = interp_x(y, x0, y0, x2, y2);
+        }
+        
+        if x_left > x_right {
+            std::mem::swap(&mut x_left, &mut x_right);
+        }
+        
+        for x in x_left.max(0)..=x_right.min(w - 1) {
+            img.put_pixel(x as u32, y as u32, color);
+        }
+    }
+}
+
 /// Detect QR codes in an image at a specific resolution
 /// max_dim: maximum dimension to downsample to (0 = no downsampling)
 pub fn detect_qr_codes_at_resolution(
@@ -1094,6 +1243,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 choice,
                 output_images: mut images,
                 location,
+                arrows,
                 ..
             } = args;
 
@@ -1185,7 +1335,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 Some((cropped, physical_intersect))
                             })
                             .collect::<Vec<_>>();
-                        let img = combined_image(physical_bounds, frames);
+                        let mut img = combined_image(physical_bounds, frames);
+
+                        // Draw arrows onto the final image
+                        if !arrows.is_empty() {
+                            draw_arrows_on_image(&mut img, &arrows, &r, target_scale);
+                        }
 
                         if let Some(ref image_path) = image_path {
                             if let Err(err) = Screenshot::save_rgba(&img, image_path) {
