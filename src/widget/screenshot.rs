@@ -34,6 +34,250 @@ use super::{
     rectangle_selection::{DragState, RectangleSelection},
 };
 
+/// Widget for selecting toolbar position with triangular hit regions
+pub struct ToolbarPositionSelector<Msg> {
+    size: f32,
+    current_position: ToolbarPosition,
+    on_top: Msg,
+    on_bottom: Msg,
+    on_left: Msg,
+    on_right: Msg,
+}
+
+impl<Msg: Clone> ToolbarPositionSelector<Msg> {
+    pub fn new(
+        size: f32,
+        current_position: ToolbarPosition,
+        on_top: Msg,
+        on_bottom: Msg,
+        on_left: Msg,
+        on_right: Msg,
+    ) -> Self {
+        Self {
+            size,
+            current_position,
+            on_top,
+            on_bottom,
+            on_left,
+            on_right,
+        }
+    }
+
+    /// Determine which triangular region a point falls into
+    /// The square is divided into 4 triangles from the center
+    fn get_region(&self, x: f32, y: f32, bounds: cosmic::iced_core::Rectangle) -> Option<ToolbarPosition> {
+        let local_x = x - bounds.x;
+        let local_y = y - bounds.y;
+        let _center_x = bounds.width / 2.0;
+        let _center_y = bounds.height / 2.0;
+        
+        // Check if point is inside bounds
+        if local_x < 0.0 || local_x > bounds.width || local_y < 0.0 || local_y > bounds.height {
+            return None;
+        }
+        
+        // Calculate which triangle the point is in
+        // Top triangle: above both diagonals
+        // Bottom triangle: below both diagonals
+        // Left triangle: left of both diagonals
+        // Right triangle: right of both diagonals
+        
+        // Diagonal from top-left to bottom-right: y = x * (height/width)
+        // Diagonal from top-right to bottom-left: y = height - x * (height/width)
+        
+        let diag1 = local_x * (bounds.height / bounds.width); // TL to BR
+        let diag2 = bounds.height - local_x * (bounds.height / bounds.width); // TR to BL
+        
+        let above_diag1 = local_y < diag1;
+        let above_diag2 = local_y < diag2;
+        
+        match (above_diag1, above_diag2) {
+            (true, true) => Some(ToolbarPosition::Top),    // Above both diagonals
+            (false, false) => Some(ToolbarPosition::Bottom), // Below both diagonals
+            (true, false) => Some(ToolbarPosition::Right),  // Above diag1, below diag2
+            (false, true) => Some(ToolbarPosition::Left),   // Below diag1, above diag2
+        }
+    }
+}
+
+impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer> for ToolbarPositionSelector<Msg> {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fixed(self.size), Length::Fixed(self.size))
+    }
+
+    fn layout(&self, _tree: &mut cosmic::iced_core::widget::Tree, _renderer: &cosmic::Renderer, _limits: &cosmic::iced::Limits) -> layout::Node {
+        layout::Node::new(Size::new(self.size, self.size))
+    }
+
+    fn draw(
+        &self,
+        _tree: &cosmic::iced_core::widget::Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        _style: &cosmic::iced_core::renderer::Style,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        _viewport: &cosmic::iced_core::Rectangle,
+    ) {
+        use cosmic::iced_core::Renderer as _;
+        
+        let bounds = layout.bounds();
+        let cosmic_theme = theme.cosmic();
+        let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+        let base_color = cosmic::iced::Color::from(cosmic_theme.background.component.base);
+        let hover_color = cosmic::iced::Color::from(cosmic_theme.background.component.hover);
+        
+        // Determine hovered region
+        let hovered_region = cursor.position().and_then(|pos| self.get_region(pos.x, pos.y, bounds));
+        
+        let edge_thickness = 4.0;
+        let gap = 2.0;
+        let inner_size = bounds.width - edge_thickness * 2.0 - gap * 2.0;
+        
+        // Draw the 4 edge rectangles
+        // Top edge
+        let top_color = if self.current_position == ToolbarPosition::Top {
+            accent
+        } else if hovered_region == Some(ToolbarPosition::Top) {
+            hover_color
+        } else {
+            base_color
+        };
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: cosmic::iced_core::Rectangle {
+                    x: bounds.x + edge_thickness + gap,
+                    y: bounds.y,
+                    width: inner_size,
+                    height: edge_thickness,
+                },
+                border: Border::default(),
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(top_color),
+        );
+        
+        // Bottom edge
+        let bottom_color = if self.current_position == ToolbarPosition::Bottom {
+            accent
+        } else if hovered_region == Some(ToolbarPosition::Bottom) {
+            hover_color
+        } else {
+            base_color
+        };
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: cosmic::iced_core::Rectangle {
+                    x: bounds.x + edge_thickness + gap,
+                    y: bounds.y + bounds.height - edge_thickness,
+                    width: inner_size,
+                    height: edge_thickness,
+                },
+                border: Border::default(),
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(bottom_color),
+        );
+        
+        // Left edge
+        let left_color = if self.current_position == ToolbarPosition::Left {
+            accent
+        } else if hovered_region == Some(ToolbarPosition::Left) {
+            hover_color
+        } else {
+            base_color
+        };
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: cosmic::iced_core::Rectangle {
+                    x: bounds.x,
+                    y: bounds.y + edge_thickness + gap,
+                    width: edge_thickness,
+                    height: inner_size,
+                },
+                border: Border::default(),
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(left_color),
+        );
+        
+        // Right edge
+        let right_color = if self.current_position == ToolbarPosition::Right {
+            accent
+        } else if hovered_region == Some(ToolbarPosition::Right) {
+            hover_color
+        } else {
+            base_color
+        };
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: cosmic::iced_core::Rectangle {
+                    x: bounds.x + bounds.width - edge_thickness,
+                    y: bounds.y + edge_thickness + gap,
+                    width: edge_thickness,
+                    height: inner_size,
+                },
+                border: Border::default(),
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(right_color),
+        );
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &cosmic::iced_core::widget::Tree,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        _viewport: &cosmic::iced_core::Rectangle,
+        _renderer: &cosmic::Renderer,
+    ) -> cosmic::iced_core::mouse::Interaction {
+        if let Some(pos) = cursor.position() {
+            if self.get_region(pos.x, pos.y, layout.bounds()).is_some() {
+                return cosmic::iced_core::mouse::Interaction::Pointer;
+            }
+        }
+        cosmic::iced_core::mouse::Interaction::default()
+    }
+
+    fn on_event(
+        &mut self,
+        _state: &mut cosmic::iced_core::widget::Tree,
+        event: cosmic::iced_core::Event,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        _renderer: &cosmic::Renderer,
+        _clipboard: &mut dyn cosmic::iced_core::Clipboard,
+        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
+        _viewport: &cosmic::iced_core::Rectangle,
+    ) -> cosmic::iced_core::event::Status {
+        if let cosmic::iced_core::Event::Mouse(cosmic::iced_core::mouse::Event::ButtonPressed(
+            cosmic::iced_core::mouse::Button::Left,
+        )) = event
+        {
+            if let Some(pos) = cursor.position() {
+                if let Some(region) = self.get_region(pos.x, pos.y, layout.bounds()) {
+                    let msg = match region {
+                        ToolbarPosition::Top => self.on_top.clone(),
+                        ToolbarPosition::Bottom => self.on_bottom.clone(),
+                        ToolbarPosition::Left => self.on_left.clone(),
+                        ToolbarPosition::Right => self.on_right.clone(),
+                    };
+                    shell.publish(msg);
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+        }
+        cosmic::iced_core::event::Status::Ignored
+    }
+}
+
+impl<'a, Msg: Clone + 'static> From<ToolbarPositionSelector<Msg>> for Element<'a, Msg> {
+    fn from(widget: ToolbarPositionSelector<Msg>) -> Self {
+        Element::new(widget)
+    }
+}
+
 /// Widget for displaying a selected window or output with OCR/QR/arrow buttons
 pub struct SelectedImageWidget<Msg> {
     image_handle: Option<cosmic::widget::image::Handle>,
@@ -198,20 +442,71 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
             );
         }
         
-        // Draw border around the image
+        // Draw border around the image (similar to rectangle selection)
         let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+        
+        // First draw a semi-transparent glow/shadow
+        let mut glow_color = accent;
+        glow_color.a = 0.5;
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: cosmic::iced_core::Rectangle {
+                    x: image_bounds.x - 2.0,
+                    y: image_bounds.y - 2.0,
+                    width: image_bounds.width + 4.0,
+                    height: image_bounds.height + 4.0,
+                },
+                border: Border {
+                    radius: 0.0.into(),
+                    width: 6.0,
+                    color: glow_color,
+                },
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(cosmic::iced::Color::TRANSPARENT),
+        );
+        
+        // Then draw the solid accent border
         renderer.fill_quad(
             cosmic::iced_core::renderer::Quad {
                 bounds: image_bounds,
                 border: Border {
-                    radius: cosmic_theme.radius_s().into(),
-                    width: 4.0,
+                    radius: 0.0.into(),
+                    width: 2.0,
                     color: accent,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
             },
             Background::Color(cosmic::iced::Color::TRANSPARENT),
         );
+        
+        // Draw corner handles
+        let corner_size = 12.0;
+        let corners = [
+            (image_bounds.x, image_bounds.y), // TL
+            (image_bounds.x + image_bounds.width, image_bounds.y), // TR
+            (image_bounds.x, image_bounds.y + image_bounds.height), // BL
+            (image_bounds.x + image_bounds.width, image_bounds.y + image_bounds.height), // BR
+        ];
+        for (cx, cy) in corners {
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: cosmic::iced_core::Rectangle {
+                        x: cx - corner_size / 2.0,
+                        y: cy - corner_size / 2.0,
+                        width: corner_size,
+                        height: corner_size,
+                    },
+                    border: Border {
+                        radius: cosmic_theme.radius_s().into(),
+                        width: 0.0,
+                        color: cosmic::iced::Color::TRANSPARENT,
+                    },
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                Background::Color(accent),
+            );
+        }
         
         // Draw OCR button
         let ocr_bounds = self.ocr_button_bounds(image_bounds);
@@ -241,15 +536,15 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 content: ocr_text.into(),
                 bounds: Size::new(ocr_bounds.width, ocr_bounds.height),
                 size: cosmic::iced::Pixels(14.0),
-                line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                line_height: cosmic::iced_core::text::LineHeight::default(),
                 font: cosmic::iced::Font::default(),
                 horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
                 vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
                 shaping: cosmic::iced_core::text::Shaping::Advanced,
                 wrapping: cosmic::iced_core::text::Wrapping::None,
             },
-            Point::new(ocr_bounds.x, ocr_bounds.y),
-            cosmic_theme.on_accent_color().into(),
+            Point::new(ocr_bounds.x + ocr_bounds.width / 2.0, ocr_bounds.y + ocr_bounds.height / 2.0),
+            cosmic::iced::Color::WHITE,
             *viewport,
         );
         
@@ -281,15 +576,15 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 content: qr_text.into(),
                 bounds: Size::new(qr_bounds.width, qr_bounds.height),
                 size: cosmic::iced::Pixels(14.0),
-                line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                line_height: cosmic::iced_core::text::LineHeight::default(),
                 font: cosmic::iced::Font::default(),
                 horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
                 vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
                 shaping: cosmic::iced_core::text::Shaping::Advanced,
                 wrapping: cosmic::iced_core::text::Wrapping::None,
             },
-            Point::new(qr_bounds.x, qr_bounds.y),
-            cosmic_theme.on_accent_color().into(),
+            Point::new(qr_bounds.x + qr_bounds.width / 2.0, qr_bounds.y + qr_bounds.height / 2.0),
+            cosmic::iced::Color::WHITE,
             *viewport,
         );
         
@@ -322,15 +617,15 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     content: "→".into(),
                     bounds: Size::new(arrow_bounds.width, arrow_bounds.height),
                     size: cosmic::iced::Pixels(18.0),
-                    line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
                     font: cosmic::iced::Font::default(),
                     horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
                     vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
                     shaping: cosmic::iced_core::text::Shaping::Advanced,
                     wrapping: cosmic::iced_core::text::Wrapping::None,
                 },
-                Point::new(arrow_bounds.x, arrow_bounds.y),
-                cosmic_theme.on_accent_color().into(),
+                Point::new(arrow_bounds.x + arrow_bounds.width / 2.0, arrow_bounds.y + arrow_bounds.height / 2.0),
+                cosmic::iced::Color::WHITE,
                 *viewport,
             );
         }
@@ -782,62 +1077,15 @@ where
             qr_scanning,
             ocr_status,
             menu_element: {
-                // Position selector - 4 rectangles representing screen edges
-                let pos_btn_size = 14.0_f32;
-                let pos_gap = 2.0_f32;
-                let pos_inner_size = 16.0_f32;
-                
-                let on_toolbar_pos_top = on_toolbar_position(ToolbarPosition::Top);
-                let on_toolbar_pos_bottom = on_toolbar_position(ToolbarPosition::Bottom);
-                let on_toolbar_pos_left = on_toolbar_position(ToolbarPosition::Left);
-                let on_toolbar_pos_right = on_toolbar_position(ToolbarPosition::Right);
-                
-                let position_selector: Element<'_, Msg> = column![
-                    // Top button
-                    cosmic::widget::container(
-                        button::custom(
-                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
-                                .width(Length::Fixed(pos_btn_size))
-                                .height(Length::Fixed(pos_btn_size * 0.5))
-                        )
-                        .class(if toolbar_position == ToolbarPosition::Top { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
-                        .on_press(on_toolbar_pos_top)
-                        .padding(0)
-                    ).width(Length::Fixed(pos_btn_size + pos_inner_size + pos_btn_size)).align_x(cosmic::iced_core::alignment::Horizontal::Center),
-                    // Middle row: Left, center gap, Right
-                    row![
-                        button::custom(
-                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
-                                .width(Length::Fixed(pos_btn_size * 0.5))
-                                .height(Length::Fixed(pos_btn_size))
-                        )
-                        .class(if toolbar_position == ToolbarPosition::Left { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
-                        .on_press(on_toolbar_pos_left)
-                        .padding(0),
-                        cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
-                            .width(Length::Fixed(pos_inner_size))
-                            .height(Length::Fixed(pos_inner_size)),
-                        button::custom(
-                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
-                                .width(Length::Fixed(pos_btn_size * 0.5))
-                                .height(Length::Fixed(pos_btn_size))
-                        )
-                        .class(if toolbar_position == ToolbarPosition::Right { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
-                        .on_press(on_toolbar_pos_right)
-                        .padding(0)
-                    ].spacing(pos_gap).align_y(cosmic::iced_core::Alignment::Center),
-                    // Bottom button
-                    cosmic::widget::container(
-                        button::custom(
-                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
-                                .width(Length::Fixed(pos_btn_size))
-                                .height(Length::Fixed(pos_btn_size * 0.5))
-                        )
-                        .class(if toolbar_position == ToolbarPosition::Bottom { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
-                        .on_press(on_toolbar_pos_bottom)
-                        .padding(0)
-                    ).width(Length::Fixed(pos_btn_size + pos_inner_size + pos_btn_size)).align_x(cosmic::iced_core::alignment::Horizontal::Center)
-                ].spacing(pos_gap).align_x(cosmic::iced_core::Alignment::Center).into();
+                // Position selector - custom widget with triangular hit regions
+                let position_selector: Element<'_, Msg> = ToolbarPositionSelector::new(
+                    40.0, // size of the selector widget
+                    toolbar_position,
+                    on_toolbar_position(ToolbarPosition::Top),
+                    on_toolbar_position(ToolbarPosition::Bottom),
+                    on_toolbar_position(ToolbarPosition::Left),
+                    on_toolbar_position(ToolbarPosition::Right),
+                ).into();
                 
                 // Common buttons
                 let btn_region = button::custom(

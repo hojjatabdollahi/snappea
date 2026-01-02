@@ -1387,15 +1387,41 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     {
                         let mut final_img = img.rgba.clone();
                         
-                        // Draw arrows if any (for window, arrows are in image-relative coords)
+                        // Draw arrows if any
+                        // Arrows are stored in output-relative coords where the window was displayed centered
                         if !arrows.is_empty() {
-                            let window_rect = Rect {
-                                left: 0,
-                                top: 0,
-                                right: final_img.width() as i32,
-                                bottom: final_img.height() as i32,
-                            };
-                            draw_arrows_on_image(&mut final_img, &arrows, &window_rect, 1.0);
+                            // Find the output to calculate where the window was displayed
+                            if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
+                                let img_width = final_img.width() as f32;
+                                let img_height = final_img.height() as f32;
+                                let output_width = output.logical_size.0 as f32;
+                                let output_height = output.logical_size.1 as f32;
+                                
+                                // Match the centering logic in SelectedImageWidget::image_bounds
+                                let available_width = output_width - 100.0;
+                                let available_height = output_height - 100.0;
+                                let scale_x = available_width / img_width;
+                                let scale_y = available_height / img_height;
+                                let display_scale = scale_x.min(scale_y).min(1.0);
+                                
+                                let display_width = img_width * display_scale;
+                                let display_height = img_height * display_scale;
+                                let sel_x = (output_width - display_width) / 2.0;
+                                let sel_y = (output_height - display_height) / 2.0;
+                                
+                                // The selection_rect is where the window was displayed on screen
+                                // We need to convert from display coords to image coords
+                                // Arrow coords are in output-relative display space
+                                // Image scale factor is 1/display_scale (to go from display to original)
+                                let window_rect = Rect {
+                                    left: sel_x as i32,
+                                    top: sel_y as i32,
+                                    right: (sel_x + display_width) as i32,
+                                    bottom: (sel_y + display_height) as i32,
+                                };
+                                let image_scale = 1.0 / display_scale;
+                                draw_arrows_on_image(&mut final_img, &arrows, &window_rect, image_scale);
+                            }
                         }
                         
                         if let Some(ref image_path) = image_path {
