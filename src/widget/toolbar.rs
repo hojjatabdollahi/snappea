@@ -3,7 +3,7 @@
 use std::rc::Rc;
 
 use cosmic::iced::Length;
-use cosmic::iced_core::{Background, Border};
+use cosmic::iced_core::{Background, Border, Layout, Size, layout, widget::Tree};
 use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, icon, tooltip};
 use cosmic::Element;
@@ -11,6 +11,167 @@ use cosmic::Element;
 use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
 use super::rectangle_selection::DragState;
 use super::toolbar_position_selector::ToolbarPositionSelector;
+
+/// A wrapper widget that reduces opacity when not hovered
+/// Draws a background with opacity and passes through all events
+pub struct HoverOpacity<'a, Msg> {
+    content: Element<'a, Msg>,
+    unhovered_opacity: f32,
+}
+
+impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
+    pub fn new(content: impl Into<Element<'a, Msg>>) -> Self {
+        Self {
+            content: content.into(),
+            unhovered_opacity: 0.5,
+        }
+    }
+}
+
+impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer> for HoverOpacity<'a, Msg> {
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn layout(&self, tree: &mut Tree, renderer: &cosmic::Renderer, limits: &cosmic::iced::Limits) -> layout::Node {
+        self.content.as_widget().layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.content));
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &cosmic::iced_core::renderer::Style,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &cosmic::iced_core::Rectangle,
+    ) {
+        use cosmic::iced_core::Renderer as _;
+        
+        let bounds = layout.bounds();
+        let is_hovered = cursor.position().map(|p| bounds.contains(p)).unwrap_or(false);
+        let opacity = if is_hovered { 1.0 } else { self.unhovered_opacity };
+        
+        let cosmic_theme = theme.cosmic();
+        let radius = cosmic_theme.corner_radii.radius_s;
+        
+        // Draw the background with appropriate opacity
+        let mut bg_color: cosmic::iced::Color = cosmic_theme.background.component.base.into();
+        bg_color.a *= opacity;
+        
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds,
+                border: Border {
+                    radius: radius.into(),
+                    ..Default::default()
+                },
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(bg_color),
+        );
+        
+        // Apply opacity to the text color style
+        let mut draw_style = *style;
+        draw_style.text_color.a *= opacity;
+        
+        // Draw content
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            &draw_style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+    ) {
+        self.content.as_widget().operate(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            operation,
+        );
+    }
+
+    fn on_event(
+        &mut self,
+        tree: &mut Tree,
+        event: cosmic::iced_core::Event,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        renderer: &cosmic::Renderer,
+        clipboard: &mut dyn cosmic::iced_core::Clipboard,
+        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
+        viewport: &cosmic::iced_core::Rectangle,
+    ) -> cosmic::iced_core::event::Status {
+        self.content.as_widget_mut().on_event(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        )
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &cosmic::iced_core::Rectangle,
+        renderer: &cosmic::Renderer,
+    ) -> cosmic::iced_core::mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        translation: cosmic::iced::Vector,
+    ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            translation,
+        )
+    }
+}
+
+impl<'a, Msg: Clone + 'static> From<HoverOpacity<'a, Msg>> for Element<'a, Msg> {
+    fn from(widget: HoverOpacity<'a, Msg>) -> Self {
+        Element::new(widget)
+    }
+}
 
 /// Build the screenshot toolbar element
 #[allow(clippy::too_many_arguments)]
@@ -282,18 +443,17 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         }
     };
     
-    cosmic::widget::container(toolbar_content)
+    // Use transparent background - HoverOpacity handles the background drawing
+    let toolbar = cosmic::widget::container(toolbar_content)
         .class(cosmic::theme::Container::Custom(Box::new(|theme| {
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(theme.background.component.base.into())),
+                background: None, // HoverOpacity draws the background with opacity
                 text_color: Some(theme.background.component.on.into()),
-                border: Border {
-                    radius: theme.corner_radii.radius_s.into(),
-                    ..Default::default()
-                },
+                border: Border::default(),
                 ..Default::default()
             }
-        })))
-        .into()
+        })));
+    
+    HoverOpacity::new(toolbar).into()
 }
