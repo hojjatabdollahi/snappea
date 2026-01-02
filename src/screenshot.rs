@@ -145,83 +145,127 @@ fn draw_arrows_on_image(
     }
 }
 
-/// Draw a thick line by drawing filled circles along the path
+/// Draw a thick line by drawing antialiased circles along the path
 fn draw_thick_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, thickness: i32, color: image::Rgba<u8>) {
-    let radius = thickness / 2;
+    let radius = thickness as f32 / 2.0;
     let dx = (x1 - x0) as f32;
     let dy = (y1 - y0) as f32;
     let length = (dx * dx + dy * dy).sqrt();
     
     if length < 1.0 {
-        draw_filled_circle(img, x0, y0, radius, color);
+        draw_aa_circle(img, x0 as f32, y0 as f32, radius, color);
         return;
     }
     
     // Draw circles along the line with small steps for smooth coverage
-    let steps = (length * 2.0) as i32 + 1;
+    let steps = (length * 1.5) as i32 + 1;
     for i in 0..=steps {
         let t = i as f32 / steps as f32;
         let cx = x0 as f32 + dx * t;
         let cy = y0 as f32 + dy * t;
-        draw_filled_circle(img, cx as i32, cy as i32, radius, color);
+        draw_aa_circle(img, cx, cy, radius, color);
     }
 }
 
-/// Draw a filled circle
-fn draw_filled_circle(img: &mut RgbaImage, cx: i32, cy: i32, radius: i32, color: image::Rgba<u8>) {
+/// Draw an antialiased filled circle
+fn draw_aa_circle(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, color: image::Rgba<u8>) {
     let (w, h) = (img.width() as i32, img.height() as i32);
+    let r_ceil = radius.ceil() as i32 + 1;
     
-    for dy in -radius..=radius {
-        for dx in -radius..=radius {
-            if dx * dx + dy * dy <= radius * radius {
-                let x = cx + dx;
-                let y = cy + dy;
-                if x >= 0 && x < w && y >= 0 && y < h {
-                    img.put_pixel(x as u32, y as u32, color);
-                }
+    for dy in -r_ceil..=r_ceil {
+        for dx in -r_ceil..=r_ceil {
+            let x = cx as i32 + dx;
+            let y = cy as i32 + dy;
+            if x < 0 || x >= w || y < 0 || y >= h {
+                continue;
             }
+            
+            // Calculate distance from center
+            let dist = ((dx as f32 + 0.5 - (cx - cx.floor())) .powi(2) + 
+                       (dy as f32 + 0.5 - (cy - cy.floor())).powi(2)).sqrt();
+            
+            // Antialiasing: smooth falloff at the edge
+            let alpha = if dist <= radius - 0.5 {
+                1.0
+            } else if dist >= radius + 0.5 {
+                continue;
+            } else {
+                // Smooth transition in the 1-pixel border
+                1.0 - (dist - (radius - 0.5))
+            };
+            
+            blend_pixel(img, x as u32, y as u32, color, alpha);
         }
     }
 }
 
-/// Draw a filled triangle using scanline algorithm
+/// Blend a pixel with alpha
+fn blend_pixel(img: &mut RgbaImage, x: u32, y: u32, color: image::Rgba<u8>, alpha: f32) {
+    let existing = img.get_pixel(x, y);
+    let a = (alpha * color.0[3] as f32 / 255.0).min(1.0);
+    
+    let blend = |old: u8, new: u8| -> u8 {
+        ((1.0 - a) * old as f32 + a * new as f32).round() as u8
+    };
+    
+    img.put_pixel(x, y, image::Rgba([
+        blend(existing.0[0], color.0[0]),
+        blend(existing.0[1], color.0[1]),
+        blend(existing.0[2], color.0[2]),
+        255, // Output is always opaque
+    ]));
+}
+
+/// Draw an antialiased filled triangle
 fn draw_filled_triangle(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: image::Rgba<u8>) {
     let (w, h) = (img.width() as i32, img.height() as i32);
     
-    // Sort vertices by y coordinate
-    let mut verts = [(x0, y0), (x1, y1), (x2, y2)];
-    verts.sort_by_key(|v| v.1);
-    let [(x0, y0), (x1, y1), (x2, y2)] = verts;
+    // Bounding box
+    let min_x = x0.min(x1).min(x2).max(0);
+    let max_x = x0.max(x1).max(x2).min(w - 1);
+    let min_y = y0.min(y1).min(y2).max(0);
+    let max_y = y0.max(y1).max(y2).min(h - 1);
     
-    // Helper to interpolate x for a given y on edge from (xa,ya) to (xb,yb)
-    let interp_x = |y: i32, xa: i32, ya: i32, xb: i32, yb: i32| -> i32 {
-        if ya == yb {
-            xa
-        } else {
-            xa + (xb - xa) * (y - ya) / (yb - ya)
-        }
-    };
+    let (x0f, y0f) = (x0 as f32, y0 as f32);
+    let (x1f, y1f) = (x1 as f32, y1 as f32);
+    let (x2f, y2f) = (x2 as f32, y2 as f32);
     
-    for y in y0.max(0)..=y2.min(h - 1) {
-        let mut x_left;
-        let mut x_right;
-        
-        if y < y1 {
-            // Upper part of triangle
-            x_left = interp_x(y, x0, y0, x1, y1);
-            x_right = interp_x(y, x0, y0, x2, y2);
-        } else {
-            // Lower part of triangle
-            x_left = interp_x(y, x1, y1, x2, y2);
-            x_right = interp_x(y, x0, y0, x2, y2);
-        }
-        
-        if x_left > x_right {
-            std::mem::swap(&mut x_left, &mut x_right);
-        }
-        
-        for x in x_left.max(0)..=x_right.min(w - 1) {
-            img.put_pixel(x as u32, y as u32, color);
+    // Signed area of triangle (for barycentric coords)
+    let area = (x1f - x0f) * (y2f - y0f) - (x2f - x0f) * (y1f - y0f);
+    if area.abs() < 0.001 {
+        return; // Degenerate triangle
+    }
+    
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            // Sample at pixel center
+            let px = x as f32 + 0.5;
+            let py = y as f32 + 0.5;
+            
+            // Barycentric coordinates
+            let w0 = ((x1f - x0f) * (py - y0f) - (px - x0f) * (y1f - y0f)) / area;
+            let w1 = ((x2f - x1f) * (py - y1f) - (px - x1f) * (y2f - y1f)) / area;
+            let w2 = 1.0 - w0 - w1;
+            
+            // Distance to nearest edge for antialiasing
+            let edge_dist = w0.min(w1).min(w2);
+            
+            if edge_dist >= 0.0 {
+                // Inside triangle
+                let alpha = if edge_dist < 0.02 {
+                    // Near edge - partial coverage
+                    edge_dist / 0.02
+                } else {
+                    1.0
+                };
+                blend_pixel(img, x as u32, y as u32, color, alpha.max(0.3));
+            } else if edge_dist > -0.02 {
+                // Just outside - antialiased edge
+                let alpha = 1.0 + edge_dist / 0.02;
+                if alpha > 0.0 {
+                    blend_pixel(img, x as u32, y as u32, color, alpha * 0.5);
+                }
+            }
         }
     }
 }
