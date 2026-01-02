@@ -4,6 +4,7 @@ use zbus::zvariant;
 mod app;
 mod buffer;
 mod localize;
+mod ocr;
 mod screenshot;
 mod wayland;
 mod widget;
