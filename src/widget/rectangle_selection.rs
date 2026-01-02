@@ -18,6 +18,7 @@ use cosmic::{
 };
 
 use crate::screenshot::Rect;
+use super::magnifier::draw_magnifier;
 
 pub const MIME: &str = "X-BLAZINGSHOT-MyData";
 pub struct MyData;
@@ -78,8 +79,6 @@ impl From<u8> for DragState {
 
 const EDGE_GRAB_THICKNESS: f32 = 8.0;
 const CORNER_DIAMETER: f32 = 16.0;
-const MAGNIFIER_RADIUS: f32 = 60.0;
-const MAGNIFIER_ZOOM: f32 = 2.5;
 
 pub struct RectangleSelection<'a, Msg> {
     output_rect: Rect,
@@ -654,7 +653,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         }
 
         // Draw magnifier when dragging a corner or initially drawing
-        // Use a layer to ensure magnifier is on top of everything (including button text)
         if self.drag_state != DragState::None {
             // Get the position of the corner being dragged (in global coords from rectangle_selection)
             let drag_corner = match self.drag_state {
@@ -692,142 +690,17 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             };
 
             if let Some((drag_x, drag_y)) = drag_corner {
-                renderer.with_layer(Rectangle::new(Point::ORIGIN, outer_size), |renderer| {
-                    // Convert to widget-local coordinates
-                    let cursor_pos =
-                        Point::new(drag_x as f32 - outer_rect.x, drag_y as f32 - outer_rect.y);
-
-                    // Position magnifier offset from cursor
-                    let magnifier_offset = MAGNIFIER_RADIUS + 20.0;
-                    let mag_center_x = (cursor_pos.x + magnifier_offset)
-                        .min(outer_size.width - MAGNIFIER_RADIUS - 5.0);
-                    let mag_center_y =
-                        (cursor_pos.y - magnifier_offset).max(MAGNIFIER_RADIUS + 5.0);
-
-                    // Sample from the screenshot image at the drag position
-                    // Convert to image coordinates
-                    let img_x =
-                        ((drag_x - self.output_rect.left) as f32 * self.image_scale) as i32;
-                    let img_y = ((drag_y - self.output_rect.top) as f32 * self.image_scale) as i32;
-
-                    let img_width = self.screenshot_image.width() as i32;
-                    let img_height = self.screenshot_image.height() as i32;
-
-                    // Draw magnifier background (dark circle, no border yet)
-                    let mag_bounds = Rectangle::new(
-                        Point::new(
-                            mag_center_x - MAGNIFIER_RADIUS,
-                            mag_center_y - MAGNIFIER_RADIUS,
-                        ),
-                        Size::new(MAGNIFIER_RADIUS * 2.0, MAGNIFIER_RADIUS * 2.0),
-                    );
-
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: mag_bounds,
-                            border: Border {
-                                radius: MAGNIFIER_RADIUS.into(),
-                                width: 0.0,
-                                color: Color::TRANSPARENT,
-                            },
-                            shadow: Shadow::default(),
-                        },
-                        Color::from_rgba(0.0, 0.0, 0.0, 0.9),
-                    );
-
-                    // Draw pixels inside magnifier
-                    let pixels_to_draw = (MAGNIFIER_RADIUS * 2.0 / MAGNIFIER_ZOOM) as i32;
-                    for dy in -pixels_to_draw / 2..=pixels_to_draw / 2 {
-                        for dx in -pixels_to_draw / 2..=pixels_to_draw / 2 {
-                            let src_x = img_x + dx;
-                            let src_y = img_y + dy;
-
-                            // Check if within magnifier circle (with margin for border)
-                            let dist = ((dx * dx + dy * dy) as f32).sqrt() * MAGNIFIER_ZOOM;
-                            if dist > MAGNIFIER_RADIUS - 3.0 {
-                                continue;
-                            }
-
-                            // Sample pixel if in bounds
-                            if src_x >= 0 && src_x < img_width && src_y >= 0 && src_y < img_height {
-                                let pixel =
-                                    self.screenshot_image.get_pixel(src_x as u32, src_y as u32);
-                                let color = Color::from_rgba8(
-                                    pixel[0],
-                                    pixel[1],
-                                    pixel[2],
-                                    pixel[3] as f32 / 255.0,
-                                );
-
-                                // Calculate position in magnifier
-                                let mag_px = mag_center_x + dx as f32 * MAGNIFIER_ZOOM;
-                                let mag_py = mag_center_y + dy as f32 * MAGNIFIER_ZOOM;
-
-                                // Draw zoomed pixel
-                                let pixel_bounds = Rectangle::new(
-                                    Point::new(
-                                        mag_px - MAGNIFIER_ZOOM / 2.0,
-                                        mag_py - MAGNIFIER_ZOOM / 2.0,
-                                    ),
-                                    Size::new(MAGNIFIER_ZOOM, MAGNIFIER_ZOOM),
-                                );
-
-                                renderer.fill_quad(
-                                    Quad {
-                                        bounds: pixel_bounds,
-                                        border: Border::default(),
-                                        shadow: Shadow::default(),
-                                    },
-                                    color,
-                                );
-                            }
-                        }
-                    }
-
-                    // Draw crosshair in center
-                    let crosshair_size = 8.0;
-                    let crosshair_color = Color::from_rgba(1.0, 1.0, 1.0, 0.8);
-
-                    // Horizontal line
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle::new(
-                                Point::new(mag_center_x - crosshair_size, mag_center_y - 0.5),
-                                Size::new(crosshair_size * 2.0, 1.0),
-                            ),
-                            border: Border::default(),
-                            shadow: Shadow::default(),
-                        },
-                        crosshair_color,
-                    );
-
-                    // Vertical line
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: Rectangle::new(
-                                Point::new(mag_center_x - 0.5, mag_center_y - crosshair_size),
-                                Size::new(1.0, crosshair_size * 2.0),
-                            ),
-                            border: Border::default(),
-                            shadow: Shadow::default(),
-                        },
-                        crosshair_color,
-                    );
-
-                    // Draw border on top of everything
-                    renderer.fill_quad(
-                        Quad {
-                            bounds: mag_bounds,
-                            border: Border {
-                                radius: MAGNIFIER_RADIUS.into(),
-                                width: 2.0,
-                                color: accent,
-                            },
-                            shadow: Shadow::default(),
-                        },
-                        Color::TRANSPARENT,
-                    );
-                });
+                draw_magnifier(
+                    renderer,
+                    self.screenshot_image,
+                    self.image_scale,
+                    drag_x,
+                    drag_y,
+                    &self.output_rect,
+                    outer_size,
+                    outer_rect,
+                    accent,
+                );
             }
         }
     }
