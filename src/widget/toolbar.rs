@@ -5,7 +5,7 @@ use std::rc::Rc;
 use cosmic::iced::Length;
 use cosmic::iced_core::{Background, Border};
 use cosmic::iced_widget::{column, row};
-use cosmic::widget::{button, icon};
+use cosmic::widget::{button, icon, tooltip};
 use cosmic::Element;
 
 use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
@@ -43,129 +43,177 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     }));
     
     // Position selector - custom widget with triangular hit regions
-    let position_selector: Element<'_, Msg> = ToolbarPositionSelector::new(
-        40.0, // size of the selector widget
-        toolbar_position,
-        on_toolbar_position(ToolbarPosition::Top),
-        on_toolbar_position(ToolbarPosition::Bottom),
-        on_toolbar_position(ToolbarPosition::Left),
-        on_toolbar_position(ToolbarPosition::Right),
+    let position_selector: Element<'_, Msg> = tooltip(
+        ToolbarPositionSelector::new(
+            40.0, // size of the selector widget
+            toolbar_position,
+            on_toolbar_position(ToolbarPosition::Top),
+            on_toolbar_position(ToolbarPosition::Bottom),
+            on_toolbar_position(ToolbarPosition::Left),
+            on_toolbar_position(ToolbarPosition::Right),
+        ),
+        "Move Toolbar",
+        tooltip::Position::Bottom,
     ).into();
     
-    // Common buttons
-    let btn_region = button::custom(
-        icon::Icon::from(icon::from_name("screenshot-selection-symbolic").size(64))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-            .class(if matches!(choice, Choice::Rectangle(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
-    )
-    .selected(matches!(choice, Choice::Rectangle(..)))
-    .class(cosmic::theme::Button::Icon)
-    .on_press(on_choice_change(Choice::Rectangle(Rect::default(), DragState::None)))
-    .padding(space_xs);
+    // Common buttons with tooltips
+    let btn_region = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("screenshot-selection-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+                .class(if matches!(choice, Choice::Rectangle(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+        )
+        .selected(matches!(choice, Choice::Rectangle(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Rectangle(Rect::default(), DragState::None)))
+        .padding(space_xs),
+        "Select Region",
+        tooltip::Position::Bottom,
+    );
     
-    let btn_window = button::custom(
-        icon::Icon::from(icon::from_name("screenshot-window-symbolic").size(64))
-            .class(if matches!(choice, Choice::Window(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-    )
-    .selected(matches!(choice, Choice::Window(..)))
-    .class(cosmic::theme::Button::Icon)
-    .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
-    .padding(space_xs);
+    let btn_window = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("screenshot-window-symbolic").size(64))
+                .class(if matches!(choice, Choice::Window(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+        )
+        .selected(matches!(choice, Choice::Window(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
+        .padding(space_xs),
+        "Select Window",
+        tooltip::Position::Bottom,
+    );
     
-    let btn_screen = button::custom(
-        icon::Icon::from(icon::from_name("screenshot-screen-symbolic").size(64))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-            .class(if matches!(choice, Choice::Output(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
-    )
-    .selected(matches!(choice, Choice::Output(..)))
-    .class(cosmic::theme::Button::Icon)
-    .on_press(on_choice_change(Choice::Output(output_name.clone())))
-    .padding(space_xs);
+    let btn_screen = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("screenshot-screen-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+                .class(if matches!(choice, Choice::Output(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+        )
+        .selected(matches!(choice, Choice::Output(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Output(output_name.clone())))
+        .padding(space_xs),
+        "Select Screen",
+        tooltip::Position::Bottom,
+    );
     
     // Copy to clipboard button
-    let btn_copy = button::custom(
-        icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-    )
-    .class(cosmic::theme::Button::Icon)
-    .on_press_maybe(has_selection.then_some(on_copy_to_clipboard))
-    .padding(space_xs);
-    
-    // Save to pictures button
-    let btn_save = button::custom(
-        icon::Icon::from(icon::from_name("document-save-symbolic").size(64))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-    )
-    .class(cosmic::theme::Button::Icon)
-    .on_press_maybe(has_selection.then_some(on_save_to_pictures))
-    .padding(space_xs);
-    
-    // Arrow drawing button
-    let btn_arrow = button::custom(
-        icon::Icon::from(icon::from_name("arrow-symbolic").size(64))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-    )
-    .class(if arrow_mode { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Icon })
-    .on_press_maybe(has_selection.then_some(on_arrow_toggle.clone()))
-    .padding(space_xs);
-    
-    // OCR button
-    let btn_ocr = if has_ocr_text {
+    let btn_copy = tooltip(
         button::custom(
             icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0))
         )
-        .class(cosmic::theme::Button::Suggested)
-        .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
-        .padding(space_xs)
-    } else {
+        .class(cosmic::theme::Button::Icon)
+        .on_press_maybe(has_selection.then_some(on_copy_to_clipboard))
+        .padding(space_xs),
+        "Copy to Clipboard",
+        tooltip::Position::Bottom,
+    );
+    
+    // Save to pictures button
+    let btn_save = tooltip(
         button::custom(
-            icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
+            icon::Icon::from(icon::from_name("document-save-symbolic").size(64))
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0))
         )
         .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_selection.then_some(on_ocr.clone()))
-        .padding(space_xs)
+        .on_press_maybe(has_selection.then_some(on_save_to_pictures))
+        .padding(space_xs),
+        "Save to Pictures",
+        tooltip::Position::Bottom,
+    );
+    
+    // Arrow drawing button
+    let btn_arrow = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("arrow-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+        )
+        .class(if arrow_mode { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Icon })
+        .on_press_maybe(has_selection.then_some(on_arrow_toggle.clone()))
+        .padding(space_xs),
+        "Draw Arrow",
+        tooltip::Position::Bottom,
+    );
+    
+    // OCR button
+    let btn_ocr = if has_ocr_text {
+        tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0))
+            )
+            .class(cosmic::theme::Button::Suggested)
+            .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
+            .padding(space_xs),
+            "Copy OCR Text",
+            tooltip::Position::Bottom,
+        )
+    } else {
+        tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0))
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_ocr.clone()))
+            .padding(space_xs),
+            "Recognize Text (OCR)",
+            tooltip::Position::Bottom,
+        )
     };
     
     // QR button
     let has_qr_codes = !qr_codes.is_empty();
     let btn_qr = if has_qr_codes {
-        button::custom(
-            icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0))
+        tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0))
+            )
+            .class(cosmic::theme::Button::Suggested)
+            .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
+            .padding(space_xs),
+            "Copy QR Code",
+            tooltip::Position::Bottom,
         )
-        .class(cosmic::theme::Button::Suggested)
-        .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
-        .padding(space_xs)
     } else {
+        tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("qr-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0))
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_qr.clone()))
+            .padding(space_xs),
+            "Scan QR Code",
+            tooltip::Position::Bottom,
+        )
+    };
+    
+    let btn_close = tooltip(
         button::custom(
-            icon::Icon::from(icon::from_name("qr-symbolic").size(64))
+            icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0))
         )
         .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_selection.then_some(on_qr.clone()))
-        .padding(space_xs)
-    };
-    
-    let btn_close = button::custom(
-        icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
-            .width(Length::Fixed(40.0))
-            .height(Length::Fixed(40.0))
-    )
-    .class(cosmic::theme::Button::Icon)
-    .on_press(on_cancel);
+        .on_press(on_cancel),
+        "Cancel",
+        tooltip::Position::Bottom,
+    );
     
     let is_vertical = matches!(toolbar_position, ToolbarPosition::Left | ToolbarPosition::Right);
     
