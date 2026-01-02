@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use zbus::zvariant;
 
 mod app;
+mod arrow;
 mod buffer;
 mod localize;
 mod ocr;
