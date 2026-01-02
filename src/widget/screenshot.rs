@@ -17,8 +17,7 @@ use cosmic::{
         },
     },
     widget::{
-        Row, button, divider::vertical, dropdown, horizontal_space, icon, image, layer_container,
-        text,
+        Row, button, divider::vertical, horizontal_space, icon, image, layer_container,
     },
 };
 use cosmic_bg_config::Source;
@@ -26,7 +25,6 @@ use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::{
     app::OutputState,
-    fl,
     screenshot::{ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage, ToolbarPosition},
 };
 
@@ -89,7 +87,8 @@ where
     pub fn new(
         choice: Choice,
         image: &'a ScreenshotImage,
-        on_capture: Msg,
+        on_copy_to_clipboard: Msg,
+        on_save_to_pictures: Msg,
         on_cancel: Msg,
         on_ocr: Msg,
         on_ocr_copy: Msg,
@@ -101,9 +100,6 @@ where
         on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
         toplevel_images: &HashMap<String, Vec<ScreenshotImage>>,
         toplevel_chosen: impl Fn(String, usize) -> Msg,
-        save_locations: &'a Vec<String>,
-        selected_save_location: usize,
-        dropdown_selected: impl Fn(usize) -> Msg + 'static + Clone,
         spacing: Spacing,
         dnd_id: u128,
         qr_codes: &[DetectedQrCode],
@@ -163,7 +159,7 @@ where
             )
             .into(),
             Choice::Output(_) => {
-                OutputSelection::new(on_output_change(output.output.clone()), on_capture.clone())
+                OutputSelection::new(on_output_change(output.output.clone()), on_copy_to_clipboard.clone())
                     .into()
             }
             Choice::Window(..) => {
@@ -415,19 +411,31 @@ where
                 .on_press(on_choice_change(Choice::Output(output.name.clone())))
                 .padding(space_xs);
                 
-                let btn_capture = button::custom(text(fl!("capture"))).on_press_maybe(
-                    if let Choice::Rectangle(r, ..) = choice {
-                        r.dimensions().is_some().then_some(on_capture)
-                    } else {
-                        Some(on_capture)
-                    }
-                );
+                // Copy to clipboard button
+                let can_capture = if let Choice::Rectangle(r, ..) = choice {
+                    r.dimensions().is_some()
+                } else {
+                    true
+                };
                 
-                let dropdown_elem: Element<'_, Msg> = Element::from(dropdown(
-                    save_locations.as_slice(),
-                    Some(selected_save_location),
-                    |i| i
-                )).map(dropdown_selected);
+                let btn_copy = button::custom(
+                    icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .class(cosmic::theme::Button::Icon)
+                .on_press_maybe(can_capture.then_some(on_copy_to_clipboard))
+                .padding(space_xs);
+                
+                // Save to pictures button
+                let btn_save = button::custom(
+                    icon::Icon::from(icon::from_name("document-save-symbolic").size(64))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .class(cosmic::theme::Button::Icon)
+                .on_press_maybe(can_capture.then_some(on_save_to_pictures))
+                .padding(space_xs);
                 
                 let btn_close = button::custom(
                     icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
@@ -447,9 +455,7 @@ where
                         horizontal::light().width(Length::Fixed(64.0)),
                         column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                         horizontal::light().width(Length::Fixed(64.0)),
-                        btn_capture,
-                        horizontal::light().width(Length::Fixed(64.0)),
-                        dropdown_elem,
+                        column![btn_copy, btn_save].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                         horizontal::light().width(Length::Fixed(64.0)),
                         btn_close,
                     ]
@@ -464,9 +470,7 @@ where
                         vertical::light().height(Length::Fixed(64.0)),
                         row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                         vertical::light().height(Length::Fixed(64.0)),
-                        btn_capture,
-                        vertical::light().height(Length::Fixed(64.0)),
-                        dropdown_elem,
+                        row![btn_copy, btn_save].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                         vertical::light().height(Length::Fixed(64.0)),
                         btn_close,
                     ]

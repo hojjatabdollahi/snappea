@@ -1033,6 +1033,8 @@ pub enum Msg {
     ArrowEnd(f32, f32),  // finish arrow at position
     ArrowCancel,  // cancel current arrow drawing
     ToolbarPositionChange(ToolbarPosition),  // change toolbar position
+    CopyToClipboard,  // capture and copy to clipboard
+    SaveToPictures,  // capture and save to Pictures folder
 }
 
 #[derive(Debug, Clone)]
@@ -1225,7 +1227,8 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         crate::widget::screenshot::ScreenshotSelection::new(
             args.choice.clone(),
             img,
-            Msg::Capture,
+            Msg::CopyToClipboard,
+            Msg::SaveToPictures,
             Msg::Cancel,
             Msg::OcrRequested,
             Msg::OcrCopyAndClose,
@@ -1237,9 +1240,6 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::Choice,
             &args.toplevel_images,
             Msg::WindowChosen,
-            &app.location_options,
-            args.location as usize,
-            Msg::Location,
             theme.spacing,
             i as u128,
             &args.qr_codes,
@@ -1261,7 +1261,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ToolbarPositionChange,
         ),
         |key| match key {
-            Key::Named(Named::Enter) => Some(Msg::Capture),
+            Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
             Key::Named(Named::Escape) => Some(Msg::Cancel),
             _ => None,
         },
@@ -1894,6 +1894,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.toolbar_position = position;
             }
             cosmic::Task::none()
+        }
+        Msg::CopyToClipboard => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.location = ImageSaveLocation::Clipboard;
+            }
+            update_msg(app, Msg::Capture)
+        }
+        Msg::SaveToPictures => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.location = ImageSaveLocation::Pictures;
+            }
+            update_msg(app, Msg::Capture)
         }
     }
 }
