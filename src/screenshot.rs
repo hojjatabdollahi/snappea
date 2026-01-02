@@ -93,7 +93,7 @@ pub struct ArrowAnnotation {
     pub end_y: f32,
 }
 
-/// Draw arrows onto an image
+/// Draw arrows onto an image using the same geometry as the screen rendering
 /// selection_rect: the selection rectangle in logical coordinates (used as origin)
 /// scale: pixels per logical unit
 fn draw_arrows_on_image(
@@ -103,172 +103,102 @@ fn draw_arrows_on_image(
     scale: f32,
 ) {
     let arrow_color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
-    let thickness = (4.0 * scale) as i32;
+    let thickness = 4.0 * scale;
     let head_size = 16.0 * scale;
 
     for arrow in arrows {
-        // Convert from global logical to image pixel coordinates
-        let start_x = ((arrow.start_x - selection_rect.left as f32) * scale) as i32;
-        let start_y = ((arrow.start_y - selection_rect.top as f32) * scale) as i32;
-        let end_x = ((arrow.end_x - selection_rect.left as f32) * scale) as i32;
-        let end_y = ((arrow.end_y - selection_rect.top as f32) * scale) as i32;
+        // Convert from global logical to image pixel coordinates (float for precision)
+        let start_x = (arrow.start_x - selection_rect.left as f32) * scale;
+        let start_y = (arrow.start_y - selection_rect.top as f32) * scale;
+        let end_x = (arrow.end_x - selection_rect.left as f32) * scale;
+        let end_y = (arrow.end_y - selection_rect.top as f32) * scale;
 
-        // Draw the shaft using Bresenham's line with thickness
-        draw_thick_line(img, start_x, start_y, end_x, end_y, thickness, arrow_color);
-
-        // Draw arrowhead
-        let dx = (end_x - start_x) as f32;
-        let dy = (end_y - start_y) as f32;
+        let dx = end_x - start_x;
+        let dy = end_y - start_y;
         let length = (dx * dx + dy * dy).sqrt();
-        if length < 1.0 {
+        if length < 5.0 {
             continue;
         }
 
+        // Normalize direction
         let nx = dx / length;
         let ny = dy / length;
 
-        // Arrowhead base point
-        let base_x = end_x as f32 - nx * head_size;
-        let base_y = end_y as f32 - ny * head_size;
+        // Perpendicular vector for thickness
+        let px = -ny * thickness / 2.0;
+        let py = nx * thickness / 2.0;
 
-        // Perpendicular for arrowhead wings
-        let px = -ny * head_size * 0.5;
-        let py = nx * head_size * 0.5;
+        // Shaft end (before arrowhead)
+        let shaft_end_x = end_x - nx * head_size;
+        let shaft_end_y = end_y - ny * head_size;
 
-        let wing1_x = (base_x + px) as i32;
-        let wing1_y = (base_y + py) as i32;
-        let wing2_x = (base_x - px) as i32;
-        let wing2_y = (base_y - py) as i32;
+        // Draw shaft as filled quadrilateral (rotated rectangle) - split into 2 triangles
+        fill_triangle(img, 
+            start_x + px, start_y + py,
+            start_x - px, start_y - py,
+            shaft_end_x - px, shaft_end_y - py,
+            arrow_color);
+        fill_triangle(img,
+            start_x + px, start_y + py,
+            shaft_end_x - px, shaft_end_y - py,
+            shaft_end_x + px, shaft_end_y + py,
+            arrow_color);
 
-        // Draw filled triangle for arrowhead
-        draw_filled_triangle(img, end_x, end_y, wing1_x, wing1_y, wing2_x, wing2_y, arrow_color);
+        // Draw arrowhead as filled triangle
+        let head_width = head_size * 0.5;
+        let hpx = -ny * head_width;
+        let hpy = nx * head_width;
+
+        fill_triangle(img,
+            shaft_end_x + hpx, shaft_end_y + hpy,
+            shaft_end_x - hpx, shaft_end_y - hpy,
+            end_x, end_y,
+            arrow_color);
     }
 }
 
-/// Draw a thick line by drawing antialiased circles along the path
-fn draw_thick_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, thickness: i32, color: image::Rgba<u8>) {
-    let radius = thickness as f32 / 2.0;
-    let dx = (x1 - x0) as f32;
-    let dy = (y1 - y0) as f32;
-    let length = (dx * dx + dy * dy).sqrt();
-    
-    if length < 1.0 {
-        draw_aa_circle(img, x0 as f32, y0 as f32, radius, color);
-        return;
-    }
-    
-    // Draw circles along the line with small steps for smooth coverage
-    let steps = (length * 1.5) as i32 + 1;
-    for i in 0..=steps {
-        let t = i as f32 / steps as f32;
-        let cx = x0 as f32 + dx * t;
-        let cy = y0 as f32 + dy * t;
-        draw_aa_circle(img, cx, cy, radius, color);
-    }
-}
-
-/// Draw an antialiased filled circle
-fn draw_aa_circle(img: &mut RgbaImage, cx: f32, cy: f32, radius: f32, color: image::Rgba<u8>) {
-    let (w, h) = (img.width() as i32, img.height() as i32);
-    let r_ceil = radius.ceil() as i32 + 1;
-    
-    for dy in -r_ceil..=r_ceil {
-        for dx in -r_ceil..=r_ceil {
-            let x = cx as i32 + dx;
-            let y = cy as i32 + dy;
-            if x < 0 || x >= w || y < 0 || y >= h {
-                continue;
-            }
-            
-            // Calculate distance from center
-            let dist = ((dx as f32 + 0.5 - (cx - cx.floor())) .powi(2) + 
-                       (dy as f32 + 0.5 - (cy - cy.floor())).powi(2)).sqrt();
-            
-            // Antialiasing: smooth falloff at the edge
-            let alpha = if dist <= radius - 0.5 {
-                1.0
-            } else if dist >= radius + 0.5 {
-                continue;
-            } else {
-                // Smooth transition in the 1-pixel border
-                1.0 - (dist - (radius - 0.5))
-            };
-            
-            blend_pixel(img, x as u32, y as u32, color, alpha);
-        }
-    }
-}
-
-/// Blend a pixel with alpha
-fn blend_pixel(img: &mut RgbaImage, x: u32, y: u32, color: image::Rgba<u8>, alpha: f32) {
-    let existing = img.get_pixel(x, y);
-    let a = (alpha * color.0[3] as f32 / 255.0).min(1.0);
-    
-    let blend = |old: u8, new: u8| -> u8 {
-        ((1.0 - a) * old as f32 + a * new as f32).round() as u8
-    };
-    
-    img.put_pixel(x, y, image::Rgba([
-        blend(existing.0[0], color.0[0]),
-        blend(existing.0[1], color.0[1]),
-        blend(existing.0[2], color.0[2]),
-        255, // Output is always opaque
-    ]));
-}
-
-/// Draw an antialiased filled triangle
-fn draw_filled_triangle(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, x2: i32, y2: i32, color: image::Rgba<u8>) {
+/// Fill a triangle using edge function rasterization
+fn fill_triangle(img: &mut RgbaImage, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, color: image::Rgba<u8>) {
     let (w, h) = (img.width() as i32, img.height() as i32);
     
-    // Bounding box
-    let min_x = x0.min(x1).min(x2).max(0);
-    let max_x = x0.max(x1).max(x2).min(w - 1);
-    let min_y = y0.min(y1).min(y2).max(0);
-    let max_y = y0.max(y1).max(y2).min(h - 1);
-    
-    let (x0f, y0f) = (x0 as f32, y0 as f32);
-    let (x1f, y1f) = (x1 as f32, y1 as f32);
-    let (x2f, y2f) = (x2 as f32, y2 as f32);
-    
-    // Signed area of triangle (for barycentric coords)
-    let area = (x1f - x0f) * (y2f - y0f) - (x2f - x0f) * (y1f - y0f);
+    // Bounding box (no padding needed - we only fill inside pixels)
+    let min_x = (x0.min(x1).min(x2).floor() as i32).max(0);
+    let max_x = (x0.max(x1).max(x2).ceil() as i32).min(w - 1);
+    let min_y = (y0.min(y1).min(y2).floor() as i32).max(0);
+    let max_y = (y0.max(y1).max(y2).ceil() as i32).min(h - 1);
+
+    // Signed area (2x) for barycentric coords
+    let area = (x1 - x0) * (y2 - y0) - (x2 - x0) * (y1 - y0);
     if area.abs() < 0.001 {
         return; // Degenerate triangle
     }
-    
-    for y in min_y..=max_y {
-        for x in min_x..=max_x {
+
+    for py in min_y..=max_y {
+        for px in min_x..=max_x {
             // Sample at pixel center
-            let px = x as f32 + 0.5;
-            let py = y as f32 + 0.5;
-            
-            // Barycentric coordinates
-            let w0 = ((x1f - x0f) * (py - y0f) - (px - x0f) * (y1f - y0f)) / area;
-            let w1 = ((x2f - x1f) * (py - y1f) - (px - x1f) * (y2f - y1f)) / area;
-            let w2 = 1.0 - w0 - w1;
-            
-            // Distance to nearest edge for antialiasing
-            let edge_dist = w0.min(w1).min(w2);
-            
-            if edge_dist >= 0.0 {
-                // Inside triangle
-                let alpha = if edge_dist < 0.02 {
-                    // Near edge - partial coverage
-                    edge_dist / 0.02
-                } else {
-                    1.0
-                };
-                blend_pixel(img, x as u32, y as u32, color, alpha.max(0.3));
-            } else if edge_dist > -0.02 {
-                // Just outside - antialiased edge
-                let alpha = 1.0 + edge_dist / 0.02;
-                if alpha > 0.0 {
-                    blend_pixel(img, x as u32, y as u32, color, alpha * 0.5);
-                }
+            let x = px as f32 + 0.5;
+            let y = py as f32 + 0.5;
+
+            // Edge functions (same sign = inside)
+            let e0 = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+            let e1 = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+            let e2 = (x0 - x2) * (y - y2) - (y0 - y2) * (x - x2);
+
+            // Check if inside (all edge functions same sign)
+            let inside = if area > 0.0 {
+                e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0
+            } else {
+                e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0
+            };
+
+            if inside {
+                // Solid fill - no AA artifacts
+                img.put_pixel(px as u32, py as u32, color);
             }
         }
     }
 }
+
 
 /// Detect QR codes in an image at a specific resolution
 /// max_dim: maximum dimension to downsample to (0 = no downsampling)
