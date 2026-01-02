@@ -8,7 +8,14 @@ use cosmic::{
         Background, Border, ContentFit, Degrees, Layout, Length, Point, Size, alignment,
         gradient::Linear, layout, overlay, widget::Tree,
     },
-    iced_widget::row,
+    iced_widget::{
+        row,
+        graphics::{
+            Mesh,
+            color::pack,
+            mesh::{Indexed, Renderer as MeshRenderer, SolidVertex2D},
+        },
+    },
     widget::{
         Row, button, divider::vertical, dropdown, horizontal_space, icon, image, layer_container,
         text,
@@ -20,7 +27,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage},
+    screenshot::{ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage},
 };
 
 use super::{
@@ -59,6 +66,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_radial_open: Option<Box<dyn Fn(f32, f32, String) -> Msg + 'a>>,
     pub on_radial_update: Option<Box<dyn Fn(Option<RadialMenuOption>) -> Msg + 'a>>,
     pub on_radial_select: Option<Msg>,
+    /// Arrow annotations
+    pub arrows: Vec<ArrowAnnotation>,
+    /// Whether arrow mode is active
+    pub arrow_mode: bool,
+    /// Arrow currently being drawn (start point)
+    pub arrow_drawing: Option<(f32, f32)>,
+    /// Callbacks for arrow mode
+    pub on_arrow_toggle: Option<Msg>,
+    pub on_arrow_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    pub on_arrow_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -94,6 +111,12 @@ where
         on_radial_open: impl Fn(f32, f32, String) -> Msg + 'a,
         on_radial_update: impl Fn(Option<RadialMenuOption>) -> Msg + 'a,
         on_radial_select: Msg,
+        arrows: &[ArrowAnnotation],
+        arrow_mode: bool,
+        arrow_drawing: Option<(f32, f32)>,
+        on_arrow_toggle: Msg,
+        on_arrow_start: impl Fn(f32, f32) -> Msg + 'a,
+        on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -112,6 +135,7 @@ where
         // Calculate scale factor (physical pixels per logical pixel)
         let image_scale = image.rgba.width() as f32 / output.logical_size.0 as f32;
         
+        let on_arrow_toggle_clone = on_arrow_toggle.clone();
         let fg_element = match choice {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -128,6 +152,8 @@ where
                 has_qr_codes,
                 &image.rgba,
                 image_scale,
+                on_arrow_toggle_clone,
+                arrow_mode,
             )
             .into(),
             Choice::Output(_) => {
@@ -400,6 +426,12 @@ where
             on_radial_open: Some(Box::new(on_radial_open)),
             on_radial_update: Some(Box::new(on_radial_update)),
             on_radial_select: Some(on_radial_select),
+            arrows: arrows.to_vec(),
+            arrow_mode,
+            arrow_drawing,
+            on_arrow_toggle: Some(on_arrow_toggle),
+            on_arrow_start: Some(Box::new(on_arrow_start)),
+            on_arrow_end: Some(Box::new(on_arrow_end)),
         }
     }
 }
@@ -525,6 +557,27 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         shell.publish(on_radial_open(global_x, global_y, output_name));
                     }
                     return cosmic::iced_core::event::Status::Captured;
+                }
+                
+                // Handle arrow drawing mode
+                if self.arrow_mode {
+                    if let MouseEvent::ButtonPressed(Button::Left) = mouse_event {
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        
+                        if self.arrow_drawing.is_some() {
+                            // Finish the arrow
+                            if let Some(ref on_arrow_end) = self.on_arrow_end {
+                                shell.publish(on_arrow_end(global_x, global_y));
+                            }
+                        } else {
+                            // Start a new arrow
+                            if let Some(ref on_arrow_start) = self.on_arrow_start {
+                                shell.publish(on_arrow_start(global_x, global_y));
+                            }
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
                 }
             }
         }
@@ -689,6 +742,140 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     .as_widget()
                     .draw(tree, renderer, theme, style, layout, cursor, viewport);
             });
+        }
+
+        // Helper function to build arrow mesh vertices and indices
+        fn build_arrow_mesh(
+            start_x: f32,
+            start_y: f32,
+            end_x: f32,
+            end_y: f32,
+            color: cosmic::iced::Color,
+            thickness: f32,
+            head_size: f32,
+        ) -> Option<(Vec<SolidVertex2D>, Vec<u32>)> {
+            let dx = end_x - start_x;
+            let dy = end_y - start_y;
+            let length = (dx * dx + dy * dy).sqrt();
+            if length < 5.0 {
+                return None;
+            }
+            
+            // Normalize direction
+            let nx = dx / length;
+            let ny = dy / length;
+            
+            // Perpendicular vector for thickness
+            let px = -ny * thickness / 2.0;
+            let py = nx * thickness / 2.0;
+            
+            // Shaft end (before arrowhead)
+            let shaft_end_x = end_x - nx * head_size;
+            let shaft_end_y = end_y - ny * head_size;
+            
+            // Pack color
+            let packed_color = pack(color);
+            
+            // Vertices for the shaft (4 corners of rotated rectangle)
+            // and arrowhead (3 points of triangle)
+            let mut vertices = Vec::with_capacity(7);
+            
+            // Shaft vertices (0-3)
+            vertices.push(SolidVertex2D {
+                position: [start_x + px, start_y + py],
+                color: packed_color,
+            });
+            vertices.push(SolidVertex2D {
+                position: [start_x - px, start_y - py],
+                color: packed_color,
+            });
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - px, shaft_end_y - py],
+                color: packed_color,
+            });
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + px, shaft_end_y + py],
+                color: packed_color,
+            });
+            
+            // Arrowhead vertices (4-6)
+            // Base of arrowhead (wider than shaft)
+            let head_width = head_size * 0.5;
+            let hpx = -ny * head_width;
+            let hpy = nx * head_width;
+            
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + hpx, shaft_end_y + hpy],
+                color: packed_color,
+            });
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - hpx, shaft_end_y - hpy],
+                color: packed_color,
+            });
+            vertices.push(SolidVertex2D {
+                position: [end_x, end_y], // Tip of arrow
+                color: packed_color,
+            });
+            
+            // Indices: 2 triangles for shaft, 1 triangle for head
+            let indices = vec![
+                0, 1, 2, // First triangle of shaft
+                0, 2, 3, // Second triangle of shaft
+                4, 5, 6, // Arrowhead triangle
+            ];
+            
+            Some((vertices, indices))
+        }
+        
+        // Draw arrows on top of the selection using meshes
+        let arrow_color = cosmic::iced::Color::from_rgb(0.9, 0.1, 0.1); // Red
+        let arrow_thickness = 4.0_f32;
+        let head_size = 16.0_f32;
+        
+        for arrow in &self.arrows {
+            // Convert global coordinates to widget-local
+            let start_x = arrow.start_x - self.output_rect.left as f32;
+            let start_y = arrow.start_y - self.output_rect.top as f32;
+            let end_x = arrow.end_x - self.output_rect.left as f32;
+            let end_y = arrow.end_y - self.output_rect.top as f32;
+            
+            if let Some((vertices, indices)) = build_arrow_mesh(
+                start_x, start_y, end_x, end_y,
+                arrow_color, arrow_thickness, head_size,
+            ) {
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_mesh(Mesh::Solid {
+                        buffers: Indexed { vertices, indices },
+                        transformation: cosmic::iced_core::Transformation::IDENTITY,
+                        clip_bounds: *viewport,
+                    });
+                });
+            }
+        }
+        
+        // Draw arrow currently being drawn (preview)
+        if let Some((start_x, start_y)) = self.arrow_drawing {
+            if let Some(cursor_pos) = cursor.position() {
+                let local_start_x = start_x - self.output_rect.left as f32;
+                let local_start_y = start_y - self.output_rect.top as f32;
+                let end_x = cursor_pos.x;
+                let end_y = cursor_pos.y;
+                
+                let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+                
+                if let Some((vertices, indices)) = build_arrow_mesh(
+                    local_start_x, local_start_y, end_x, end_y,
+                    preview_color, arrow_thickness, head_size,
+                ) {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
+                    });
+                }
+            }
         }
 
         let cosmic_theme = theme.cosmic();

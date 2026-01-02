@@ -99,6 +99,10 @@ pub struct RectangleSelection<'a, Msg> {
     screenshot_image: &'a image::RgbaImage,
     /// Scale factor (physical pixels per logical pixel)
     image_scale: f32,
+    /// Arrow mode toggle callback
+    on_arrow_toggle: Msg,
+    /// Whether arrow mode is active
+    arrow_mode: bool,
 }
 
 impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
@@ -117,6 +121,8 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         has_qr_codes: bool,
         screenshot_image: &'a image::RgbaImage,
         image_scale: f32,
+        on_arrow_toggle: Msg,
+        arrow_mode: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -134,6 +140,8 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
             screenshot_image,
             image_scale,
+            on_arrow_toggle,
+            arrow_mode,
         }
     }
 
@@ -321,6 +329,57 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
     /// Check if cursor is over the QR button
     fn is_over_qr_button(&self, cursor: mouse::Cursor) -> bool {
         if let Some(bounds) = self.qr_button_bounds() {
+            cursor.is_over(bounds)
+        } else {
+            false
+        }
+    }
+
+    /// Calculate arrow button bounds (positioned on the left side of the rectangle)
+    fn arrow_button_bounds(&self) -> Option<Rectangle> {
+        let sel = self.rectangle_selection;
+        let width = (sel.right - sel.left).abs() as f32;
+        let height = (sel.bottom - sel.top).abs() as f32;
+
+        if width <= 10.0 || height <= 10.0 {
+            return None;
+        }
+
+        // Convert to widget-local coordinates (subtract output offset)
+        let outer_x = self.output_rect.left as f32;
+        let outer_y = self.output_rect.top as f32;
+
+        // Rectangle in widget-local coordinates
+        let rect_left = sel.left as f32 - outer_x;
+        let rect_top = sel.top as f32 - outer_y;
+
+        let button_width = 36.0_f32;
+        let button_height = 36.0_f32;
+        let margin = 8.0_f32;
+
+        // Position on the left side of the rectangle
+        let (button_x, button_y) = if rect_left - margin - button_width >= 0.0 {
+            // Left side outside
+            (rect_left - button_width - margin, rect_top)
+        } else {
+            // Inside at top-left
+            (rect_left + margin, rect_top + margin)
+        };
+
+        // Check bounds are valid
+        if button_x < 0.0 || button_y < 0.0 {
+            return None;
+        }
+
+        Some(Rectangle::new(
+            Point::new(button_x, button_y),
+            Size::new(button_width, button_height),
+        ))
+    }
+
+    /// Check if cursor is over the arrow button
+    fn is_over_arrow_button(&self, cursor: mouse::Cursor) -> bool {
+        if let Some(bounds) = self.arrow_button_bounds() {
             cursor.is_over(bounds)
         } else {
             false
@@ -557,6 +616,12 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         } else {
                             shell.publish(self.on_qr.clone());
                         }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+
+                    // Check if clicking on arrow button
+                    if self.is_over_arrow_button(cursor) {
+                        shell.publish(self.on_arrow_toggle.clone());
                         return cosmic::iced_core::event::Status::Captured;
                     }
 
@@ -875,6 +940,61 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         button_rect.y + button_rect.height / 2.0,
                     ),
                     Color::WHITE,
+                    Rectangle::new(Point::ORIGIN, outer_size),
+                );
+            }
+        }
+
+        // Draw arrow button on the left side of the rectangle
+        if let Some(button_rect) = self.arrow_button_bounds() {
+            use cosmic::iced_core::alignment;
+            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
+
+            // Show arrow icon, change color if arrow mode is active
+            let border_color = if self.arrow_mode {
+                Color::from_rgb(0.9, 0.2, 0.2) // Red when active
+            } else {
+                accent
+            };
+
+            // Check if button is within screen bounds
+            if button_rect.x >= 0.0
+                && button_rect.y >= 0.0
+                && button_rect.x + button_rect.width <= outer_size.width
+                && button_rect.y + button_rect.height <= outer_size.height
+            {
+                // Draw button background
+                let button_quad = Quad {
+                    bounds: button_rect,
+                    border: Border {
+                        radius: radius_s.into(),
+                        width: 2.0,
+                        color: border_color,
+                    },
+                    shadow: Shadow::default(),
+                };
+                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
+
+                // Draw arrow icon (↗)
+                let text = Text {
+                    content: "↗".to_string(),
+                    bounds: Size::new(button_rect.width, button_rect.height),
+                    size: cosmic::iced::Pixels(20.0),
+                    line_height: cosmic::iced_core::text::LineHeight::default(),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: alignment::Horizontal::Center,
+                    vertical_alignment: alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                };
+
+                renderer.fill_text(
+                    text,
+                    Point::new(
+                        button_rect.x + button_rect.width / 2.0,
+                        button_rect.y + button_rect.height / 2.0,
+                    ),
+                    if self.arrow_mode { Color::from_rgb(1.0, 0.3, 0.3) } else { Color::WHITE },
                     Rectangle::new(Point::ORIGIN, outer_size),
                 );
             }

@@ -82,6 +82,17 @@ pub struct OcrTextOverlay {
     pub output_name: String,
 }
 
+/// Arrow annotation for drawing on screenshots
+#[derive(Clone, Debug, PartialEq)]
+pub struct ArrowAnnotation {
+    /// Start point in global logical coordinates
+    pub start_x: f32,
+    pub start_y: f32,
+    /// End point in global logical coordinates
+    pub end_x: f32,
+    pub end_y: f32,
+}
+
 /// Detect QR codes in an image at a specific resolution
 /// max_dim: maximum dimension to downsample to (0 = no downsampling)
 pub fn detect_qr_codes_at_resolution(
@@ -830,6 +841,10 @@ pub enum Msg {
     RadialMenuOpen(f32, f32, String),  // x, y, output_name
     RadialMenuUpdate(Option<RadialMenuOption>),  // highlighted option
     RadialMenuSelect,  // select current highlighted option
+    ArrowModeToggle,  // toggle arrow drawing mode
+    ArrowStart(f32, f32),  // start drawing arrow at position
+    ArrowEnd(f32, f32),  // finish arrow at position
+    ArrowCancel,  // cancel current arrow drawing
 }
 
 #[derive(Debug, Clone)]
@@ -870,6 +885,12 @@ pub struct Args {
     pub ocr_text: Option<String>,
     /// Radial menu state for right-click context menu
     pub radial_menu: RadialMenuState,
+    /// Arrow annotations drawn on the screenshot
+    pub arrows: Vec<ArrowAnnotation>,
+    /// Whether arrow drawing mode is active
+    pub arrow_mode: bool,
+    /// Current arrow being drawn (start point set, waiting for end point)
+    pub arrow_drawing: Option<(f32, f32)>,
 }
 
 struct Output {
@@ -963,6 +984,9 @@ impl Screenshot {
                 ocr_overlays: Vec::new(),
                 ocr_text: None,
                 radial_menu: RadialMenuState::default(),
+                arrows: Vec::new(),
+                arrow_mode: false,
+                arrow_drawing: None,
             }))
             .await
         {
@@ -1036,6 +1060,12 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             move |x, y, name| Msg::RadialMenuOpen(x, y, name),
             Msg::RadialMenuUpdate,
             Msg::RadialMenuSelect,
+            &args.arrows,
+            args.arrow_mode,
+            args.arrow_drawing,
+            Msg::ArrowModeToggle,
+            Msg::ArrowStart,
+            Msg::ArrowEnd,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -1623,6 +1653,43 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::ArrowModeToggle => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.arrow_mode = !args.arrow_mode;
+                // Cancel any in-progress arrow when toggling off
+                if !args.arrow_mode {
+                    args.arrow_drawing = None;
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::ArrowStart(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if args.arrow_mode {
+                    args.arrow_drawing = Some((x, y));
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::ArrowEnd(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if let Some((start_x, start_y)) = args.arrow_drawing.take() {
+                    args.arrows.push(ArrowAnnotation {
+                        start_x,
+                        start_y,
+                        end_x: x,
+                        end_y: y,
+                    });
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::ArrowCancel => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.arrow_drawing = None;
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -1644,6 +1711,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         ocr_overlays: _,
         ocr_text: _,
         radial_menu: _,
+        arrows: _,
+        arrow_mode: _,
+        arrow_drawing: _,
     } = &args;
 
     if app.outputs.len() != images.len() {
