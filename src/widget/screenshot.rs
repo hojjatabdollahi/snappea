@@ -64,14 +64,22 @@ impl<Msg: Clone> ToolbarPositionSelector<Msg> {
 
     /// Determine which triangular region a point falls into
     /// The square is divided into 4 triangles from the center
+    /// Extends clickable area slightly beyond visual bounds
     fn get_region(&self, x: f32, y: f32, bounds: cosmic::iced_core::Rectangle) -> Option<ToolbarPosition> {
-        let local_x = x - bounds.x;
-        let local_y = y - bounds.y;
-        let _center_x = bounds.width / 2.0;
-        let _center_y = bounds.height / 2.0;
+        // Extend the clickable region by a margin
+        let margin = 8.0;
+        let extended_bounds = cosmic::iced_core::Rectangle {
+            x: bounds.x - margin,
+            y: bounds.y - margin,
+            width: bounds.width + margin * 2.0,
+            height: bounds.height + margin * 2.0,
+        };
         
-        // Check if point is inside bounds
-        if local_x < 0.0 || local_x > bounds.width || local_y < 0.0 || local_y > bounds.height {
+        let local_x = x - extended_bounds.x;
+        let local_y = y - extended_bounds.y;
+        
+        // Check if point is inside extended bounds
+        if local_x < 0.0 || local_x > extended_bounds.width || local_y < 0.0 || local_y > extended_bounds.height {
             return None;
         }
         
@@ -84,8 +92,8 @@ impl<Msg: Clone> ToolbarPositionSelector<Msg> {
         // Diagonal from top-left to bottom-right: y = x * (height/width)
         // Diagonal from top-right to bottom-left: y = height - x * (height/width)
         
-        let diag1 = local_x * (bounds.height / bounds.width); // TL to BR
-        let diag2 = bounds.height - local_x * (bounds.height / bounds.width); // TR to BL
+        let diag1 = local_x * (extended_bounds.height / extended_bounds.width); // TL to BR
+        let diag2 = extended_bounds.height - local_x * (extended_bounds.height / extended_bounds.width); // TR to BL
         
         let above_diag1 = local_y < diag1;
         let above_diag2 = local_y < diag2;
@@ -123,17 +131,20 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
         let bounds = layout.bounds();
         let cosmic_theme = theme.cosmic();
         let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
-        let base_color = cosmic::iced::Color::from(cosmic_theme.background.component.base);
-        let hover_color = cosmic::iced::Color::from(cosmic_theme.background.component.hover);
+        let radius = cosmic_theme.radius_xs();
+        
+        // Use more visible colors
+        let base_color = cosmic::iced::Color::from_rgba(0.4, 0.4, 0.4, 0.6);
+        let hover_color = cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 0.8);
         
         // Determine hovered region
         let hovered_region = cursor.position().and_then(|pos| self.get_region(pos.x, pos.y, bounds));
         
-        let edge_thickness = 4.0;
-        let gap = 2.0;
-        let inner_size = bounds.width - edge_thickness * 2.0 - gap * 2.0;
+        let edge_thickness = 6.0;
+        let gap = 3.0;
+        let inner_length = bounds.width - edge_thickness * 2.0 - gap * 2.0;
         
-        // Draw the 4 edge rectangles
+        // Draw the 4 edge rectangles with borders
         // Top edge
         let top_color = if self.current_position == ToolbarPosition::Top {
             accent
@@ -147,10 +158,14 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 bounds: cosmic::iced_core::Rectangle {
                     x: bounds.x + edge_thickness + gap,
                     y: bounds.y,
-                    width: inner_size,
+                    width: inner_length,
                     height: edge_thickness,
                 },
-                border: Border::default(),
+                border: Border {
+                    radius: radius.into(),
+                    width: 1.0,
+                    color: accent,
+                },
                 shadow: cosmic::iced_core::Shadow::default(),
             },
             Background::Color(top_color),
@@ -169,10 +184,14 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 bounds: cosmic::iced_core::Rectangle {
                     x: bounds.x + edge_thickness + gap,
                     y: bounds.y + bounds.height - edge_thickness,
-                    width: inner_size,
+                    width: inner_length,
                     height: edge_thickness,
                 },
-                border: Border::default(),
+                border: Border {
+                    radius: radius.into(),
+                    width: 1.0,
+                    color: accent,
+                },
                 shadow: cosmic::iced_core::Shadow::default(),
             },
             Background::Color(bottom_color),
@@ -192,9 +211,13 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     x: bounds.x,
                     y: bounds.y + edge_thickness + gap,
                     width: edge_thickness,
-                    height: inner_size,
+                    height: inner_length,
                 },
-                border: Border::default(),
+                border: Border {
+                    radius: radius.into(),
+                    width: 1.0,
+                    color: accent,
+                },
                 shadow: cosmic::iced_core::Shadow::default(),
             },
             Background::Color(left_color),
@@ -214,9 +237,13 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     x: bounds.x + bounds.width - edge_thickness,
                     y: bounds.y + edge_thickness + gap,
                     width: edge_thickness,
-                    height: inner_size,
+                    height: inner_length,
                 },
-                border: Border::default(),
+                border: Border {
+                    radius: radius.into(),
+                    width: 1.0,
+                    color: accent,
+                },
                 shadow: cosmic::iced_core::Shadow::default(),
             },
             Background::Color(right_color),
