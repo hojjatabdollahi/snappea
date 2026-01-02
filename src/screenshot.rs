@@ -1252,15 +1252,34 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             let image_path = Screenshot::get_img_path(location);
 
             match choice {
-                Choice::Output(name) => {
-                    if let Some(img) = images.remove(&name) {
+                Choice::Output(output_name) => {
+                    if let Some(img) = images.remove(&output_name) {
+                        let mut final_img = img.rgba.clone();
+                        
+                        // Draw arrows if any (for output, arrows are in output-relative coords)
+                        if !arrows.is_empty() {
+                            // Find the output to get scale factor
+                            let scale = outputs.iter()
+                                .find(|o| o.name == output_name)
+                                .map(|o| final_img.width() as f32 / o.logical_size.0 as f32)
+                                .unwrap_or(1.0);
+                            
+                            let output_rect = Rect {
+                                left: 0,
+                                top: 0,
+                                right: (final_img.width() as f32 / scale) as i32,
+                                bottom: (final_img.height() as f32 / scale) as i32,
+                            };
+                            draw_arrows_on_image(&mut final_img, &arrows, &output_rect, scale);
+                        }
+                        
                         if let Some(ref image_path) = image_path {
-                            if let Err(err) = Screenshot::save_rgba(&img.rgba, image_path) {
+                            if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
                             };
                         } else {
                             let mut buffer = Vec::new();
-                            if let Err(e) = Screenshot::save_rgba_to_buffer(&img.rgba, &mut buffer)
+                            if let Err(e) = Screenshot::save_rgba_to_buffer(&final_img, &mut buffer)
                             {
                                 log::error!("Failed to save screenshot to buffer: {:?}", e);
                                 success = false;
@@ -1269,7 +1288,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             };
                         }
                     } else {
-                        log::error!("Failed to find output {}", name);
+                        log::error!("Failed to find output {}", output_name);
                         success = false;
                     }
                 }
@@ -1360,20 +1379,33 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         success = false;
                     }
                 }
-                Choice::Window(output, Some(window_i)) => {
+                Choice::Window(output_name, Some(window_i)) => {
                     if let Some(img) = args
                         .toplevel_images
-                        .get(&output)
+                        .get(&output_name)
                         .and_then(|imgs| imgs.get(window_i))
                     {
+                        let mut final_img = img.rgba.clone();
+                        
+                        // Draw arrows if any (for window, arrows are in image-relative coords)
+                        if !arrows.is_empty() {
+                            let window_rect = Rect {
+                                left: 0,
+                                top: 0,
+                                right: final_img.width() as i32,
+                                bottom: final_img.height() as i32,
+                            };
+                            draw_arrows_on_image(&mut final_img, &arrows, &window_rect, 1.0);
+                        }
+                        
                         if let Some(ref image_path) = image_path {
-                            if let Err(err) = Screenshot::save_rgba(&img.rgba, image_path) {
+                            if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
                                 success = false;
                             }
                         } else {
                             let mut buffer = Vec::new();
-                            if let Err(e) = Screenshot::save_rgba_to_buffer(&img.rgba, &mut buffer)
+                            if let Err(e) = Screenshot::save_rgba_to_buffer(&final_img, &mut buffer)
                             {
                                 log::error!("Failed to save screenshot to buffer: {:?}", e);
                                 success = false;
@@ -1475,10 +1507,20 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::WindowChosen(name, i) => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.choice = Choice::Window(name, Some(i));
+                // Clear any previous OCR/QR state when selecting a new window
+                args.ocr_status = OcrStatus::Idle;
+                args.ocr_overlays.clear();
+                args.ocr_text = None;
+                args.qr_codes.clear();
+                args.qr_scanning = false;
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
             } else {
                 log::error!("Failed to find screenshot Args for WindowChosen message.");
             }
-            update_msg(app, Msg::Capture)
+            // Don't capture immediately - let user interact with OCR/QR/arrow buttons
+            cosmic::Task::none()
         }
         Msg::Location(loc) => {
             if let Some(args) = app.screenshot_args.as_mut() {
@@ -1512,11 +1554,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.ocr_text = None;
             }
             
-            // Get the rectangle selection and run QR detection on that area
+            // Get the selection and run QR detection on that area
             if let Some(args) = app.screenshot_args.as_ref() {
-                if let Choice::Rectangle(rect, _) = &args.choice {
-                    if rect.width() > 0 && rect.height() > 0 {
-                        // Collect image data for the selected rectangle
+                // Get image data and parameters based on choice type
+                let qr_params: Option<(RgbaImage, String, f32, f32, f32)> = match &args.choice {
+                    Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
+                        let mut params = None;
                         for output in &app.outputs {
                             if let Some(img) = args.output_images.get(&output.name) {
                                 let output_rect = Rect {
@@ -1527,7 +1570,6 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 };
                                 
                                 if let Some(intersection) = rect.intersect(output_rect) {
-                                    // Scale to image coordinates
                                     let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
                                     let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
                                     let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
@@ -1535,47 +1577,60 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     let h = (intersection.height() as f32 * scale) as u32;
                                     
                                     let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
-                                    let output_name = output.name.clone();
-                                    
-                                    // Origin relative to output for QR overlay positions
                                     let origin_x = (intersection.left - output_rect.left) as f32;
                                     let origin_y = (intersection.top - output_rect.top) as f32;
                                     
-                                    // Spawn progressive QR detection tasks (3 passes with increasing resolution)
-                                    let resolutions = [500u32, 1500, 0]; // 0 = full resolution
-                                    let mut qr_detection_tasks = Vec::new();
-                                    
-                                    for (pass_idx, max_dim) in resolutions.into_iter().enumerate() {
-                                        let cropped_clone = cropped.clone();
-                                        let output_name_clone = output_name.clone();
-                                        let task = cosmic::Task::perform(
-                                            async move {
-                                                tokio::task::spawn_blocking(move || {
-                                                    // Detect QR in cropped image, then adjust coordinates
-                                                    let detected = detect_qr_codes_at_resolution(
-                                                        &cropped_clone, 
-                                                        &output_name_clone, 
-                                                        scale, 
-                                                        max_dim
-                                                    );
-                                                    // Adjust coordinates to be relative to output (add origin offset)
-                                                    detected.into_iter().map(|mut qr| {
-                                                        qr.center_x += origin_x;
-                                                        qr.center_y += origin_y;
-                                                        qr
-                                                    }).collect::<Vec<_>>()
-                                                }).await.unwrap_or_default()
-                                            },
-                                            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
-                                        );
-                                        qr_detection_tasks.push(task);
-                                    }
-                                    
-                                    return cosmic::Task::batch(qr_detection_tasks);
+                                    params = Some((cropped, output.name.clone(), scale, origin_x, origin_y));
+                                    break;
                                 }
                             }
                         }
+                        params
                     }
+                    Choice::Window(output_name, Some(window_index)) => {
+                        args.toplevel_images
+                            .get(output_name)
+                            .and_then(|imgs| imgs.get(*window_index))
+                            .map(|img| (img.rgba.clone(), output_name.clone(), 1.0, 0.0, 0.0))
+                    }
+                    Choice::Output(output_name) => {
+                        args.output_images
+                            .get(output_name)
+                            .map(|img| (img.rgba.clone(), output_name.clone(), 1.0, 0.0, 0.0))
+                    }
+                    _ => None,
+                };
+                
+                if let Some((cropped, output_name, scale, origin_x, origin_y)) = qr_params {
+                    // Spawn progressive QR detection tasks (3 passes with increasing resolution)
+                    let resolutions = [500u32, 1500, 0]; // 0 = full resolution
+                    let mut qr_detection_tasks = Vec::new();
+                    
+                    for (_pass_idx, max_dim) in resolutions.into_iter().enumerate() {
+                        let cropped_clone = cropped.clone();
+                        let output_name_clone = output_name.clone();
+                        let task = cosmic::Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    let detected = detect_qr_codes_at_resolution(
+                                        &cropped_clone, 
+                                        &output_name_clone, 
+                                        scale, 
+                                        max_dim
+                                    );
+                                    detected.into_iter().map(|mut qr| {
+                                        qr.center_x += origin_x;
+                                        qr.center_y += origin_y;
+                                        qr
+                                    }).collect::<Vec<_>>()
+                                }).await.unwrap_or_default()
+                            },
+                            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
+                        );
+                        qr_detection_tasks.push(task);
+                    }
+                    
+                    return cosmic::Task::batch(qr_detection_tasks);
                 }
             }
             cosmic::Task::none()
@@ -1610,13 +1665,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.qr_codes.clear();
             }
             
-            // Get the rectangle selection and run OCR on that area
+            // Get the selection and run OCR on that area
             if let Some(args) = app.screenshot_args.as_ref() {
-                if let Choice::Rectangle(rect, _) = &args.choice {
-                    if rect.width() > 0 && rect.height() > 0 {
+                let region_data: Option<(RgbaImage, OcrMapping)> = match &args.choice {
+                    Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
                         // Collect image data for the selected rectangle
-                        let mut region_data: Option<(RgbaImage, OcrMapping)> = None;
-                        
+                        let mut data = None;
                         for output in &app.outputs {
                             if let Some(img) = args.output_images.get(&output.name) {
                                 let output_rect = Rect {
@@ -1627,7 +1681,6 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 };
                                 
                                 if let Some(intersection) = rect.intersect(output_rect) {
-                                    // Scale to image coordinates
                                     let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
                                     let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
                                     let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
@@ -1636,13 +1689,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     
                                     let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
                                     
-                                    // Coordinates relative to this output's origin (like QR codes)
                                     let origin_x = (intersection.left - output_rect.left) as f32;
                                     let origin_y = (intersection.top - output_rect.top) as f32;
                                     let size_w = intersection.width() as f32;
                                     let size_h = intersection.height() as f32;
                                     
-                                    region_data = Some((
+                                    data = Some((
                                         cropped,
                                         OcrMapping {
                                             origin: (origin_x, origin_y),
@@ -1655,19 +1707,54 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 }
                             }
                         }
-                        
-                        if let Some((cropped_img, mapping)) = region_data {
-                            // Run OCR in background with status updates
-                            return cosmic::Task::perform(
-                                async move {
-                                    tokio::task::spawn_blocking(move || {
-                                        run_ocr_on_image_with_status(&cropped_img, mapping)
-                                    }).await.unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
-                                },
-                                |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status))
-                            );
-                        }
+                        data
                     }
+                    Choice::Window(output_name, Some(window_index)) => {
+                        // Get window image from toplevel_images
+                        args.toplevel_images
+                            .get(output_name)
+                            .and_then(|imgs| imgs.get(*window_index))
+                            .map(|img| {
+                                (
+                                    img.rgba.clone(),
+                                    OcrMapping {
+                                        origin: (0.0, 0.0),
+                                        size: (img.rgba.width() as f32, img.rgba.height() as f32),
+                                        scale: 1.0,
+                                        output_name: output_name.clone(),
+                                    },
+                                )
+                            })
+                    }
+                    Choice::Output(output_name) => {
+                        // Get full output image
+                        args.output_images
+                            .get(output_name)
+                            .map(|img| {
+                                (
+                                    img.rgba.clone(),
+                                    OcrMapping {
+                                        origin: (0.0, 0.0),
+                                        size: (img.rgba.width() as f32, img.rgba.height() as f32),
+                                        scale: 1.0,
+                                        output_name: output_name.clone(),
+                                    },
+                                )
+                            })
+                    }
+                    _ => None,
+                };
+                        
+                if let Some((cropped_img, mapping)) = region_data {
+                    // Run OCR in background with status updates
+                    return cosmic::Task::perform(
+                        async move {
+                            tokio::task::spawn_blocking(move || {
+                                run_ocr_on_image_with_status(&cropped_img, mapping)
+                            }).await.unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
+                        },
+                        |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status))
+                    );
                 }
             }
             cosmic::Task::none()

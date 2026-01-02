@@ -7,6 +7,7 @@ use cosmic::{
     iced_core::{
         Background, Border, ContentFit, Degrees, Layout, Length, Point, Size, alignment,
         gradient::Linear, layout, overlay, widget::Tree,
+        text::Renderer as TextRenderer,
     },
     iced_widget::{
         column, row,
@@ -32,6 +33,396 @@ use super::{
     output_selection::OutputSelection,
     rectangle_selection::{DragState, RectangleSelection},
 };
+
+/// Widget for displaying a selected window or output with OCR/QR/arrow buttons
+pub struct SelectedImageWidget<Msg> {
+    image_handle: Option<cosmic::widget::image::Handle>,
+    image_size: (u32, u32),
+    on_ocr: Msg,
+    on_ocr_copy: Msg,
+    on_qr: Msg,
+    on_qr_copy: Msg,
+    has_ocr_text: bool,
+    has_qr_codes: bool,
+    on_arrow_toggle: Msg,
+    arrow_mode: bool,
+    annotate_mode: bool,
+}
+
+impl<Msg: Clone> SelectedImageWidget<Msg> {
+    pub fn new(
+        output_name: String,
+        window_index: Option<usize>,
+        toplevel_images: &HashMap<String, Vec<ScreenshotImage>>,
+        _output_rect: Rect,
+        on_ocr: Msg,
+        on_ocr_copy: Msg,
+        on_qr: Msg,
+        on_qr_copy: Msg,
+        has_ocr_text: bool,
+        has_qr_codes: bool,
+        on_arrow_toggle: Msg,
+        arrow_mode: bool,
+        annotate_mode: bool,
+    ) -> Self {
+        let (image_handle, image_size) = if let Some(window_index) = window_index {
+            toplevel_images
+                .get(&output_name)
+                .and_then(|imgs| imgs.get(window_index))
+                .map(|img| (Some(img.handle.clone()), (img.rgba.width(), img.rgba.height())))
+                .unwrap_or((None, (0, 0)))
+        } else {
+            (None, (0, 0))
+        };
+        
+        Self {
+            image_handle,
+            image_size,
+            on_ocr,
+            on_ocr_copy,
+            on_qr,
+            on_qr_copy,
+            has_ocr_text,
+            has_qr_codes,
+            on_arrow_toggle,
+            arrow_mode,
+            annotate_mode,
+        }
+    }
+
+    /// Calculate button bounds for OCR button (right side of image, top)
+    fn ocr_button_bounds(&self, image_bounds: cosmic::iced_core::Rectangle) -> cosmic::iced_core::Rectangle {
+        let button_width = 64.0;
+        let button_height = 32.0;
+        cosmic::iced_core::Rectangle {
+            x: image_bounds.x + image_bounds.width + 8.0,
+            y: image_bounds.y,
+            width: button_width,
+            height: button_height,
+        }
+    }
+
+    /// Calculate button bounds for QR button (right side of image, below OCR)
+    fn qr_button_bounds(&self, image_bounds: cosmic::iced_core::Rectangle) -> cosmic::iced_core::Rectangle {
+        let button_width = 64.0;
+        let button_height = 32.0;
+        cosmic::iced_core::Rectangle {
+            x: image_bounds.x + image_bounds.width + 8.0,
+            y: image_bounds.y + button_height + 8.0,
+            width: button_width,
+            height: button_height,
+        }
+    }
+
+    /// Calculate button bounds for arrow button (left side of image)
+    fn arrow_button_bounds(&self, image_bounds: cosmic::iced_core::Rectangle) -> Option<cosmic::iced_core::Rectangle> {
+        if !self.annotate_mode {
+            return None;
+        }
+        let button_width = 32.0;
+        let button_height = 32.0;
+        Some(cosmic::iced_core::Rectangle {
+            x: image_bounds.x - button_width - 8.0,
+            y: image_bounds.y,
+            width: button_width,
+            height: button_height,
+        })
+    }
+
+    /// Calculate the bounds where the image should be drawn (centered in the output)
+    fn image_bounds(&self, layout_bounds: cosmic::iced_core::Rectangle) -> cosmic::iced_core::Rectangle {
+        if self.image_handle.is_some() && self.image_size.0 > 0 {
+            let img_width = self.image_size.0 as f32;
+            let img_height = self.image_size.1 as f32;
+            
+            // Leave space for buttons around the image
+            let available_width = layout_bounds.width - 100.0; // 50px margin on each side for buttons
+            let available_height = layout_bounds.height - 100.0;
+            
+            // Calculate scale to fit image within available space
+            let scale_x = available_width / img_width;
+            let scale_y = available_height / img_height;
+            let scale = scale_x.min(scale_y).min(1.0); // Don't upscale
+            
+            let display_width = img_width * scale;
+            let display_height = img_height * scale;
+            
+            cosmic::iced_core::Rectangle {
+                x: layout_bounds.x + (layout_bounds.width - display_width) / 2.0,
+                y: layout_bounds.y + (layout_bounds.height - display_height) / 2.0,
+                width: display_width,
+                height: display_height,
+            }
+        } else {
+            layout_bounds
+        }
+    }
+}
+
+impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer> for SelectedImageWidget<Msg> {
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fill)
+    }
+
+    fn layout(&self, _tree: &mut Tree, _renderer: &cosmic::Renderer, limits: &cosmic::iced::Limits) -> layout::Node {
+        let limits = limits.width(Length::Fill).height(Length::Fill);
+        layout::Node::new(limits.resolve(Length::Fill, Length::Fill, Size::ZERO))
+    }
+
+    fn draw(
+        &self,
+        _tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        _style: &cosmic::iced_core::renderer::Style,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &cosmic::iced_core::Rectangle,
+    ) {
+        use cosmic::iced_core::Renderer as _;
+        
+        let cosmic_theme = theme.cosmic();
+        let layout_bounds = layout.bounds();
+        let image_bounds = self.image_bounds(layout_bounds);
+        
+        // Draw the image
+        if let Some(ref handle) = self.image_handle {
+            cosmic::iced_core::image::Renderer::draw_image(
+                renderer,
+                handle.clone(),
+                cosmic::iced_core::image::FilterMethod::Linear,
+                image_bounds,
+                cosmic::iced::Radians(0.0),
+                1.0,
+                [0.0, 0.0, 0.0, 0.0],
+            );
+        }
+        
+        // Draw border around the image
+        let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: image_bounds,
+                border: Border {
+                    radius: cosmic_theme.radius_s().into(),
+                    width: 4.0,
+                    color: accent,
+                },
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(cosmic::iced::Color::TRANSPARENT),
+        );
+        
+        // Draw OCR button
+        let ocr_bounds = self.ocr_button_bounds(image_bounds);
+        let ocr_hovered = cursor.position().map(|p| ocr_bounds.contains(p)).unwrap_or(false);
+        let ocr_text = if self.has_ocr_text { "📋" } else { "OCR" };
+        let ocr_bg = if ocr_hovered {
+            cosmic_theme.accent_color()
+        } else {
+            cosmic_theme.background.component.base
+        };
+        
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: ocr_bounds,
+                border: Border {
+                    radius: cosmic_theme.radius_s().into(),
+                    width: 2.0,
+                    color: accent,
+                },
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(ocr_bg.into()),
+        );
+        
+        renderer.fill_text(
+            cosmic::iced_core::text::Text {
+                content: ocr_text.into(),
+                bounds: Size::new(ocr_bounds.width, ocr_bounds.height),
+                size: cosmic::iced::Pixels(14.0),
+                line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                font: cosmic::iced::Font::default(),
+                horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
+                vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
+                shaping: cosmic::iced_core::text::Shaping::Advanced,
+                wrapping: cosmic::iced_core::text::Wrapping::None,
+            },
+            Point::new(ocr_bounds.x, ocr_bounds.y),
+            cosmic_theme.on_accent_color().into(),
+            *viewport,
+        );
+        
+        // Draw QR button
+        let qr_bounds = self.qr_button_bounds(image_bounds);
+        let qr_hovered = cursor.position().map(|p| qr_bounds.contains(p)).unwrap_or(false);
+        let qr_text = if self.has_qr_codes { "📋" } else { "QR" };
+        let qr_bg = if qr_hovered {
+            cosmic_theme.accent_color()
+        } else {
+            cosmic_theme.background.component.base
+        };
+        
+        renderer.fill_quad(
+            cosmic::iced_core::renderer::Quad {
+                bounds: qr_bounds,
+                border: Border {
+                    radius: cosmic_theme.radius_s().into(),
+                    width: 2.0,
+                    color: accent,
+                },
+                shadow: cosmic::iced_core::Shadow::default(),
+            },
+            Background::Color(qr_bg.into()),
+        );
+        
+        renderer.fill_text(
+            cosmic::iced_core::text::Text {
+                content: qr_text.into(),
+                bounds: Size::new(qr_bounds.width, qr_bounds.height),
+                size: cosmic::iced::Pixels(14.0),
+                line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                font: cosmic::iced::Font::default(),
+                horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
+                vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
+                shaping: cosmic::iced_core::text::Shaping::Advanced,
+                wrapping: cosmic::iced_core::text::Wrapping::None,
+            },
+            Point::new(qr_bounds.x, qr_bounds.y),
+            cosmic_theme.on_accent_color().into(),
+            *viewport,
+        );
+        
+        // Draw arrow button if annotate mode is enabled
+        if let Some(arrow_bounds) = self.arrow_button_bounds(image_bounds) {
+            let arrow_hovered = cursor.position().map(|p| arrow_bounds.contains(p)).unwrap_or(false);
+            let arrow_bg = if self.arrow_mode {
+                cosmic_theme.accent_color()
+            } else if arrow_hovered {
+                cosmic_theme.background.component.hover
+            } else {
+                cosmic_theme.background.component.base
+            };
+            
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: arrow_bounds,
+                    border: Border {
+                        radius: cosmic_theme.radius_s().into(),
+                        width: 2.0,
+                        color: accent,
+                    },
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                Background::Color(arrow_bg.into()),
+            );
+            
+            renderer.fill_text(
+                cosmic::iced_core::text::Text {
+                    content: "→".into(),
+                    bounds: Size::new(arrow_bounds.width, arrow_bounds.height),
+                    size: cosmic::iced::Pixels(18.0),
+                    line_height: cosmic::iced_core::text::LineHeight::Relative(1.2),
+                    font: cosmic::iced::Font::default(),
+                    horizontal_alignment: cosmic::iced_core::alignment::Horizontal::Center,
+                    vertical_alignment: cosmic::iced_core::alignment::Vertical::Center,
+                    shaping: cosmic::iced_core::text::Shaping::Advanced,
+                    wrapping: cosmic::iced_core::text::Wrapping::None,
+                },
+                Point::new(arrow_bounds.x, arrow_bounds.y),
+                cosmic_theme.on_accent_color().into(),
+                *viewport,
+            );
+        }
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &Tree,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        _viewport: &cosmic::iced_core::Rectangle,
+        _renderer: &cosmic::Renderer,
+    ) -> cosmic::iced_core::mouse::Interaction {
+        let layout_bounds = layout.bounds();
+        let image_bounds = self.image_bounds(layout_bounds);
+        
+        if let Some(pos) = cursor.position() {
+            let ocr_bounds = self.ocr_button_bounds(image_bounds);
+            let qr_bounds = self.qr_button_bounds(image_bounds);
+            
+            if ocr_bounds.contains(pos) || qr_bounds.contains(pos) {
+                return cosmic::iced_core::mouse::Interaction::Pointer;
+            }
+            
+            if let Some(arrow_bounds) = self.arrow_button_bounds(image_bounds) {
+                if arrow_bounds.contains(pos) {
+                    return cosmic::iced_core::mouse::Interaction::Pointer;
+                }
+            }
+        }
+        
+        cosmic::iced_core::mouse::Interaction::default()
+    }
+
+    fn on_event(
+        &mut self,
+        _state: &mut Tree,
+        event: cosmic::iced_core::Event,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        _renderer: &cosmic::Renderer,
+        _clipboard: &mut dyn cosmic::iced_core::Clipboard,
+        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
+        _viewport: &cosmic::iced_core::Rectangle,
+    ) -> cosmic::iced_core::event::Status {
+        let layout_bounds = layout.bounds();
+        let image_bounds = self.image_bounds(layout_bounds);
+        
+        if let cosmic::iced_core::Event::Mouse(cosmic::iced_core::mouse::Event::ButtonPressed(
+            cosmic::iced_core::mouse::Button::Left,
+        )) = event
+        {
+            if let Some(pos) = cursor.position() {
+                let ocr_bounds = self.ocr_button_bounds(image_bounds);
+                let qr_bounds = self.qr_button_bounds(image_bounds);
+                
+                if ocr_bounds.contains(pos) {
+                    if self.has_ocr_text {
+                        shell.publish(self.on_ocr_copy.clone());
+                    } else {
+                        shell.publish(self.on_ocr.clone());
+                    }
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+                
+                if qr_bounds.contains(pos) {
+                    if self.has_qr_codes {
+                        shell.publish(self.on_qr_copy.clone());
+                    } else {
+                        shell.publish(self.on_qr.clone());
+                    }
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+                
+                if let Some(arrow_bounds) = self.arrow_button_bounds(image_bounds) {
+                    if arrow_bounds.contains(pos) {
+                        shell.publish(self.on_arrow_toggle.clone());
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+            }
+        }
+        
+        cosmic::iced_core::event::Status::Ignored
+    }
+}
+
+impl<'a, Msg: Clone + 'static> From<SelectedImageWidget<Msg>> for Element<'a, Msg> {
+    fn from(widget: SelectedImageWidget<Msg>) -> Self {
+        Element::new(widget)
+    }
+}
 
 pub struct ScreenshotSelection<'a, Msg> {
     id: cosmic::widget::Id,
@@ -166,12 +557,24 @@ where
             )
             .into(),
             Choice::Output(_) => {
-                OutputSelection::new(on_output_change(output.output.clone()), on_copy_to_clipboard.clone())
-                    .into()
+                OutputSelection::new(
+                    on_output_change(output.output.clone()),
+                    on_ocr.clone(),
+                    on_ocr_copy.clone(),
+                    on_qr.clone(),
+                    on_qr_copy.clone(),
+                    on_arrow_toggle.clone(),
+                    has_ocr_text,
+                    has_qr_codes,
+                    arrow_mode,
+                    annotate_mode,
+                )
+                .into()
             }
-            Choice::Window(..) => {
+            Choice::Window(ref win_output, None) => {
+                // Window picker mode - show all windows as buttons
                 let imgs = toplevel_images
-                    .get(&output.name)
+                    .get(win_output)
                     .map(|x| x.as_slice())
                     .unwrap_or_default();
                 let total_img_width = imgs.iter().map(|img| img.width()).sum::<u32>();
@@ -205,14 +608,36 @@ where
                 .height(Length::Fill)
                 .into()
             }
+            Choice::Window(ref win_output, Some(win_index)) => {
+                // Selected window mode - show the window image with OCR/QR/arrow buttons
+                SelectedImageWidget::new(
+                    win_output.clone(),
+                    Some(win_index),
+                    toplevel_images,
+                    output_rect,
+                    on_ocr.clone(),
+                    on_ocr_copy.clone(),
+                    on_qr.clone(),
+                    on_qr_copy.clone(),
+                    has_ocr_text,
+                    has_qr_codes,
+                    on_arrow_toggle.clone(),
+                    arrow_mode,
+                    annotate_mode,
+                )
+                .into()
+            }
         };
 
         let bg_element = match choice {
-            Choice::Output(_) | Choice::Rectangle(..) => image::Image::new(image.handle.clone())
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-            Choice::Window(..) => match output.bg_source.clone() {
+            Choice::Output(_) | Choice::Rectangle(..) | Choice::Window(_, Some(_)) => {
+                // For rectangle, output, and selected window modes, show the screenshot
+                image::Image::new(image.handle.clone())
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+                    .into()
+            }
+            Choice::Window(_, None) => match output.bg_source.clone() {
                 Some(Source::Path(path)) => image::Image::new(image::Handle::from_path(path))
                     .content_fit(ContentFit::Cover)
                     .width(Length::Fill)
@@ -295,22 +720,52 @@ where
         log::debug!("After filtering: {} OCR overlays for this output", ocr_overlays_for_output.len());
         
         // Calculate selection rectangle relative to this output
-        let selection_rect = if let Choice::Rectangle(r, _) = &choice {
-            if let Some(intersection) = r.intersect(output_rect) {
-                let x = (intersection.left - output_rect.left) as f32;
-                let y = (intersection.top - output_rect.top) as f32;
-                let w = intersection.width() as f32;
-                let h = intersection.height() as f32;
-                if w > 0.0 && h > 0.0 {
-                    Some((x, y, w, h))
+        let selection_rect = match &choice {
+            Choice::Rectangle(r, _) => {
+                if let Some(intersection) = r.intersect(output_rect) {
+                    let x = (intersection.left - output_rect.left) as f32;
+                    let y = (intersection.top - output_rect.top) as f32;
+                    let w = intersection.width() as f32;
+                    let h = intersection.height() as f32;
+                    if w > 0.0 && h > 0.0 {
+                        Some((x, y, w, h))
+                    } else {
+                        None
+                    }
                 } else {
                     None
                 }
-            } else {
-                None
             }
-        } else {
-            None
+            Choice::Window(win_output, Some(win_idx)) => {
+                // For selected window mode, calculate where the window image will be drawn (centered)
+                if let Some(img) = toplevel_images.get(win_output).and_then(|imgs| imgs.get(*win_idx)) {
+                    let img_width = img.rgba.width() as f32;
+                    let img_height = img.rgba.height() as f32;
+                    let output_width = output.logical_size.0 as f32;
+                    let output_height = output.logical_size.1 as f32;
+                    
+                    // Match the centering logic in SelectedImageWidget::image_bounds
+                    let available_width = output_width - 100.0;
+                    let available_height = output_height - 100.0;
+                    let scale_x = available_width / img_width;
+                    let scale_y = available_height / img_height;
+                    let scale = scale_x.min(scale_y).min(1.0);
+                    
+                    let display_width = img_width * scale;
+                    let display_height = img_height * scale;
+                    let x = (output_width - display_width) / 2.0;
+                    let y = (output_height - display_height) / 2.0;
+                    
+                    Some((x, y, display_width, display_height))
+                } else {
+                    None
+                }
+            }
+            Choice::Output(_) => {
+                // For output mode, the entire output is the selection area
+                Some((0.0, 0.0, output.logical_size.0 as f32, output.logical_size.1 as f32))
+            }
+            _ => None,
         };
         
         Self {
