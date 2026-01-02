@@ -5,6 +5,7 @@ mod app;
 mod buffer;
 mod localize;
 mod ocr;
+mod qr;
 mod screenshot;
 mod wayland;
 mod widget;
