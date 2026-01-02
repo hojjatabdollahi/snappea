@@ -1000,6 +1000,16 @@ pub struct RadialMenuState {
     pub output_name: String,
 }
 
+/// Toolbar position on the screen
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolbarPosition {
+    Top,
+    #[default]
+    Bottom,
+    Left,
+    Right,
+}
+
 #[derive(Debug, Clone)]
 pub enum Msg {
     Capture,
@@ -1022,6 +1032,7 @@ pub enum Msg {
     ArrowStart(f32, f32),  // start drawing arrow at position
     ArrowEnd(f32, f32),  // finish arrow at position
     ArrowCancel,  // cancel current arrow drawing
+    ToolbarPositionChange(ToolbarPosition),  // change toolbar position
 }
 
 #[derive(Debug, Clone)]
@@ -1068,6 +1079,8 @@ pub struct Args {
     pub arrow_mode: bool,
     /// Current arrow being drawn (start point set, waiting for end point)
     pub arrow_drawing: Option<(f32, f32)>,
+    /// Toolbar position on screen
+    pub toolbar_position: ToolbarPosition,
 }
 
 struct Output {
@@ -1164,6 +1177,7 @@ impl Screenshot {
                 arrows: Vec::new(),
                 arrow_mode: false,
                 arrow_drawing: None,
+                toolbar_position: ToolbarPosition::default(),
             }))
             .await
         {
@@ -1243,6 +1257,8 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ArrowModeToggle,
             Msg::ArrowStart,
             Msg::ArrowEnd,
+            args.toolbar_position,
+            Msg::ToolbarPositionChange,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::Capture),
@@ -1873,6 +1889,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::ToolbarPositionChange(position) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.toolbar_position = position;
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -1897,6 +1919,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         arrows: _,
         arrow_mode: _,
         arrow_drawing: _,
+        toolbar_position: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

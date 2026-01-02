@@ -9,7 +9,7 @@ use cosmic::{
         gradient::Linear, layout, overlay, widget::Tree,
     },
     iced_widget::{
-        row,
+        column, row,
         graphics::{
             Mesh,
             color::pack,
@@ -27,7 +27,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     fl,
-    screenshot::{ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage},
+    screenshot::{ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, RadialMenuOption, RadialMenuState, Rect, ScreenshotImage, ToolbarPosition},
 };
 
 use super::{
@@ -76,6 +76,10 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_arrow_toggle: Option<Msg>,
     pub on_arrow_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     pub on_arrow_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Toolbar position
+    pub toolbar_position: ToolbarPosition,
+    /// Callback for toolbar position change
+    pub on_toolbar_position: Option<Box<dyn Fn(ToolbarPosition) -> Msg + 'a>>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -117,6 +121,8 @@ where
         on_arrow_toggle: Msg,
         on_arrow_start: impl Fn(f32, f32) -> Msg + 'a,
         on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
+        toolbar_position: ToolbarPosition,
+        on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -317,95 +323,161 @@ where
             show_qr_overlays,
             qr_scanning,
             ocr_status,
-            menu_element: cosmic::widget::container(
-                row![
+            menu_element: {
+                // Position selector - 4 rectangles representing screen edges
+                let pos_btn_size = 14.0_f32;
+                let pos_gap = 2.0_f32;
+                let pos_inner_size = 16.0_f32;
+                
+                let on_toolbar_pos_top = on_toolbar_position(ToolbarPosition::Top);
+                let on_toolbar_pos_bottom = on_toolbar_position(ToolbarPosition::Bottom);
+                let on_toolbar_pos_left = on_toolbar_position(ToolbarPosition::Left);
+                let on_toolbar_pos_right = on_toolbar_position(ToolbarPosition::Right);
+                
+                let position_selector: Element<'_, Msg> = column![
+                    // Top button
+                    cosmic::widget::container(
+                        button::custom(
+                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
+                                .width(Length::Fixed(pos_btn_size))
+                                .height(Length::Fixed(pos_btn_size * 0.5))
+                        )
+                        .class(if toolbar_position == ToolbarPosition::Top { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
+                        .on_press(on_toolbar_pos_top)
+                        .padding(0)
+                    ).width(Length::Fixed(pos_btn_size + pos_inner_size + pos_btn_size)).align_x(cosmic::iced_core::alignment::Horizontal::Center),
+                    // Middle row: Left, center gap, Right
                     row![
                         button::custom(
-                            icon::Icon::from(
-                                icon::from_name("screenshot-selection-symbolic").size(64)
-                            )
-                            .width(Length::Fixed(40.0))
-                            .height(Length::Fixed(40.0))
-                            .class(
-                                if matches!(choice, Choice::Rectangle(..)) {
-                                    active_icon.clone()
-                                } else {
-                                    cosmic::theme::Svg::default()
-                                }
-                            )
+                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
+                                .width(Length::Fixed(pos_btn_size * 0.5))
+                                .height(Length::Fixed(pos_btn_size))
                         )
-                        .selected(matches!(choice, Choice::Rectangle(..)))
-                        .class(cosmic::theme::Button::Icon)
-                        .on_press(on_choice_change(Choice::Rectangle(
-                            Rect::default(),
-                            DragState::None
-                        )))
-                        .padding(space_xs),
+                        .class(if toolbar_position == ToolbarPosition::Left { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
+                        .on_press(on_toolbar_pos_left)
+                        .padding(0),
+                        cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
+                            .width(Length::Fixed(pos_inner_size))
+                            .height(Length::Fixed(pos_inner_size)),
                         button::custom(
-                            icon::Icon::from(
-                                icon::from_name("screenshot-window-symbolic").size(64)
-                            )
-                            .class(if matches!(choice, Choice::Window(..)) {
-                                active_icon.clone()
-                            } else {
-                                cosmic::theme::Svg::default()
-                            })
-                            .width(Length::Fixed(40.0))
-                            .height(Length::Fixed(40.0))
+                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
+                                .width(Length::Fixed(pos_btn_size * 0.5))
+                                .height(Length::Fixed(pos_btn_size))
                         )
-                        .selected(matches!(choice, Choice::Window(..)))
-                        .class(cosmic::theme::Button::Icon)
-                        .on_press(on_choice_change(Choice::Window(output.name.clone(), None)))
-                        .padding(space_xs),
+                        .class(if toolbar_position == ToolbarPosition::Right { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
+                        .on_press(on_toolbar_pos_right)
+                        .padding(0)
+                    ].spacing(pos_gap).align_y(cosmic::iced_core::Alignment::Center),
+                    // Bottom button
+                    cosmic::widget::container(
                         button::custom(
-                            icon::Icon::from(
-                                icon::from_name("screenshot-screen-symbolic").size(64)
-                            )
-                            .width(Length::Fixed(40.0))
-                            .height(Length::Fixed(40.0))
-                            .class(
-                                if matches!(choice, Choice::Output(..)) {
-                                    active_icon.clone()
-                                } else {
-                                    cosmic::theme::Svg::default()
-                                }
-                            )
+                            cosmic::widget::container(horizontal_space().width(Length::Fixed(0.0)))
+                                .width(Length::Fixed(pos_btn_size))
+                                .height(Length::Fixed(pos_btn_size * 0.5))
                         )
-                        .selected(matches!(choice, Choice::Output(..)))
-                        .class(cosmic::theme::Button::Icon)
-                        .on_press(on_choice_change(Choice::Output(output.name.clone())))
-                        .padding(space_xs)
+                        .class(if toolbar_position == ToolbarPosition::Bottom { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Standard })
+                        .on_press(on_toolbar_pos_bottom)
+                        .padding(0)
+                    ).width(Length::Fixed(pos_btn_size + pos_inner_size + pos_btn_size)).align_x(cosmic::iced_core::alignment::Horizontal::Center)
+                ].spacing(pos_gap).align_x(cosmic::iced_core::Alignment::Center).into();
+                
+                // Common buttons
+                let btn_region = button::custom(
+                    icon::Icon::from(icon::from_name("screenshot-selection-symbolic").size(64))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                        .class(if matches!(choice, Choice::Rectangle(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+                )
+                .selected(matches!(choice, Choice::Rectangle(..)))
+                .class(cosmic::theme::Button::Icon)
+                .on_press(on_choice_change(Choice::Rectangle(Rect::default(), DragState::None)))
+                .padding(space_xs);
+                
+                let btn_window = button::custom(
+                    icon::Icon::from(icon::from_name("screenshot-window-symbolic").size(64))
+                        .class(if matches!(choice, Choice::Window(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .selected(matches!(choice, Choice::Window(..)))
+                .class(cosmic::theme::Button::Icon)
+                .on_press(on_choice_change(Choice::Window(output.name.clone(), None)))
+                .padding(space_xs);
+                
+                let btn_screen = button::custom(
+                    icon::Icon::from(icon::from_name("screenshot-screen-symbolic").size(64))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                        .class(if matches!(choice, Choice::Output(..)) { active_icon.clone() } else { cosmic::theme::Svg::default() })
+                )
+                .selected(matches!(choice, Choice::Output(..)))
+                .class(cosmic::theme::Button::Icon)
+                .on_press(on_choice_change(Choice::Output(output.name.clone())))
+                .padding(space_xs);
+                
+                let btn_capture = button::custom(text(fl!("capture"))).on_press_maybe(
+                    if let Choice::Rectangle(r, ..) = choice {
+                        r.dimensions().is_some().then_some(on_capture)
+                    } else {
+                        Some(on_capture)
+                    }
+                );
+                
+                let dropdown_elem: Element<'_, Msg> = Element::from(dropdown(
+                    save_locations.as_slice(),
+                    Some(selected_save_location),
+                    |i| i
+                )).map(dropdown_selected);
+                
+                let btn_close = button::custom(
+                    icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .class(cosmic::theme::Button::Icon)
+                .on_press(on_cancel);
+                
+                let is_vertical = matches!(toolbar_position, ToolbarPosition::Left | ToolbarPosition::Right);
+                
+                let toolbar_content: Element<'_, Msg> = if is_vertical {
+                    // Vertical layout for left/right positions
+                    use cosmic::widget::divider::horizontal;
+                    column![
+                        position_selector,
+                        horizontal::light().width(Length::Fixed(64.0)),
+                        column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                        horizontal::light().width(Length::Fixed(64.0)),
+                        btn_capture,
+                        horizontal::light().width(Length::Fixed(64.0)),
+                        dropdown_elem,
+                        horizontal::light().width(Length::Fixed(64.0)),
+                        btn_close,
                     ]
+                    .align_x(cosmic::iced_core::Alignment::Center)
                     .spacing(space_s)
-                    .align_y(cosmic::iced_core::Alignment::Center),
-                    vertical::light().height(Length::Fixed(64.0)),
-                    button::custom(text(fl!("capture"))).on_press_maybe(
-                        if let Choice::Rectangle(r, ..) = choice {
-                            r.dimensions().is_some().then_some(on_capture)
-                        } else {
-                            Some(on_capture)
-                        }
-                    ),
-                    vertical::light().height(Length::Fixed(64.0)),
-                    Element::from(dropdown(
-                        save_locations.as_slice(),
-                        Some(selected_save_location),
-                        |i| i
-                    ))
-                    .map(dropdown_selected),
-                    vertical::light().height(Length::Fixed(64.0)),
-                    button::custom(
-                        icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
-                            .width(Length::Fixed(40.0))
-                            .height(Length::Fixed(40.0))
-                    )
-                    .class(cosmic::theme::Button::Icon)
-                    .on_press(on_cancel),
-                ]
-                .align_y(cosmic::iced_core::Alignment::Center)
-                .spacing(space_s)
-                .padding([space_xxs, space_s, space_xxs, space_s]),
-            )
+                    .padding([space_s, space_xxs, space_s, space_xxs])
+                    .into()
+                } else {
+                    // Horizontal layout for top/bottom positions
+                    row![
+                        position_selector,
+                        vertical::light().height(Length::Fixed(64.0)),
+                        row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                        vertical::light().height(Length::Fixed(64.0)),
+                        btn_capture,
+                        vertical::light().height(Length::Fixed(64.0)),
+                        dropdown_elem,
+                        vertical::light().height(Length::Fixed(64.0)),
+                        btn_close,
+                    ]
+                    .align_y(cosmic::iced_core::Alignment::Center)
+                    .spacing(space_s)
+                    .padding([space_xxs, space_s, space_xxs, space_s])
+                    .into()
+                };
+                
+                cosmic::widget::container(toolbar_content)
+            }
             .class(cosmic::theme::Container::Custom(Box::new(|theme| {
                 let theme = theme.cosmic();
                 cosmic::iced::widget::container::Style {
@@ -432,6 +504,8 @@ where
             on_arrow_toggle: Some(on_arrow_toggle),
             on_arrow_start: Some(Box::new(on_arrow_start)),
             on_arrow_end: Some(Box::new(on_arrow_end)),
+            toolbar_position,
+            on_toolbar_position: Some(Box::new(on_toolbar_position)),
         }
     }
 }
@@ -710,10 +784,28 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 .as_widget()
                 .layout(&mut children[2], renderer, limits);
         let menu_bounds = menu_node.bounds();
-        menu_node = menu_node.move_to(Point {
-            x: (limits.max().width - menu_bounds.width) / 2.0,
-            y: limits.max().height - menu_bounds.height - 32.0,
-        });
+        let margin = 32.0_f32;
+        
+        // Position menu based on toolbar_position
+        let menu_pos = match self.toolbar_position {
+            ToolbarPosition::Bottom => Point {
+                x: (limits.max().width - menu_bounds.width) / 2.0,
+                y: limits.max().height - menu_bounds.height - margin,
+            },
+            ToolbarPosition::Top => Point {
+                x: (limits.max().width - menu_bounds.width) / 2.0,
+                y: margin,
+            },
+            ToolbarPosition::Left => Point {
+                x: margin,
+                y: (limits.max().height - menu_bounds.height) / 2.0,
+            },
+            ToolbarPosition::Right => Point {
+                x: limits.max().width - menu_bounds.width - margin,
+                y: (limits.max().height - menu_bounds.height) / 2.0,
+            },
+        };
+        menu_node = menu_node.move_to(menu_pos);
 
         layout::Node::with_children(
             limits.resolve(Length::Fill, Length::Fill, Size::ZERO),
