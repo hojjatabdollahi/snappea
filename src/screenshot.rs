@@ -261,15 +261,13 @@ fn is_duplicate_qr(existing: &[DetectedQrCode], new: &DetectedQrCode) -> bool {
 }
 
 // ============================================================================
-// OCR Backend: rusty-tesseract (default)
+// OCR Backend: rusty-tesseract
 // ============================================================================
-#[cfg(not(feature = "ocrs"))]
 fn models_need_download() -> bool {
     // rusty-tesseract uses system tesseract, no model download needed
     false
 }
 
-#[cfg(not(feature = "ocrs"))]
 fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStatus {
     use rusty_tesseract::{Args, Image};
     use std::collections::HashMap;
@@ -422,172 +420,6 @@ fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStat
             OcrStatus::Done(text, overlays)
         }
         Err(e) => OcrStatus::Error(format!("Tesseract OCR failed: {}", e)),
-    }
-}
-
-// ============================================================================
-// OCR Backend: ocrs (feature = "ocrs")
-// ============================================================================
-#[cfg(feature = "ocrs")]
-const DETECTION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-detection.rten";
-#[cfg(feature = "ocrs")]
-const RECOGNITION_MODEL_URL: &str = "https://ocrs-models.s3-accelerate.amazonaws.com/text-recognition.rten";
-
-#[cfg(feature = "ocrs")]
-fn get_model_cache_dir() -> std::path::PathBuf {
-    dirs::cache_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-        .join("blazingshot")
-        .join("models")
-}
-
-#[cfg(feature = "ocrs")]
-fn download_model(url: &str, path: &std::path::Path) -> Result<(), String> {
-    log::info!("Downloading OCR model from {} to {:?}", url, path);
-    
-    // Create parent directories
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create model directory: {}", e))?;
-    }
-    
-    // Use curl or wget via subprocess (blocking, but we're in spawn_blocking)
-    let output = std::process::Command::new("curl")
-        .args(["-L", "-o"])
-        .arg(path)
-        .arg(url)
-        .output()
-        .map_err(|e| format!("Failed to run curl: {}", e))?;
-    
-    if !output.status.success() {
-        return Err(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
-    
-    log::info!("Downloaded model to {:?}", path);
-    Ok(())
-}
-
-#[cfg(feature = "ocrs")]
-fn models_need_download() -> bool {
-    let cache_dir = get_model_cache_dir();
-    let detection_path = cache_dir.join("text-detection.rten");
-    let recognition_path = cache_dir.join("text-recognition.rten");
-    !detection_path.exists() || !recognition_path.exists()
-}
-
-#[cfg(feature = "ocrs")]
-fn ensure_models_downloaded() -> Result<(std::path::PathBuf, std::path::PathBuf), String> {
-    let cache_dir = get_model_cache_dir();
-    let detection_path = cache_dir.join("text-detection.rten");
-    let recognition_path = cache_dir.join("text-recognition.rten");
-    
-    if !detection_path.exists() {
-        download_model(DETECTION_MODEL_URL, &detection_path)?;
-    }
-    
-    if !recognition_path.exists() {
-        download_model(RECOGNITION_MODEL_URL, &recognition_path)?;
-    }
-    
-    Ok((detection_path, recognition_path))
-}
-
-#[cfg(feature = "ocrs")]
-fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStatus {
-    use ocrs::{OcrEngine, OcrEngineParams, ImageSource};
-    use rten::Model;
-    
-    if mapping.scale <= 0.0 {
-        return OcrStatus::Error("Invalid OCR mapping scale".to_string());
-    }
-
-    // Ensure models are downloaded
-    let (detection_path, recognition_path) = match ensure_models_downloaded() {
-        Ok(paths) => paths,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to download OCR models: {}", e));
-        }
-    };
-    
-    // Load models
-    log::info!("Loading OCR models...");
-    let detection_model = match Model::load_file(&detection_path) {
-        Ok(m) => m,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to load detection model: {}", e));
-        }
-    };
-    
-    let recognition_model = match Model::load_file(&recognition_path) {
-        Ok(m) => m,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to load recognition model: {}", e));
-        }
-    };
-    
-    // Create OCR engine with loaded models
-    let engine = match OcrEngine::new(OcrEngineParams {
-        detection_model: Some(detection_model),
-        recognition_model: Some(recognition_model),
-        ..Default::default()
-    }) {
-        Ok(e) => e,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to create OCR engine: {}", e));
-        }
-    };
-    
-    // Convert to RGB8 for OCR
-    let rgb = image::DynamicImage::ImageRgba8(img.clone()).to_rgb8();
-    let (width, height) = rgb.dimensions();
-    
-    // Create image source from raw pixels
-    let img_source = match ImageSource::from_bytes(rgb.as_raw(), (width, height)) {
-        Ok(src) => src,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to create image source: {}", e));
-        }
-    };
-    
-    // Prepare input
-    let ocr_input = match engine.prepare_input(img_source) {
-        Ok(input) => input,
-        Err(e) => {
-            return OcrStatus::Error(format!("Failed to prepare OCR input: {}", e));
-        }
-    };
-    
-    // Use the simpler get_text method
-    match engine.get_text(&ocr_input) {
-        Ok(text) => {
-            let text = text.trim().to_string();
-            let text = if text.is_empty() {
-                "No text detected".to_string()
-            } else {
-                text
-            };
-
-            // We do not have per-box data from ocrs, so create a box covering the whole selection
-            let overlays = if !text.is_empty() && text != "No text detected" {
-                vec![OcrTextOverlay {
-                    left: mapping.origin.0,
-                    top: mapping.origin.1,
-                    width: mapping.size.0,
-                    height: mapping.size.1,
-                    text: text.clone(),
-                    block_num: 0,
-                    output_name: mapping.output_name.clone(),
-                }]
-            } else {
-                vec![]
-            };
-
-            OcrStatus::Done(text, overlays)
-        }
-        Err(e) => OcrStatus::Error(format!("Failed to extract text: {}", e)),
     }
 }
 
