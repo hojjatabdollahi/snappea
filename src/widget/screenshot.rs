@@ -78,6 +78,10 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub toolbar_position: ToolbarPosition,
     /// Callback for toolbar position change
     pub on_toolbar_position: Option<Box<dyn Fn(ToolbarPosition) -> Msg + 'a>>,
+    /// Whether annotation mode is enabled
+    pub annotate_mode: bool,
+    /// Callback for annotation mode toggle
+    pub on_annotate_toggle: Option<Msg>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -119,6 +123,8 @@ where
         on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
+        annotate_mode: bool,
+        on_annotate_toggle: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -156,6 +162,7 @@ where
                 image_scale,
                 on_arrow_toggle_clone,
                 arrow_mode,
+                annotate_mode,
             )
             .into(),
             Choice::Output(_) => {
@@ -437,6 +444,16 @@ where
                 .on_press_maybe(can_capture.then_some(on_save_to_pictures))
                 .padding(space_xs);
                 
+                // Annotate mode toggle button
+                let btn_annotate = button::custom(
+                    icon::Icon::from(icon::from_name("edit-symbolic").size(64))
+                        .width(Length::Fixed(40.0))
+                        .height(Length::Fixed(40.0))
+                )
+                .class(if annotate_mode { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Icon })
+                .on_press(on_annotate_toggle.clone())
+                .padding(space_xs);
+                
                 let btn_close = button::custom(
                     icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
                         .width(Length::Fixed(40.0))
@@ -455,7 +472,7 @@ where
                         horizontal::light().width(Length::Fixed(64.0)),
                         column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                         horizontal::light().width(Length::Fixed(64.0)),
-                        column![btn_copy, btn_save].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                        column![btn_copy, btn_save, btn_annotate].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                         horizontal::light().width(Length::Fixed(64.0)),
                         btn_close,
                     ]
@@ -470,7 +487,7 @@ where
                         vertical::light().height(Length::Fixed(64.0)),
                         row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                         vertical::light().height(Length::Fixed(64.0)),
-                        row![btn_copy, btn_save].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                        row![btn_copy, btn_save, btn_annotate].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                         vertical::light().height(Length::Fixed(64.0)),
                         btn_close,
                     ]
@@ -510,6 +527,8 @@ where
             on_arrow_end: Some(Box::new(on_arrow_end)),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
+            annotate_mode,
+            on_annotate_toggle: Some(on_annotate_toggle),
         }
     }
 }

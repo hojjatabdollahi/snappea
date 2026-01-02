@@ -103,6 +103,8 @@ pub struct RectangleSelection<'a, Msg> {
     on_arrow_toggle: Msg,
     /// Whether arrow mode is active
     arrow_mode: bool,
+    /// Whether annotation mode is enabled (shows arrow button)
+    annotate_mode: bool,
 }
 
 impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
@@ -123,6 +125,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         image_scale: f32,
         on_arrow_toggle: Msg,
         arrow_mode: bool,
+        annotate_mode: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -142,6 +145,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             image_scale,
             on_arrow_toggle,
             arrow_mode,
+            annotate_mode,
         }
     }
 
@@ -336,7 +340,13 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
     }
 
     /// Calculate arrow button bounds (positioned on the left side of the rectangle)
+    /// Only shown if annotate_mode is enabled
     fn arrow_button_bounds(&self) -> Option<Rectangle> {
+        // Only show if annotate mode is enabled
+        if !self.annotate_mode {
+            return None;
+        }
+        
         let sel = self.rectangle_selection;
         let width = (sel.right - sel.left).abs() as f32;
         let height = (sel.bottom - sel.top).abs() as f32;
