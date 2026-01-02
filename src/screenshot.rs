@@ -28,26 +28,6 @@ use crate::wayland::{CaptureSource, ShmImage, WaylandHelper};
 use crate::widget::{keyboard_wrapper::KeyboardWrapper, rectangle_selection::DragState};
 use crate::{PortalResponse, fl};
 
-/// Get the config file path for annotate mode setting
-fn annotate_mode_config_path() -> PathBuf {
-    let config_dir = dirs::config_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("blazingshot");
-    std::fs::create_dir_all(&config_dir).ok();
-    config_dir.join("annotate_mode")
-}
-
-/// Load annotate mode setting from config file
-fn load_annotate_mode() -> bool {
-    std::fs::read_to_string(annotate_mode_config_path())
-        .map(|s| s.trim() == "true")
-        .unwrap_or(false)
-}
-
-/// Save annotate mode setting to config file
-fn save_annotate_mode(enabled: bool) {
-    let _ = std::fs::write(annotate_mode_config_path(), if enabled { "true" } else { "false" });
-}
 
 #[derive(Clone, Debug)]
 pub struct ScreenshotImage {
@@ -986,7 +966,6 @@ pub enum Msg {
     ToolbarPositionChange(ToolbarPosition),  // change toolbar position
     CopyToClipboard,  // capture and copy to clipboard
     SaveToPictures,  // capture and save to Pictures folder
-    AnnotateModeToggle,  // toggle annotation mode (show/hide arrow button)
 }
 
 #[derive(Debug, Clone)]
@@ -1035,8 +1014,6 @@ pub struct Args {
     pub arrow_drawing: Option<(f32, f32)>,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
-    /// Whether annotation mode is enabled (shows arrow button on rectangle selection)
-    pub annotate_mode: bool,
 }
 
 struct Output {
@@ -1134,7 +1111,6 @@ impl Screenshot {
                 arrow_mode: false,
                 arrow_drawing: None,
                 toolbar_position: ToolbarPosition::default(),
-                annotate_mode: load_annotate_mode(),
             }))
             .await
         {
@@ -1214,8 +1190,6 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ArrowEnd,
             args.toolbar_position,
             Msg::ToolbarPositionChange,
-            args.annotate_mode,
-            Msg::AnnotateModeToggle,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
@@ -1977,19 +1951,6 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             update_msg(app, Msg::Capture)
         }
-        Msg::AnnotateModeToggle => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                args.annotate_mode = !args.annotate_mode;
-                // Also turn off arrow_mode if annotate_mode is disabled
-                if !args.annotate_mode {
-                    args.arrow_mode = false;
-                    args.arrow_drawing = None;
-                }
-                // Persist the setting
-                save_annotate_mode(args.annotate_mode);
-            }
-            cosmic::Task::none()
-        }
     }
 }
 
@@ -2015,7 +1976,6 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         arrow_mode: _,
         arrow_drawing: _,
         toolbar_position: _,
-        annotate_mode: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

@@ -86,12 +86,6 @@ pub struct RectangleSelection<'a, Msg> {
     rectangle_selection: Rect,
     window_id: iced_core::window::Id,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
-    on_ocr: Msg,
-    on_ocr_copy: Msg,
-    on_qr: Msg,
-    on_qr_copy: Msg,
-    has_ocr_text: bool,
-    has_qr_codes: bool,
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
@@ -99,12 +93,7 @@ pub struct RectangleSelection<'a, Msg> {
     screenshot_image: &'a image::RgbaImage,
     /// Scale factor (physical pixels per logical pixel)
     image_scale: f32,
-    /// Arrow mode toggle callback
-    on_arrow_toggle: Msg,
-    /// Whether arrow mode is active
-    arrow_mode: bool,
-    /// Whether annotation mode is enabled (shows arrow button)
-    annotate_mode: bool,
+    _phantom: std::marker::PhantomData<Msg>,
 }
 
 impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
@@ -115,26 +104,11 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         window_id: iced_core::window::Id,
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
-        on_ocr: Msg,
-        on_ocr_copy: Msg,
-        on_qr: Msg,
-        on_qr_copy: Msg,
-        has_ocr_text: bool,
-        has_qr_codes: bool,
         screenshot_image: &'a image::RgbaImage,
         image_scale: f32,
-        on_arrow_toggle: Msg,
-        arrow_mode: bool,
-        annotate_mode: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
-            on_ocr,
-            on_ocr_copy,
-            on_qr,
-            on_qr_copy,
-            has_ocr_text,
-            has_qr_codes,
             drag_state: drag_direction,
             rectangle_selection,
             output_rect,
@@ -143,9 +117,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
             screenshot_image,
             image_scale,
-            on_arrow_toggle,
-            arrow_mode,
-            annotate_mode,
+            _phantom: std::marker::PhantomData,
         }
     }
 
@@ -252,148 +224,6 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             return DragState::E;
         };
         DragState::None
-    }
-
-    /// Calculate OCR button bounds in widget-local coordinates
-    /// Returns None if button shouldn't be shown
-    fn ocr_button_bounds(&self) -> Option<Rectangle> {
-        let sel = self.rectangle_selection;
-        let width = (sel.right - sel.left).abs() as f32;
-        let height = (sel.bottom - sel.top).abs() as f32;
-
-        if width <= 10.0 || height <= 10.0 {
-            return None;
-        }
-
-        // Convert to widget-local coordinates (subtract output offset)
-        let outer_x = self.output_rect.left as f32;
-        let outer_y = self.output_rect.top as f32;
-        let outer_width = (self.output_rect.right - self.output_rect.left).abs() as f32;
-
-        // Rectangle in widget-local coordinates
-        let rect_left = sel.left as f32 - outer_x;
-        let rect_right = sel.right as f32 - outer_x;
-        let rect_top = sel.top as f32 - outer_y;
-
-        let button_width = 50.0_f32;
-        let button_height = 28.0_f32;
-        let margin = 8.0_f32;
-
-        let min_rect_width_for_inside = button_width + margin * 2.0;
-        let min_rect_height_for_inside = button_height + margin * 2.0;
-
-        let (button_x, button_y) = if rect_right + margin + button_width <= outer_width {
-            // Right side outside
-            (rect_right + margin, rect_top)
-        } else if width >= min_rect_width_for_inside && height >= min_rect_height_for_inside {
-            // Inside at top-right
-            (rect_right - button_width - margin, rect_top + margin)
-        } else if rect_left - margin - button_width >= 0.0 {
-            // Left side outside
-            (rect_left - button_width - margin, rect_top)
-        } else {
-            // Fallback: inside at top-left
-            (rect_left + margin, rect_top + margin)
-        };
-
-        // Check bounds are valid
-        if button_x < 0.0 || button_y < 0.0 {
-            return None;
-        }
-
-        Some(Rectangle::new(
-            Point::new(button_x, button_y),
-            Size::new(button_width, button_height),
-        ))
-    }
-
-    /// Check if cursor is over the OCR button
-    fn is_over_ocr_button(&self, cursor: mouse::Cursor) -> bool {
-        if let Some(bounds) = self.ocr_button_bounds() {
-            cursor.is_over(bounds)
-        } else {
-            false
-        }
-    }
-
-    /// Calculate QR button bounds (positioned below OCR button)
-    fn qr_button_bounds(&self) -> Option<Rectangle> {
-        let ocr_bounds = self.ocr_button_bounds()?;
-        let button_spacing = 4.0_f32;
-
-        Some(Rectangle::new(
-            Point::new(
-                ocr_bounds.x,
-                ocr_bounds.y + ocr_bounds.height + button_spacing,
-            ),
-            Size::new(ocr_bounds.width, ocr_bounds.height),
-        ))
-    }
-
-    /// Check if cursor is over the QR button
-    fn is_over_qr_button(&self, cursor: mouse::Cursor) -> bool {
-        if let Some(bounds) = self.qr_button_bounds() {
-            cursor.is_over(bounds)
-        } else {
-            false
-        }
-    }
-
-    /// Calculate arrow button bounds (positioned on the left side of the rectangle)
-    /// Only shown if annotate_mode is enabled
-    fn arrow_button_bounds(&self) -> Option<Rectangle> {
-        // Only show if annotate mode is enabled
-        if !self.annotate_mode {
-            return None;
-        }
-        
-        let sel = self.rectangle_selection;
-        let width = (sel.right - sel.left).abs() as f32;
-        let height = (sel.bottom - sel.top).abs() as f32;
-
-        if width <= 10.0 || height <= 10.0 {
-            return None;
-        }
-
-        // Convert to widget-local coordinates (subtract output offset)
-        let outer_x = self.output_rect.left as f32;
-        let outer_y = self.output_rect.top as f32;
-
-        // Rectangle in widget-local coordinates
-        let rect_left = sel.left as f32 - outer_x;
-        let rect_top = sel.top as f32 - outer_y;
-
-        let button_width = 36.0_f32;
-        let button_height = 36.0_f32;
-        let margin = 8.0_f32;
-
-        // Position on the left side of the rectangle
-        let (button_x, button_y) = if rect_left - margin - button_width >= 0.0 {
-            // Left side outside
-            (rect_left - button_width - margin, rect_top)
-        } else {
-            // Inside at top-left
-            (rect_left + margin, rect_top + margin)
-        };
-
-        // Check bounds are valid
-        if button_x < 0.0 || button_y < 0.0 {
-            return None;
-        }
-
-        Some(Rectangle::new(
-            Point::new(button_x, button_y),
-            Size::new(button_width, button_height),
-        ))
-    }
-
-    /// Check if cursor is over the arrow button
-    fn is_over_arrow_button(&self, cursor: mouse::Cursor) -> bool {
-        if let Some(bounds) = self.arrow_button_bounds() {
-            cursor.is_over(bounds)
-        } else {
-            false
-        }
     }
 
     fn handle_drag_pos(&mut self, x: i32, y: i32, shell: &mut iced_core::Shell<'_, Msg>) {
@@ -515,11 +345,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> iced_core::mouse::Interaction {
-        // Check OCR/QR/Arrow buttons first
-        if self.is_over_ocr_button(cursor) || self.is_over_qr_button(cursor) || self.is_over_arrow_button(cursor) {
-            return iced_core::mouse::Interaction::Pointer;
-        }
-
         match self.drag_state(cursor) {
             DragState::None => {
                 if self.drag_state == DragState::None {
@@ -607,34 +432,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
 
                 if let iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) = e {
-                    // Check if clicking on OCR button
-                    if self.is_over_ocr_button(cursor) {
-                        // If we have OCR results, copy and close; otherwise run OCR
-                        if self.has_ocr_text {
-                            shell.publish(self.on_ocr_copy.clone());
-                        } else {
-                            shell.publish(self.on_ocr.clone());
-                        }
-                        return cosmic::iced_core::event::Status::Captured;
-                    }
-
-                    // Check if clicking on QR button
-                    if self.is_over_qr_button(cursor) {
-                        // If we have QR codes, copy and close; otherwise run QR detection
-                        if self.has_qr_codes {
-                            shell.publish(self.on_qr_copy.clone());
-                        } else {
-                            shell.publish(self.on_qr.clone());
-                        }
-                        return cosmic::iced_core::event::Status::Captured;
-                    }
-
-                    // Check if clicking on arrow button
-                    if self.is_over_arrow_button(cursor) {
-                        shell.publish(self.on_arrow_toggle.clone());
-                        return cosmic::iced_core::event::Status::Captured;
-                    }
-
                     let window_id = self.window_id;
 
                     clipboard.start_dnd(
@@ -833,181 +630,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 shadow: Shadow::default(),
             };
             renderer.fill_quad(quad, accent);
-        }
-
-        // Draw OCR button using the same bounds calculation as hit testing
-        if let Some(button_rect) = self.ocr_button_bounds() {
-            use cosmic::iced_core::alignment;
-            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-
-            // Show copy icon if we have OCR results, otherwise "OCR"
-            let (button_text, font_size) = if self.has_ocr_text {
-                ("📋", 16.0_f32) // Clipboard emoji as copy icon
-            } else {
-                ("OCR", 14.0_f32)
-            };
-            let border_color = if self.has_ocr_text {
-                Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
-            } else {
-                accent
-            };
-
-            // Check if button is within screen bounds
-            if button_rect.x >= 0.0
-                && button_rect.y >= 0.0
-                && button_rect.x + button_rect.width <= outer_size.width
-                && button_rect.y + button_rect.height <= outer_size.height
-            {
-                // Draw button background
-                let button_quad = Quad {
-                    bounds: button_rect,
-                    border: Border {
-                        radius: radius_s.into(),
-                        width: 2.0,
-                        color: border_color,
-                    },
-                    shadow: Shadow::default(),
-                };
-                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
-
-                // Draw button text/icon
-                let text = Text {
-                    content: button_text.to_string(),
-                    bounds: Size::new(button_rect.width, button_rect.height),
-                    size: cosmic::iced::Pixels(font_size),
-                    line_height: cosmic::iced_core::text::LineHeight::default(),
-                    font: cosmic::iced::Font::default(),
-                    horizontal_alignment: alignment::Horizontal::Center,
-                    vertical_alignment: alignment::Vertical::Center,
-                    shaping: cosmic::iced_core::text::Shaping::Advanced,
-                    wrapping: cosmic::iced_core::text::Wrapping::None,
-                };
-
-                renderer.fill_text(
-                    text,
-                    Point::new(
-                        button_rect.x + button_rect.width / 2.0,
-                        button_rect.y + button_rect.height / 2.0,
-                    ),
-                    Color::WHITE,
-                    Rectangle::new(Point::ORIGIN, outer_size),
-                );
-            }
-        }
-
-        // Draw QR button below OCR button
-        if let Some(button_rect) = self.qr_button_bounds() {
-            use cosmic::iced_core::alignment;
-            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-
-            // Show copy icon if we have QR results, otherwise "QR"
-            let (button_text, font_size) = if self.has_qr_codes {
-                ("📋", 16.0_f32) // Clipboard emoji as copy icon
-            } else {
-                ("QR", 14.0_f32)
-            };
-            let border_color = if self.has_qr_codes {
-                Color::from_rgb(0.2, 0.8, 0.2) // Green when results available
-            } else {
-                accent
-            };
-
-            // Check if button is within screen bounds
-            if button_rect.x >= 0.0
-                && button_rect.y >= 0.0
-                && button_rect.x + button_rect.width <= outer_size.width
-                && button_rect.y + button_rect.height <= outer_size.height
-            {
-                // Draw button background
-                let button_quad = Quad {
-                    bounds: button_rect,
-                    border: Border {
-                        radius: radius_s.into(),
-                        width: 2.0,
-                        color: border_color,
-                    },
-                    shadow: Shadow::default(),
-                };
-                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
-
-                // Draw button text/icon
-                let text = Text {
-                    content: button_text.to_string(),
-                    bounds: Size::new(button_rect.width, button_rect.height),
-                    size: cosmic::iced::Pixels(font_size),
-                    line_height: cosmic::iced_core::text::LineHeight::default(),
-                    font: cosmic::iced::Font::default(),
-                    horizontal_alignment: alignment::Horizontal::Center,
-                    vertical_alignment: alignment::Vertical::Center,
-                    shaping: cosmic::iced_core::text::Shaping::Advanced,
-                    wrapping: cosmic::iced_core::text::Wrapping::None,
-                };
-
-                renderer.fill_text(
-                    text,
-                    Point::new(
-                        button_rect.x + button_rect.width / 2.0,
-                        button_rect.y + button_rect.height / 2.0,
-                    ),
-                    Color::WHITE,
-                    Rectangle::new(Point::ORIGIN, outer_size),
-                );
-            }
-        }
-
-        // Draw arrow button on the left side of the rectangle
-        if let Some(button_rect) = self.arrow_button_bounds() {
-            use cosmic::iced_core::alignment;
-            use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-
-            // Show arrow icon, change color if arrow mode is active
-            let border_color = if self.arrow_mode {
-                Color::from_rgb(0.9, 0.2, 0.2) // Red when active
-            } else {
-                accent
-            };
-
-            // Check if button is within screen bounds
-            if button_rect.x >= 0.0
-                && button_rect.y >= 0.0
-                && button_rect.x + button_rect.width <= outer_size.width
-                && button_rect.y + button_rect.height <= outer_size.height
-            {
-                // Draw button background
-                let button_quad = Quad {
-                    bounds: button_rect,
-                    border: Border {
-                        radius: radius_s.into(),
-                        width: 2.0,
-                        color: border_color,
-                    },
-                    shadow: Shadow::default(),
-                };
-                renderer.fill_quad(button_quad, Color::from_rgba(0.0, 0.0, 0.0, 0.85));
-
-                // Draw arrow icon (↗)
-                let text = Text {
-                    content: "↗".to_string(),
-                    bounds: Size::new(button_rect.width, button_rect.height),
-                    size: cosmic::iced::Pixels(20.0),
-                    line_height: cosmic::iced_core::text::LineHeight::default(),
-                    font: cosmic::iced::Font::default(),
-                    horizontal_alignment: alignment::Horizontal::Center,
-                    vertical_alignment: alignment::Vertical::Center,
-                    shaping: cosmic::iced_core::text::Shaping::Advanced,
-                    wrapping: cosmic::iced_core::text::Wrapping::None,
-                };
-
-                renderer.fill_text(
-                    text,
-                    Point::new(
-                        button_rect.x + button_rect.width / 2.0,
-                        button_rect.y + button_rect.height / 2.0,
-                    ),
-                    if self.arrow_mode { Color::from_rgb(1.0, 0.3, 0.3) } else { Color::WHITE },
-                    Rectangle::new(Point::ORIGIN, outer_size),
-                );
-            }
         }
 
         // Draw magnifier when dragging a corner or initially drawing
