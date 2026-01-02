@@ -505,8 +505,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> iced_core::mouse::Interaction {
-        // Check OCR/QR buttons first
-        if self.is_over_ocr_button(cursor) || self.is_over_qr_button(cursor) {
+        // Check OCR/QR/Arrow buttons first
+        if self.is_over_ocr_button(cursor) || self.is_over_qr_button(cursor) || self.is_over_arrow_button(cursor) {
             return iced_core::mouse::Interaction::Pointer;
         }
 

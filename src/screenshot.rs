@@ -145,57 +145,41 @@ fn draw_arrows_on_image(
     }
 }
 
-/// Draw a thick line using multiple parallel lines
+/// Draw a thick line by drawing filled circles along the path
 fn draw_thick_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, thickness: i32, color: image::Rgba<u8>) {
-    let half = thickness / 2;
-    for offset in -half..=half {
-        // Calculate perpendicular offset
-        let dx = (x1 - x0) as f32;
-        let dy = (y1 - y0) as f32;
-        let len = (dx * dx + dy * dy).sqrt();
-        if len < 0.001 {
-            continue;
-        }
-        let px = (-dy / len) * offset as f32;
-        let py = (dx / len) * offset as f32;
-        
-        draw_line(img, 
-            x0 + px as i32, y0 + py as i32,
-            x1 + px as i32, y1 + py as i32,
-            color);
+    let radius = thickness / 2;
+    let dx = (x1 - x0) as f32;
+    let dy = (y1 - y0) as f32;
+    let length = (dx * dx + dy * dy).sqrt();
+    
+    if length < 1.0 {
+        draw_filled_circle(img, x0, y0, radius, color);
+        return;
+    }
+    
+    // Draw circles along the line with small steps for smooth coverage
+    let steps = (length * 2.0) as i32 + 1;
+    for i in 0..=steps {
+        let t = i as f32 / steps as f32;
+        let cx = x0 as f32 + dx * t;
+        let cy = y0 as f32 + dy * t;
+        draw_filled_circle(img, cx as i32, cy as i32, radius, color);
     }
 }
 
-/// Draw a line using Bresenham's algorithm
-fn draw_line(img: &mut RgbaImage, x0: i32, y0: i32, x1: i32, y1: i32, color: image::Rgba<u8>) {
+/// Draw a filled circle
+fn draw_filled_circle(img: &mut RgbaImage, cx: i32, cy: i32, radius: i32, color: image::Rgba<u8>) {
     let (w, h) = (img.width() as i32, img.height() as i32);
     
-    let dx = (x1 - x0).abs();
-    let dy = -(y1 - y0).abs();
-    let sx = if x0 < x1 { 1 } else { -1 };
-    let sy = if y0 < y1 { 1 } else { -1 };
-    let mut err = dx + dy;
-    
-    let mut x = x0;
-    let mut y = y0;
-    
-    loop {
-        if x >= 0 && x < w && y >= 0 && y < h {
-            img.put_pixel(x as u32, y as u32, color);
-        }
-        
-        if x == x1 && y == y1 {
-            break;
-        }
-        
-        let e2 = 2 * err;
-        if e2 >= dy {
-            err += dy;
-            x += sx;
-        }
-        if e2 <= dx {
-            err += dx;
-            y += sy;
+    for dy in -radius..=radius {
+        for dx in -radius..=radius {
+            if dx * dx + dy * dy <= radius * radius {
+                let x = cx + dx;
+                let y = cy + dy;
+                if x >= 0 && x < w && y >= 0 && y < h {
+                    img.put_pixel(x as u32, y as u32, color);
+                }
+            }
         }
     }
 }
