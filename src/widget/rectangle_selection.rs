@@ -407,10 +407,16 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     }
                     OfferEvent::Drop => {
                         self.drag_state = DragState::None;
-                        shell.publish((self.on_rectangle)(
-                            DragState::None,
-                            self.rectangle_selection,
-                        ));
+                        // Only keep rectangle if it has meaningful dimensions (> 5x5)
+                        let rect = self.rectangle_selection;
+                        let width = (rect.right - rect.left).abs();
+                        let height = (rect.bottom - rect.top).abs();
+                        if width > 5 && height > 5 {
+                            shell.publish((self.on_rectangle)(DragState::None, rect));
+                        } else {
+                            // Clear the selection - just a click, not a drag
+                            shell.publish((self.on_rectangle)(DragState::None, Rect::default()));
+                        }
                         cosmic::iced_core::event::Status::Captured
                     }
                     _ => cosmic::iced_core::event::Status::Ignored,
@@ -422,10 +428,16 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     SourceEvent::Finished | SourceEvent::Cancelled | SourceEvent::Dropped
                 ) {
                     self.drag_state = DragState::None;
-                    shell.publish((self.on_rectangle)(
-                        DragState::None,
-                        self.rectangle_selection,
-                    ));
+                    // Only keep rectangle if it has meaningful dimensions (> 5x5)
+                    let rect = self.rectangle_selection;
+                    let width = (rect.right - rect.left).abs();
+                    let height = (rect.bottom - rect.top).abs();
+                    if width > 5 && height > 5 {
+                        shell.publish((self.on_rectangle)(DragState::None, rect));
+                    } else {
+                        // Clear the selection - just a click, not a drag
+                        shell.publish((self.on_rectangle)(DragState::None, Rect::default()));
+                    }
                 }
 
                 cosmic::iced_core::event::Status::Ignored

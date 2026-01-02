@@ -1459,23 +1459,37 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::Choice(c) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // Clear OCR/QR overlays when rectangle changes (new selection started)
+                // Clear OCR/QR/arrows when rectangle changes (new selection started)
                 if let Choice::Rectangle(new_r, new_s) = &c {
                     if let Choice::Rectangle(old_r, _) = &args.choice {
-                        // If the rectangle position/size changed significantly, clear overlays
+                        // If the rectangle position/size changed significantly, clear everything
                         if new_r.left != old_r.left || new_r.top != old_r.top 
                             || new_r.right != old_r.right || new_r.bottom != old_r.bottom {
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
+                            args.ocr_text = None;
                             args.qr_codes.clear();
+                            args.arrows.clear();
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
                         }
                     }
                     // Also clear if we're starting a new drag from None state
                     if *new_s != DragState::None {
                         args.ocr_overlays.clear();
                         args.ocr_status = OcrStatus::Idle;
+                        args.ocr_text = None;
                         args.qr_codes.clear();
+                        args.arrows.clear();
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
                     }
+                }
+                // Clear arrows when switching modes (Region, Window, or Output)
+                if matches!(&c, Choice::Rectangle(_, DragState::None) | Choice::Window(_, None) | Choice::Output(_)) {
+                    args.arrows.clear();
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
                 }
                 args.choice = c;
                 if let Choice::Rectangle(r, s) = &args.choice {
@@ -1496,6 +1510,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     .map(|o| o.name.clone()),
             ) {
                 args.choice = Choice::Output(o);
+                // Clear arrows when selecting an output
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
             } else {
                 log::error!(
                     "Failed to find output for OutputChange message: {:?}",
@@ -1553,6 +1571,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.ocr_overlays.clear();
                 args.ocr_status = OcrStatus::Idle;
                 args.ocr_text = None;
+                // Clear arrows when running QR
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
             }
             
             // Get the selection and run QR detection on that area
@@ -1664,6 +1686,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.ocr_text = None;
                 // Hide QR codes when running OCR
                 args.qr_codes.clear();
+                // Clear arrows when running OCR
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
             }
             
             // Get the selection and run OCR on that area
@@ -1877,14 +1903,26 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     Some(RadialMenuOption::Region) => {
                         // Switch to rectangle selection mode
                         args.choice = Choice::Rectangle(Rect::default(), DragState::None);
+                        // Clear arrows
+                        args.arrows.clear();
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
                     }
                     Some(RadialMenuOption::Window) => {
                         // Switch to window selection mode
                         args.choice = Choice::Window(output_name, None);
+                        // Clear arrows
+                        args.arrows.clear();
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
                     }
                     Some(RadialMenuOption::Display) => {
                         // Switch to output/display selection mode
                         args.choice = Choice::Output(output_name);
+                        // Clear arrows
+                        args.arrows.clear();
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
                     }
                     Some(RadialMenuOption::Exit) => {
                         // Exit - same as pressing cancel button
@@ -1903,6 +1941,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 // Cancel any in-progress arrow when toggling off
                 if !args.arrow_mode {
                     args.arrow_drawing = None;
+                } else {
+                    // Clear OCR/QR when enabling arrow mode
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
                 }
             }
             cosmic::Task::none()
