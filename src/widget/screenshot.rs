@@ -561,6 +561,7 @@ where
                 move |s, r| on_choice_change_clone(Choice::Rectangle(r, s)),
                 &image.rgba,
                 image_scale,
+                arrow_mode,
             )
             .into(),
             Choice::Output(_) => {
@@ -729,9 +730,9 @@ where
                     let output_width = output.logical_size.0 as f32;
                     let output_height = output.logical_size.1 as f32;
                     
-                    // Match the centering logic in SelectedImageWidget::image_bounds
-                    let available_width = output_width - 100.0;
-                    let available_height = output_height - 100.0;
+                    // Match the centering logic in SelectedImageWidget::image_bounds (20px margin)
+                    let available_width = output_width - 20.0;
+                    let available_height = output_height - 20.0;
                     let scale_x = available_width / img_width;
                     let scale_y = available_height / img_height;
                     let scale = scale_x.min(scale_y).min(1.0);
@@ -905,38 +906,66 @@ where
                 let toolbar_content: Element<'_, Msg> = if is_vertical {
                     // Vertical layout for left/right positions
                     use cosmic::widget::divider::horizontal;
-                    column![
-                        position_selector,
-                        horizontal::light().width(Length::Fixed(64.0)),
-                        column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
-                        horizontal::light().width(Length::Fixed(64.0)),
-                        column![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
-                        horizontal::light().width(Length::Fixed(64.0)),
-                        column![btn_copy, btn_save].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
-                        horizontal::light().width(Length::Fixed(64.0)),
-                        btn_close,
-                    ]
-                    .align_x(cosmic::iced_core::Alignment::Center)
-                    .spacing(space_s)
-                    .padding([space_s, space_xxs, space_s, space_xxs])
-                    .into()
+                    if has_selection {
+                        column![
+                            position_selector,
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            column![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            column![btn_copy, btn_save].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            btn_close,
+                        ]
+                        .align_x(cosmic::iced_core::Alignment::Center)
+                        .spacing(space_s)
+                        .padding([space_s, space_xxs, space_s, space_xxs])
+                        .into()
+                    } else {
+                        column![
+                            position_selector,
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                            horizontal::light().width(Length::Fixed(64.0)),
+                            btn_close,
+                        ]
+                        .align_x(cosmic::iced_core::Alignment::Center)
+                        .spacing(space_s)
+                        .padding([space_s, space_xxs, space_s, space_xxs])
+                        .into()
+                    }
                 } else {
                     // Horizontal layout for top/bottom positions
-                    row![
-                        position_selector,
-                        vertical::light().height(Length::Fixed(64.0)),
-                        row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
-                        vertical::light().height(Length::Fixed(64.0)),
-                        row![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
-                        vertical::light().height(Length::Fixed(64.0)),
-                        row![btn_copy, btn_save].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
-                        vertical::light().height(Length::Fixed(64.0)),
-                        btn_close,
-                    ]
-                    .align_y(cosmic::iced_core::Alignment::Center)
-                    .spacing(space_s)
-                    .padding([space_xxs, space_s, space_xxs, space_s])
-                    .into()
+                    if has_selection {
+                        row![
+                            position_selector,
+                            vertical::light().height(Length::Fixed(64.0)),
+                            row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                            vertical::light().height(Length::Fixed(64.0)),
+                            row![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                            vertical::light().height(Length::Fixed(64.0)),
+                            row![btn_copy, btn_save].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                            vertical::light().height(Length::Fixed(64.0)),
+                            btn_close,
+                        ]
+                        .align_y(cosmic::iced_core::Alignment::Center)
+                        .spacing(space_s)
+                        .padding([space_xxs, space_s, space_xxs, space_s])
+                        .into()
+                    } else {
+                        row![
+                            position_selector,
+                            vertical::light().height(Length::Fixed(64.0)),
+                            row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                            vertical::light().height(Length::Fixed(64.0)),
+                            btn_close,
+                        ]
+                        .align_y(cosmic::iced_core::Alignment::Center)
+                        .spacing(space_s)
+                        .padding([space_xxs, space_s, space_xxs, space_s])
+                        .into()
+                    }
                 };
                 
                 cosmic::widget::container(toolbar_content)
@@ -1030,7 +1059,42 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
         
-        // Handle radial menu events
+        // First, let child widgets handle the event (this includes toolbar buttons)
+        let children = [
+            &mut self.bg_element,
+            &mut self.fg_element,
+            &mut self.menu_element,
+        ];
+
+        let layout_children = layout.children().collect::<Vec<_>>();
+        let mut status = cosmic::iced_core::event::Status::Ignored;
+        for (i, (child_layout, child)) in layout_children
+            .into_iter()
+            .zip(children.into_iter())
+            .enumerate()
+            .rev()
+        {
+            let child_tree = &mut tree.children[i];
+
+            status = child.as_widget_mut().on_event(
+                child_tree,
+                event.clone(),
+                child_layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+            if matches!(event, cosmic::iced_core::event::Event::PlatformSpecific(_)) {
+                continue;
+            }
+            if matches!(status, cosmic::iced_core::event::Status::Captured) {
+                return status;
+            }
+        }
+        
+        // If child widgets didn't capture the event, handle radial menu and arrow events
         if let cosmic::iced_core::Event::Mouse(mouse_event) = &event {
             if let Some(pos) = cursor.position() {
                 // Check if menu is visible
@@ -1131,39 +1195,6 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
         
-        let children = [
-            &mut self.bg_element,
-            &mut self.fg_element,
-            &mut self.menu_element,
-        ];
-
-        let layout = layout.children().collect::<Vec<_>>();
-        let mut status = cosmic::iced_core::event::Status::Ignored;
-        for (i, (layout, child)) in layout
-            .into_iter()
-            .zip(children.into_iter())
-            .enumerate()
-            .rev()
-        {
-            let tree = &mut tree.children[i];
-
-            status = child.as_widget_mut().on_event(
-                tree,
-                event.clone(),
-                layout,
-                cursor,
-                renderer,
-                clipboard,
-                shell,
-                viewport,
-            );
-            if matches!(event, cosmic::iced_core::event::Event::PlatformSpecific(_)) {
-                continue;
-            }
-            if matches!(status, cosmic::iced_core::event::Status::Captured) {
-                return status;
-            }
-        }
         status
     }
 

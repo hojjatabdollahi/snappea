@@ -93,6 +93,8 @@ pub struct RectangleSelection<'a, Msg> {
     screenshot_image: &'a image::RgbaImage,
     /// Scale factor (physical pixels per logical pixel)
     image_scale: f32,
+    /// Whether arrow drawing mode is active (skip rectangle capturing)
+    arrow_mode: bool,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -106,6 +108,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
         screenshot_image: &'a image::RgbaImage,
         image_scale: f32,
+        arrow_mode: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -117,6 +120,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
             screenshot_image,
             image_scale,
+            arrow_mode,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -428,6 +432,11 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             }
             cosmic::iced_core::Event::Mouse(e) => {
                 if !cursor.is_over(layout.bounds()) {
+                    return cosmic::iced_core::event::Status::Ignored;
+                }
+
+                // Skip rectangle drawing when arrow mode is active
+                if self.arrow_mode {
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 

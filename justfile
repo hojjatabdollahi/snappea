@@ -58,6 +58,6 @@ uninstall:
     rm -f {{bin-dst}}
     rm -f {{portal-dst}}
     rm -f {{service-dst}}
-    rm -f {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
-    rm -f {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
-    rm -f {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
+    # rm -f {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
+    # rm -f {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
+    # rm -f {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
