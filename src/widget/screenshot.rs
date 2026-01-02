@@ -1267,6 +1267,16 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 }
             });
         }
+        
+        // Draw menu_element (bottom toolbar)
+        if let Some((i, (layout, child))) = children_iter.next() {
+            renderer.with_layer(layout.bounds(), |renderer| {
+                let tree = &tree.children[i];
+                child
+                    .as_widget()
+                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
+            });
+        }
     }
 
     fn drag_destinations(
