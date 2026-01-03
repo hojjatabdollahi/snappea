@@ -32,6 +32,11 @@ use super::{
 
 use super::toolbar::build_toolbar;
 
+/// Check if a string looks like a URL
+fn is_url(s: &str) -> bool {
+    s.starts_with("http://") || s.starts_with("https://") || s.starts_with("www.")
+}
+
 /// Widget for displaying a selected window with a border (buttons are in toolbar)
 pub struct SelectedImageWidget {
     image_handle: Option<cosmic::widget::image::Handle>,
@@ -242,6 +247,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub toolbar_position: ToolbarPosition,
     /// Callback for toolbar position change
     pub on_toolbar_position: Option<Box<dyn Fn(ToolbarPosition) -> Msg + 'a>>,
+    /// Callback for opening URLs from QR codes
+    pub on_open_url: Option<Box<dyn Fn(String) -> Msg + 'a>>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -279,6 +286,7 @@ where
         on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
+        on_open_url: impl Fn(String) -> Msg + 'a,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -551,6 +559,7 @@ where
             on_arrow_end: Some(Box::new(on_arrow_end)),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
+            on_open_url: Some(Box::new(on_open_url)),
         }
     }
 }
@@ -612,7 +621,54 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
         
-        // First, let child widgets handle the event (this includes toolbar buttons)
+        // FIRST: Handle clicks on QR code URL open buttons (before child widgets)
+        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event {
+            if let Some(pos) = cursor.position() {
+                if matches!(mouse_event, MouseEvent::ButtonPressed(Button::Left)) {
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        let button_size = 28.0_f32;
+                        let padding = 8.0;
+                        
+                        for (x, y, content) in &self.qr_codes {
+                            if !is_url(content) {
+                                continue;
+                            }
+                            
+                            let font_size = 14.0_f32;
+                            let button_space = button_size + padding;
+                            let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
+                            
+                            let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
+                            let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
+                            let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
+                            
+                            let bg_width = max_label_width + padding * 2.0 + button_space;
+                            let bg_height = text_height.max(button_size) + padding * 2.0;
+                            
+                            let mut label_x = *x - bg_width / 2.0;
+                            let mut label_y = *y - bg_height / 2.0;
+                            
+                            label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
+                            label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
+                            
+                            let button_x = label_x + bg_width - padding - button_size;
+                            let button_y = label_y + (bg_height - button_size) / 2.0;
+                            
+                            // Check if click is inside button bounds
+                            if pos.x >= button_x && pos.x <= button_x + button_size &&
+                               pos.y >= button_y && pos.y <= button_y + button_size {
+                                if let Some(ref on_open_url) = self.on_open_url {
+                                    shell.publish(on_open_url(content.clone()));
+                                    return cosmic::iced_core::event::Status::Captured;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Let child widgets handle the event (this includes toolbar buttons)
         let children = [
             &mut self.bg_element,
             &mut self.fg_element,
@@ -696,6 +752,45 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         viewport: &cosmic::iced_core::Rectangle,
         renderer: &cosmic::Renderer,
     ) -> cosmic::iced_core::mouse::Interaction {
+        // Check if hovering over a QR URL button
+        if let Some(pos) = cursor.position() {
+            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                let button_size = 28.0_f32;
+                let padding = 8.0;
+                
+                for (x, y, content) in &self.qr_codes {
+                    if !is_url(content) {
+                        continue;
+                    }
+                    
+                    let font_size = 14.0_f32;
+                    let button_space = button_size + padding;
+                    let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
+                    
+                    let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
+                    let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
+                    let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
+                    
+                    let bg_width = max_label_width + padding * 2.0 + button_space;
+                    let bg_height = text_height.max(button_size) + padding * 2.0;
+                    
+                    let mut label_x = *x - bg_width / 2.0;
+                    let mut label_y = *y - bg_height / 2.0;
+                    
+                    label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
+                    label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
+                    
+                    let button_x = label_x + bg_width - padding - button_size;
+                    let button_y = label_y + (bg_height - button_size) / 2.0;
+                    
+                    if pos.x >= button_x && pos.x <= button_x + button_size &&
+                       pos.y >= button_y && pos.y <= button_y + button_size {
+                        return cosmic::iced_core::mouse::Interaction::Pointer;
+                    }
+                }
+            }
+        }
+        
         let children = [&self.bg_element, &self.fg_element, &self.menu_element];
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
@@ -1028,20 +1123,25 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             
             // Draw detected QR codes - constrained to selection rectangle
             if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                let button_size = 28.0_f32;
+                
                 for (x, y, content) in &self.qr_codes {
                     let font_size = 14.0_f32;
                     let padding = 8.0;
+                    let content_is_url = is_url(content);
                     
                     // Calculate max label width based on selection rectangle
-                    let max_label_width = (sel_w - padding * 4.0).max(80.0).min(400.0);
+                    // Reserve space for button if it's a URL
+                    let button_space = if content_is_url { button_size + padding } else { 0.0 };
+                    let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
                     
                     // Estimate number of lines for wrapped text
                     let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
                     let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6); // Cap at 6 lines
                     let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
                     
-                    let bg_width = max_label_width + padding * 2.0;
-                    let bg_height = text_height + padding * 2.0;
+                    let bg_width = max_label_width + padding * 2.0 + button_space;
+                    let bg_height = text_height.max(button_size) + padding * 2.0;
                     
                     // Position centered on QR location, but clamp to selection bounds
                     let mut label_x = *x - bg_width / 2.0;
@@ -1093,6 +1193,53 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             cosmic::iced::Color::WHITE,
                             *viewport,
                         );
+                        
+                        // Draw "open URL" button if content is a URL
+                        if content_is_url {
+                            let button_x = bg_rect.x + bg_width - padding - button_size;
+                            let button_y = bg_rect.y + (bg_height - button_size) / 2.0;
+                            
+                            let button_rect = cosmic::iced_core::Rectangle {
+                                x: button_x,
+                                y: button_y,
+                                width: button_size,
+                                height: button_size,
+                            };
+                            
+                            // Draw button background
+                            renderer.fill_quad(
+                                cosmic::iced_core::renderer::Quad {
+                                    bounds: button_rect,
+                                    border: Border {
+                                        radius: (button_size / 4.0).into(),
+                                        width: 1.0,
+                                        color: accent_color,
+                                    },
+                                    shadow: cosmic::iced_core::Shadow::default(),
+                                },
+                                Background::Color(accent_color),
+                            );
+                            
+                            // Draw a simple arrow/external link icon (→)
+                            let icon_text = Text {
+                                content: "🔗".to_string(),
+                                bounds: Size::new(button_size, button_size),
+                                size: cosmic::iced::Pixels(16.0),
+                                line_height: cosmic::iced_core::text::LineHeight::default(),
+                                font: cosmic::iced::Font::default(),
+                                horizontal_alignment: alignment::Horizontal::Center,
+                                vertical_alignment: alignment::Vertical::Center,
+                                shaping: cosmic::iced_core::text::Shaping::Advanced,
+                                wrapping: cosmic::iced_core::text::Wrapping::None,
+                            };
+                            
+                            renderer.fill_text(
+                                icon_text,
+                                Point::new(button_x + button_size / 2.0, button_y + button_size / 2.0),
+                                cosmic::iced::Color::WHITE,
+                                *viewport,
+                            );
+                        }
                     });
                 }
             }

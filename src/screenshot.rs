@@ -400,6 +400,7 @@ pub enum Msg {
     ToolbarPositionChange(ToolbarPosition),  // change toolbar position
     CopyToClipboard,  // capture and copy to clipboard
     SaveToPictures,  // capture and save to Pictures folder
+    OpenUrl(String),  // open URL in browser using xdg-open
 }
 
 #[derive(Debug, Clone)]
@@ -617,6 +618,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ArrowEnd,
             args.toolbar_position,
             Msg::ToolbarPositionChange,
+            Msg::OpenUrl,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
@@ -1361,6 +1363,31 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.location = ImageSaveLocation::Pictures;
             }
             update_msg(app, Msg::Capture)
+        }
+        Msg::OpenUrl(url) => {
+            // Open URL using xdg-open and close the screenshot tool
+            log::info!("Opening URL: {}", url);
+            if let Err(e) = std::process::Command::new("xdg-open")
+                .arg(&url)
+                .spawn()
+            {
+                log::error!("Failed to open URL: {}", e);
+            }
+            
+            // Close the screenshot tool
+            let cmds = app.outputs.iter().map(|o| destroy_layer_surface(o.id));
+            let Some(args) = app.screenshot_args.take() else {
+                log::error!("Failed to find screenshot Args for OpenUrl message.");
+                return cosmic::Task::batch(cmds);
+            };
+            let Args { tx, .. } = args;
+            tokio::spawn(async move {
+                if let Err(_err) = tx.send(PortalResponse::Cancelled).await {
+                    log::error!("Failed to send screenshot event");
+                }
+            });
+            
+            cosmic::Task::batch(cmds)
         }
     }
 }
