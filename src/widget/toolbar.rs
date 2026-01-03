@@ -183,6 +183,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     has_ocr_text: bool,
     qr_codes: &[DetectedQrCode],
     arrow_mode: bool,
+    redact_mode: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
@@ -190,6 +191,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
     on_arrow_toggle: Msg,
+    on_redact_toggle: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
@@ -305,6 +307,20 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
     
+    // Redact drawing button
+    let btn_redact = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("redact-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+        )
+        .class(if redact_mode { cosmic::theme::Button::Suggested } else { cosmic::theme::Button::Icon })
+        .on_press_maybe(has_selection.then_some(on_redact_toggle.clone()))
+        .padding(space_xs),
+        "Redact",
+        tooltip::Position::Bottom,
+    );
+    
     // OCR button
     let btn_ocr = if has_ocr_text {
         tooltip(
@@ -387,7 +403,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_window, btn_screen].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
+                column![btn_arrow, btn_redact, btn_ocr, btn_qr].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_copy, btn_save].spacing(space_s).align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -418,7 +434,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_arrow, btn_ocr, btn_qr].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
+                row![btn_arrow, btn_redact, btn_ocr, btn_qr].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_copy, btn_save].spacing(space_s).align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),

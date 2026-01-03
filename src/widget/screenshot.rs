@@ -22,7 +22,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::{
     app::OutputState,
-    screenshot::{ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, ScreenshotImage, ToolbarPosition},
+    screenshot::{ArrowAnnotation, RedactAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, ScreenshotImage, ToolbarPosition},
 };
 
 use super::{
@@ -243,6 +243,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_arrow_toggle: Option<Msg>,
     pub on_arrow_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     pub on_arrow_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Redaction annotations
+    pub redactions: Vec<RedactAnnotation>,
+    /// Whether redact mode is active
+    pub redact_mode: bool,
+    /// Redaction currently being drawn (start point)
+    pub redact_drawing: Option<(f32, f32)>,
+    /// Callbacks for redact mode
+    pub on_redact_toggle: Option<Msg>,
+    pub on_redact_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    pub on_redact_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     /// Toolbar position
     pub toolbar_position: ToolbarPosition,
     /// Callback for toolbar position change
@@ -284,6 +294,12 @@ where
         on_arrow_toggle: Msg,
         on_arrow_start: impl Fn(f32, f32) -> Msg + 'a,
         on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
+        redactions: &[RedactAnnotation],
+        redact_mode: bool,
+        redact_drawing: Option<(f32, f32)>,
+        on_redact_toggle: Msg,
+        on_redact_start: impl Fn(f32, f32) -> Msg + 'a,
+        on_redact_end: impl Fn(f32, f32) -> Msg + 'a,
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
         on_open_url: impl Fn(String) -> Msg + 'a,
@@ -315,6 +331,7 @@ where
                 &image.rgba,
                 image_scale,
                 arrow_mode,
+                redact_mode,
             )
             .into(),
             Choice::Output(_) => {
@@ -533,6 +550,7 @@ where
                     has_ocr_text,
                     qr_codes,
                     arrow_mode,
+                    redact_mode,
                     space_s,
                     space_xs,
                     space_xxs,
@@ -540,6 +558,7 @@ where
                     on_copy_to_clipboard,
                     on_save_to_pictures,
                     on_arrow_toggle.clone(),
+                    on_redact_toggle.clone(),
                     on_ocr.clone(),
                     on_ocr_copy.clone(),
                     on_qr.clone(),
@@ -557,6 +576,12 @@ where
             on_arrow_toggle: Some(on_arrow_toggle),
             on_arrow_start: Some(Box::new(on_arrow_start)),
             on_arrow_end: Some(Box::new(on_arrow_end)),
+            redactions: redactions.to_vec(),
+            redact_mode,
+            redact_drawing,
+            on_redact_toggle: Some(on_redact_toggle),
+            on_redact_start: Some(Box::new(on_redact_start)),
+            on_redact_end: Some(Box::new(on_redact_end)),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
             on_open_url: Some(Box::new(on_open_url)),
@@ -732,6 +757,39 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             let global_y = pos.y + self.output_rect.top as f32;
                             if let Some(ref on_arrow_end) = self.on_arrow_end {
                                 shell.publish(on_arrow_end(global_x, global_y));
+                            }
+                            return cosmic::iced_core::event::Status::Captured;
+                        }
+                        _ => {}
+                    }
+                }
+                
+                // Handle redact drawing mode - press to start, release to end
+                if self.redact_mode {
+                    // Check if position is inside selection rectangle
+                    let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x && pos.x <= sel_x + sel_w &&
+                        pos.y >= sel_y && pos.y <= sel_y + sel_h
+                    } else {
+                        false
+                    };
+                    
+                    match mouse_event {
+                        MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                            // Start a new redaction on press
+                            let global_x = pos.x + self.output_rect.left as f32;
+                            let global_y = pos.y + self.output_rect.top as f32;
+                            if let Some(ref on_redact_start) = self.on_redact_start {
+                                shell.publish(on_redact_start(global_x, global_y));
+                            }
+                            return cosmic::iced_core::event::Status::Captured;
+                        }
+                        MouseEvent::ButtonReleased(Button::Left) if self.redact_drawing.is_some() => {
+                            // Finish the redaction on release
+                            let global_x = pos.x + self.output_rect.left as f32;
+                            let global_y = pos.y + self.output_rect.top as f32;
+                            if let Some(ref on_redact_end) = self.on_redact_end {
+                                shell.publish(on_redact_end(global_x, global_y));
                             }
                             return cosmic::iced_core::event::Status::Captured;
                         }
@@ -1008,6 +1066,76 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             ];
             
             Some((vertices, indices))
+        }
+        
+        // Draw redactions (black rectangles)
+        let redact_color = cosmic::iced::Color::BLACK;
+        
+        for redact in &self.redactions {
+            // Convert global coordinates to widget-local
+            let x1 = redact.x - self.output_rect.left as f32;
+            let y1 = redact.y - self.output_rect.top as f32;
+            let x2 = redact.x2 - self.output_rect.left as f32;
+            let y2 = redact.y2 - self.output_rect.top as f32;
+            
+            // Normalize (ensure min < max)
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+            
+            let rect = cosmic::iced_core::Rectangle {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+            };
+            
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: rect,
+                        border: Border::default(),
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(redact_color),
+                );
+            });
+        }
+        
+        // Draw redaction preview (currently being drawn)
+        if let Some((start_x, start_y)) = self.redact_drawing {
+            if let Some(cursor_pos) = cursor.position() {
+                let x1 = start_x - self.output_rect.left as f32;
+                let y1 = start_y - self.output_rect.top as f32;
+                let x2 = cursor_pos.x;
+                let y2 = cursor_pos.y;
+                
+                let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+                let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+                
+                let rect = cosmic::iced_core::Rectangle {
+                    x: min_x,
+                    y: min_y,
+                    width: max_x - min_x,
+                    height: max_y - min_y,
+                };
+                
+                let preview_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7);
+                
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: rect,
+                            border: Border {
+                                radius: 0.0.into(),
+                                width: 2.0,
+                                color: cosmic::iced::Color::WHITE,
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(preview_color),
+                    );
+                });
+            }
         }
         
         // Draw arrows on top of the selection using meshes

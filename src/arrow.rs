@@ -1,4 +1,4 @@
-//! Arrow annotation module for drawing arrows on screenshots
+//! Arrow and redaction annotation module for drawing on screenshots
 
 use image::RgbaImage;
 
@@ -13,6 +13,17 @@ pub struct ArrowAnnotation {
     /// End point in global logical coordinates
     pub end_x: f32,
     pub end_y: f32,
+}
+
+/// Redaction annotation (black rectangle) for hiding sensitive content
+#[derive(Clone, Debug, PartialEq)]
+pub struct RedactAnnotation {
+    /// Top-left point in global logical coordinates
+    pub x: f32,
+    pub y: f32,
+    /// Bottom-right point in global logical coordinates
+    pub x2: f32,
+    pub y2: f32,
 }
 
 /// Draw arrows onto an image using the same geometry as the screen rendering
@@ -76,6 +87,43 @@ pub fn draw_arrows_on_image(
             shaft_end_x - hpx, shaft_end_y - hpy,
             end_x, end_y,
             arrow_color);
+    }
+}
+
+/// Draw redaction rectangles onto an image
+/// selection_rect: the selection rectangle in logical coordinates (used as origin)
+/// scale: pixels per logical unit
+pub fn draw_redactions_on_image(
+    img: &mut RgbaImage,
+    redactions: &[RedactAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    let redact_color = image::Rgba([0u8, 0u8, 0u8, 255u8]); // Black
+
+    for redact in redactions {
+        // Convert from global logical to image pixel coordinates
+        let x1 = ((redact.x - selection_rect.left as f32) * scale).round() as i32;
+        let y1 = ((redact.y - selection_rect.top as f32) * scale).round() as i32;
+        let x2 = ((redact.x2 - selection_rect.left as f32) * scale).round() as i32;
+        let y2 = ((redact.y2 - selection_rect.top as f32) * scale).round() as i32;
+
+        // Normalize coordinates (ensure x1 < x2 and y1 < y2)
+        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+        // Clamp to image bounds
+        let min_x = min_x.max(0) as u32;
+        let max_x = (max_x as u32).min(img.width().saturating_sub(1));
+        let min_y = min_y.max(0) as u32;
+        let max_y = (max_y as u32).min(img.height().saturating_sub(1));
+
+        // Fill the rectangle
+        for py in min_y..=max_y {
+            for px in min_x..=max_x {
+                img.put_pixel(px, py, redact_color);
+            }
+        }
     }
 }
 

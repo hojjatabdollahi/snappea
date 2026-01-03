@@ -94,6 +94,8 @@ pub struct RectangleSelection<'a, Msg> {
     image_scale: f32,
     /// Whether arrow drawing mode is active (skip rectangle capturing)
     arrow_mode: bool,
+    /// Whether redact drawing mode is active (skip rectangle capturing)
+    redact_mode: bool,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -108,6 +110,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         screenshot_image: &'a image::RgbaImage,
         image_scale: f32,
         arrow_mode: bool,
+        redact_mode: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -120,6 +123,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             screenshot_image,
             image_scale,
             arrow_mode,
+            redact_mode,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -446,8 +450,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 
-                // Skip rectangle drawing when arrow mode is active
-                if self.arrow_mode {
+                // Skip rectangle drawing when arrow or redact mode is active
+                if self.arrow_mode || self.redact_mode {
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 
