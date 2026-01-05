@@ -287,6 +287,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_settings_toggle: Option<Msg>,
     /// Callback for toggling magnifier
     pub on_magnifier_toggle: Option<Msg>,
+    /// Save location setting
+    pub save_location: crate::config::SaveLocation,
+    /// Callback for setting save location to Pictures
+    pub on_save_location_pictures: Option<Msg>,
+    /// Callback for setting save location to Documents
+    pub on_save_location_documents: Option<Msg>,
+    /// Whether to copy to clipboard on save
+    pub copy_to_clipboard_on_save: bool,
+    /// Callback for toggling copy on save
+    pub on_copy_on_save_toggle: Option<Msg>,
     /// Settings drawer element (only present when drawer is open)
     pub settings_drawer_element: Option<Element<'a, Msg>>,
 }
@@ -338,6 +348,11 @@ where
         magnifier_enabled: bool,
         on_settings_toggle: Msg,
         on_magnifier_toggle: Msg,
+        save_location: crate::config::SaveLocation,
+        on_save_location_pictures: Msg,
+        on_save_location_documents: Msg,
+        copy_to_clipboard_on_save: bool,
+        on_copy_on_save_toggle: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -638,11 +653,21 @@ where
             magnifier_enabled,
             on_settings_toggle: Some(on_settings_toggle),
             on_magnifier_toggle: Some(on_magnifier_toggle.clone()),
+            save_location,
+            on_save_location_pictures: Some(on_save_location_pictures.clone()),
+            on_save_location_documents: Some(on_save_location_documents.clone()),
+            copy_to_clipboard_on_save,
+            on_copy_on_save_toggle: Some(on_copy_on_save_toggle.clone()),
             settings_drawer_element: if settings_drawer_open {
                 Some(build_settings_drawer(
                     toolbar_position,
                     magnifier_enabled,
                     on_magnifier_toggle,
+                    save_location,
+                    on_save_location_pictures,
+                    on_save_location_documents,
+                    copy_to_clipboard_on_save,
+                    on_copy_on_save_toggle,
                     space_s,
                     space_xs,
                 ))
@@ -741,11 +766,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             };
 
             // If clicked outside the drawer, close it
-            if !inside_drawer {
-                if let Some(ref on_settings_toggle) = self.on_settings_toggle {
-                    shell.publish(on_settings_toggle.clone());
-                    return cosmic::iced_core::event::Status::Captured;
-                }
+            if !inside_drawer && let Some(ref on_settings_toggle) = self.on_settings_toggle {
+                shell.publish(on_settings_toggle.clone());
+                return cosmic::iced_core::event::Status::Captured;
             }
         }
 
@@ -972,7 +995,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
-        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> =
+            vec![&self.bg_element, &self.fg_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
         }
@@ -1002,7 +1026,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         operation: &mut dyn cosmic::widget::Operation<()>,
     ) {
         let layout = layout.children().collect::<Vec<_>>();
-        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> =
+            vec![&self.bg_element, &self.fg_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
         }
@@ -1077,7 +1102,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
 
         // Layout settings drawer if present
         if let Some(ref drawer) = self.settings_drawer_element {
-            let mut drawer_node = drawer.as_widget().layout(&mut children[3], renderer, limits);
+            let mut drawer_node = drawer
+                .as_widget()
+                .layout(&mut children[3], renderer, limits);
             let drawer_bounds = drawer_node.bounds();
             let drawer_margin = 8.0_f32;
 
@@ -1752,7 +1779,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         renderer: &cosmic::Renderer,
         dnd_rectangles: &mut cosmic::iced_core::clipboard::DndDestinationRectangles,
     ) {
-        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> =
+            vec![&self.bg_element, &self.fg_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
         }

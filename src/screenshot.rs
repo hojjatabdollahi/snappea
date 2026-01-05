@@ -24,7 +24,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use zbus::zvariant;
 
 use crate::app::{App, OutputState};
-use crate::config::BlazingshotConfig;
+use crate::config::{BlazingshotConfig, SaveLocation};
 use crate::wayland::{CaptureSource, ShmImage, WaylandHelper};
 use crate::widget::{keyboard_wrapper::KeyboardWrapper, rectangle_selection::DragState};
 use crate::{PortalResponse, fl};
@@ -407,6 +407,9 @@ pub enum Msg {
     OpenUrl(String),                        // open URL in browser using xdg-open
     ToggleSettingsDrawer,                   // toggle settings drawer visibility
     ToggleMagnifier,                        // toggle magnifier on/off
+    SetSaveLocationPictures,                // set save location to Pictures
+    SetSaveLocationDocuments,               // set save location to Documents
+    ToggleCopyOnSave,                       // toggle copy to clipboard on save
 }
 
 #[derive(Debug, Clone)]
@@ -463,6 +466,12 @@ pub struct Args {
     pub settings_drawer_open: bool,
     /// Whether magnifier is enabled (persisted setting)
     pub magnifier_enabled: bool,
+    /// Save location setting (Pictures or Documents)
+    pub save_location_setting: SaveLocation,
+    /// Whether to also copy to clipboard when saving (persisted setting)
+    pub copy_to_clipboard_on_save: bool,
+    /// Whether to also copy to clipboard for the current save operation
+    pub also_copy_to_clipboard: bool,
 }
 
 struct Output {
@@ -568,6 +577,9 @@ impl Screenshot {
                 toolbar_position: ToolbarPosition::default(),
                 settings_drawer_open: false,
                 magnifier_enabled: config.magnifier_enabled,
+                save_location_setting: config.save_location,
+                copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+                also_copy_to_clipboard: false,
             }))
             .await
         {
@@ -654,6 +666,11 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.magnifier_enabled,
             Msg::ToggleSettingsDrawer,
             Msg::ToggleMagnifier,
+            args.save_location_setting,
+            Msg::SetSaveLocationPictures,
+            Msg::SetSaveLocationDocuments,
+            args.copy_to_clipboard_on_save,
+            Msg::ToggleCopyOnSave,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
@@ -684,6 +701,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 location,
                 arrows,
                 redactions,
+                also_copy_to_clipboard,
                 ..
             } = args;
 
@@ -722,6 +740,17 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
                             };
+                            // Also copy to clipboard if enabled
+                            if also_copy_to_clipboard {
+                                let mut buffer = Vec::new();
+                                if let Err(e) =
+                                    Screenshot::save_rgba_to_buffer(&final_img, &mut buffer)
+                                {
+                                    log::error!("Failed to save screenshot to buffer: {:?}", e);
+                                } else {
+                                    cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)));
+                                }
+                            }
                         } else {
                             let mut buffer = Vec::new();
                             if let Err(e) = Screenshot::save_rgba_to_buffer(&final_img, &mut buffer)
@@ -825,6 +854,15 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             if let Err(err) = Screenshot::save_rgba(&img, image_path) {
                                 success = false;
                             }
+                            // Also copy to clipboard if enabled
+                            if also_copy_to_clipboard {
+                                let mut buffer = Vec::new();
+                                if let Err(e) = Screenshot::save_rgba_to_buffer(&img, &mut buffer) {
+                                    log::error!("Failed to save screenshot to buffer: {:?}", e);
+                                } else {
+                                    cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)));
+                                }
+                            }
                         } else {
                             let mut buffer = Vec::new();
                             if let Err(e) = Screenshot::save_rgba_to_buffer(&img, &mut buffer) {
@@ -899,6 +937,17 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
                                 success = false;
+                            }
+                            // Also copy to clipboard if enabled
+                            if also_copy_to_clipboard {
+                                let mut buffer = Vec::new();
+                                if let Err(e) =
+                                    Screenshot::save_rgba_to_buffer(&final_img, &mut buffer)
+                                {
+                                    log::error!("Failed to save screenshot to buffer: {:?}", e);
+                                } else {
+                                    cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)));
+                                }
                             }
                         } else {
                             let mut buffer = Vec::new();
@@ -1677,7 +1726,15 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::SaveToPictures => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                args.location = ImageSaveLocation::Pictures;
+                // Use save location from settings
+                args.location = match args.save_location_setting {
+                    SaveLocation::Pictures => ImageSaveLocation::Pictures,
+                    SaveLocation::Documents => ImageSaveLocation::Documents,
+                };
+                // Check if we should also copy to clipboard
+                if args.copy_to_clipboard_on_save {
+                    args.also_copy_to_clipboard = true;
+                }
             }
             update_msg(app, Msg::Capture)
         }
@@ -1712,9 +1769,50 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::ToggleMagnifier => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.magnifier_enabled = !args.magnifier_enabled;
-                // Persist the setting
+                // Persist all settings
                 let config = BlazingshotConfig {
                     magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetSaveLocationPictures => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.save_location_setting = SaveLocation::Pictures;
+                // Persist all settings
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetSaveLocationDocuments => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.save_location_setting = SaveLocation::Documents;
+                // Persist all settings
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::ToggleCopyOnSave => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.copy_to_clipboard_on_save = !args.copy_to_clipboard_on_save;
+                // Persist all settings
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
                 };
                 config.save();
             }
@@ -1749,6 +1847,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         toolbar_position: _,
         settings_drawer_open: _,
         magnifier_enabled: _,
+        save_location_setting: _,
+        copy_to_clipboard_on_save: _,
+        also_copy_to_clipboard: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

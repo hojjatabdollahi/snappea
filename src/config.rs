@@ -3,12 +3,24 @@
 use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
 use serde::{Deserialize, Serialize};
 
+/// Save location for screenshots (Pictures or Documents)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum SaveLocation {
+    #[default]
+    Pictures,
+    Documents,
+}
+
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
 #[version = 1]
 pub struct BlazingshotConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
+    /// Where to save screenshots (Pictures or Documents folder)
+    pub save_location: SaveLocation,
+    /// Whether to also copy to clipboard when saving to file
+    pub copy_to_clipboard_on_save: bool,
 }
 
 impl BlazingshotConfig {
@@ -52,6 +64,10 @@ impl Default for BlazingshotConfig {
         Self {
             // Magnifier enabled by default for precise selection
             magnifier_enabled: true,
+            // Default to Pictures folder
+            save_location: SaveLocation::Pictures,
+            // Don't copy to clipboard by default when saving
+            copy_to_clipboard_on_save: false,
         }
     }
 }

@@ -564,5 +564,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })),
     );
 
-    HoverOpacity::new(toolbar).force_opaque(settings_drawer_open).into()
+    HoverOpacity::new(toolbar)
+        .force_opaque(settings_drawer_open)
+        .into()
 }
