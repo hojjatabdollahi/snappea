@@ -10,7 +10,7 @@ pub const MAGNIFIER_RADIUS: f32 = 60.0;
 pub const MAGNIFIER_ZOOM: f32 = 2.5;
 
 /// Draw a magnifier showing a zoomed view of the image at the specified position
-/// 
+///
 /// # Arguments
 /// * `renderer` - The renderer to draw with
 /// * `screenshot_image` - The source image to sample from
@@ -20,6 +20,7 @@ pub const MAGNIFIER_ZOOM: f32 = 2.5;
 /// * `outer_size` - The outer size bounds for positioning
 /// * `outer_rect` - The outer rectangle for coordinate conversion  
 /// * `accent` - Accent color for the border
+#[allow(clippy::too_many_arguments)]
 pub fn draw_magnifier(
     renderer: &mut cosmic::Renderer,
     screenshot_image: &RgbaImage,
@@ -32,17 +33,16 @@ pub fn draw_magnifier(
     accent: Color,
 ) {
     use cosmic::iced_core::Renderer as _;
-    
+
     renderer.with_layer(Rectangle::new(Point::ORIGIN, outer_size), |renderer| {
         // Convert to widget-local coordinates
         let cursor_pos = Point::new(drag_x as f32 - outer_rect.x, drag_y as f32 - outer_rect.y);
 
         // Position magnifier offset from cursor
         let magnifier_offset = MAGNIFIER_RADIUS + 20.0;
-        let mag_center_x = (cursor_pos.x + magnifier_offset)
-            .min(outer_size.width - MAGNIFIER_RADIUS - 5.0);
-        let mag_center_y =
-            (cursor_pos.y - magnifier_offset).max(MAGNIFIER_RADIUS + 5.0);
+        let mag_center_x =
+            (cursor_pos.x + magnifier_offset).min(outer_size.width - MAGNIFIER_RADIUS - 5.0);
+        let mag_center_y = (cursor_pos.y - magnifier_offset).max(MAGNIFIER_RADIUS + 5.0);
 
         // Sample from the screenshot image at the drag position
         // Convert to image coordinates
@@ -90,12 +90,8 @@ pub fn draw_magnifier(
                 // Sample pixel if in bounds
                 if src_x >= 0 && src_x < img_width && src_y >= 0 && src_y < img_height {
                     let pixel = screenshot_image.get_pixel(src_x as u32, src_y as u32);
-                    let color = Color::from_rgba8(
-                        pixel[0],
-                        pixel[1],
-                        pixel[2],
-                        pixel[3] as f32 / 255.0,
-                    );
+                    let color =
+                        Color::from_rgba8(pixel[0], pixel[1], pixel[2], pixel[3] as f32 / 255.0);
 
                     // Calculate position in magnifier
                     let mag_px = mag_center_x + dx as f32 * MAGNIFIER_ZOOM;
@@ -103,10 +99,7 @@ pub fn draw_magnifier(
 
                     // Draw zoomed pixel
                     let pixel_bounds = Rectangle::new(
-                        Point::new(
-                            mag_px - MAGNIFIER_ZOOM / 2.0,
-                            mag_py - MAGNIFIER_ZOOM / 2.0,
-                        ),
+                        Point::new(mag_px - MAGNIFIER_ZOOM / 2.0, mag_py - MAGNIFIER_ZOOM / 2.0),
                         Size::new(MAGNIFIER_ZOOM, MAGNIFIER_ZOOM),
                     );
 

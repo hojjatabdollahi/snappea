@@ -28,7 +28,6 @@ use crate::wayland::{CaptureSource, ShmImage, WaylandHelper};
 use crate::widget::{keyboard_wrapper::KeyboardWrapper, rectangle_selection::DragState};
 use crate::{PortalResponse, fl};
 
-
 #[derive(Clone, Debug)]
 pub struct ScreenshotImage {
     pub rgba: RgbaImage,
@@ -393,18 +392,18 @@ pub enum Msg {
     OcrCopyAndClose,
     OcrStatus(OcrStatus),
     OcrStatusClear,
-    ArrowModeToggle,  // toggle arrow drawing mode
-    ArrowStart(f32, f32),  // start drawing arrow at position
-    ArrowEnd(f32, f32),  // finish arrow at position
-    ArrowCancel,  // cancel current arrow drawing
-    RedactModeToggle,  // toggle redact drawing mode
-    RedactStart(f32, f32),  // start drawing redact rectangle at position
-    RedactEnd(f32, f32),  // finish redact rectangle at position
-    RedactCancel,  // cancel current redact drawing
-    ToolbarPositionChange(ToolbarPosition),  // change toolbar position
-    CopyToClipboard,  // capture and copy to clipboard
-    SaveToPictures,  // capture and save to Pictures folder
-    OpenUrl(String),  // open URL in browser using xdg-open
+    ArrowModeToggle,                        // toggle arrow drawing mode
+    ArrowStart(f32, f32),                   // start drawing arrow at position
+    ArrowEnd(f32, f32),                     // finish arrow at position
+    ArrowCancel,                            // cancel current arrow drawing
+    RedactModeToggle,                       // toggle redact drawing mode
+    RedactStart(f32, f32),                  // start drawing redact rectangle at position
+    RedactEnd(f32, f32),                    // finish redact rectangle at position
+    RedactCancel,                           // cancel current redact drawing
+    ToolbarPositionChange(ToolbarPosition), // change toolbar position
+    CopyToClipboard,                        // capture and copy to clipboard
+    SaveToPictures,                         // capture and save to Pictures folder
+    OpenUrl(String),                        // open URL in browser using xdg-open
 }
 
 #[derive(Debug, Clone)]
@@ -466,6 +465,7 @@ struct Output {
     name: String,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Event {
     Screenshot(Args),
@@ -523,9 +523,9 @@ impl Screenshot {
             .interactive_toplevel_images(&outputs)
             .await
             .unwrap_or_default();
-        
+
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
-        
+
         // Send UI immediately with empty QR codes, detection happens async
         if let Err(err) = self
             .tx
@@ -563,9 +563,9 @@ impl Screenshot {
             return PortalResponse::Other;
         }
         if let Some(res) = rx.recv().await {
-            return res;
+            res
         } else {
-            return PortalResponse::Cancelled::<ScreenshotResult>;
+            PortalResponse::Cancelled::<ScreenshotResult>
         }
     }
 
@@ -678,13 +678,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 Choice::Output(output_name) => {
                     if let Some(img) = images.remove(&output_name) {
                         let mut final_img = img.rgba.clone();
-                        
+
                         // Draw arrows/redactions if any (they are in global coords, output_rect is also global)
                         if !arrows.is_empty() || !redactions.is_empty() {
                             // Find the output to get scale factor and position
                             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
                                 let scale = final_img.width() as f32 / output.logical_size.0 as f32;
-                                
+
                                 // Output rect in global coordinates
                                 let output_rect = Rect {
                                     left: output.logical_pos.0,
@@ -692,11 +692,16 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     right: output.logical_pos.0 + output.logical_size.0 as i32,
                                     bottom: output.logical_pos.1 + output.logical_size.1 as i32,
                                 };
-                                draw_redactions_on_image(&mut final_img, &redactions, &output_rect, scale);
+                                draw_redactions_on_image(
+                                    &mut final_img,
+                                    &redactions,
+                                    &output_rect,
+                                    scale,
+                                );
                                 draw_arrows_on_image(&mut final_img, &arrows, &output_rect, scale);
                             }
                         }
-                        
+
                         if let Some(ref image_path) = image_path {
                             if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
@@ -734,7 +739,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 Some(raw_img.rgba.width() as f32 / output.logical_size.0 as f32)
                             })
                             .unwrap_or(1.0);
-                        
+
                         // Scale selection rect to physical coordinates
                         let physical_bounds = Rect {
                             left: (r.left as f32 * target_scale) as i32,
@@ -742,7 +747,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             right: (r.right as f32 * target_scale) as i32,
                             bottom: (r.bottom as f32 * target_scale) as i32,
                         };
-                        
+
                         let frames = images
                             .into_iter()
                             .filter_map(|(name, raw_img)| {
@@ -756,18 +761,29 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 };
 
                                 let intersect = r.intersect(output_rect)?;
-                                
+
                                 // Crop to intersection in physical coordinates
-                                let scale_x = raw_img.rgba.width() as f32 / output.logical_size.0 as f32;
-                                let scale_y = raw_img.rgba.height() as f32 / output.logical_size.1 as f32;
-                                
-                                let img_x = ((intersect.left - output_rect.left) as f32 * scale_x) as u32;
-                                let img_y = ((intersect.top - output_rect.top) as f32 * scale_y) as u32;
+                                let scale_x =
+                                    raw_img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                let scale_y =
+                                    raw_img.rgba.height() as f32 / output.logical_size.1 as f32;
+
+                                let img_x =
+                                    ((intersect.left - output_rect.left) as f32 * scale_x) as u32;
+                                let img_y =
+                                    ((intersect.top - output_rect.top) as f32 * scale_y) as u32;
                                 let img_w = (intersect.width() as f32 * scale_x) as u32;
                                 let img_h = (intersect.height() as f32 * scale_y) as u32;
-                                
-                                let cropped = image::imageops::crop_imm(&raw_img.rgba, img_x, img_y, img_w, img_h).to_image();
-                                
+
+                                let cropped = image::imageops::crop_imm(
+                                    &raw_img.rgba,
+                                    img_x,
+                                    img_y,
+                                    img_w,
+                                    img_h,
+                                )
+                                .to_image();
+
                                 // Physical rect for this cropped portion
                                 let physical_intersect = Rect {
                                     left: (intersect.left as f32 * target_scale) as i32,
@@ -813,7 +829,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         .and_then(|imgs| imgs.get(window_i))
                     {
                         let mut final_img = img.rgba.clone();
-                        
+
                         // Draw arrows/redactions if any
                         // They are stored in output-relative coords where the window was displayed centered
                         if !arrows.is_empty() || !redactions.is_empty() {
@@ -823,19 +839,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 let img_height = final_img.height() as f32;
                                 let output_width = output.logical_size.0 as f32;
                                 let output_height = output.logical_size.1 as f32;
-                                
+
                                 // Match the centering logic in SelectedImageWidget::image_bounds (20px margin)
                                 let available_width = output_width - 20.0;
                                 let available_height = output_height - 20.0;
                                 let scale_x = available_width / img_width;
                                 let scale_y = available_height / img_height;
                                 let display_scale = scale_x.min(scale_y).min(1.0);
-                                
+
                                 let display_width = img_width * display_scale;
                                 let display_height = img_height * display_scale;
                                 let sel_x = (output_width - display_width) / 2.0;
                                 let sel_y = (output_height - display_height) / 2.0;
-                                
+
                                 // The selection_rect is where the window was displayed on screen (in global coords)
                                 // Arrow/redact coords are stored in global coordinates (output.left + pos.x)
                                 // Image scale factor is 1/display_scale (to go from display to original)
@@ -848,11 +864,21 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     bottom: (output_top + sel_y + display_height) as i32,
                                 };
                                 let image_scale = 1.0 / display_scale;
-                                draw_redactions_on_image(&mut final_img, &redactions, &window_rect, image_scale);
-                                draw_arrows_on_image(&mut final_img, &arrows, &window_rect, image_scale);
+                                draw_redactions_on_image(
+                                    &mut final_img,
+                                    &redactions,
+                                    &window_rect,
+                                    image_scale,
+                                );
+                                draw_arrows_on_image(
+                                    &mut final_img,
+                                    &arrows,
+                                    &window_rect,
+                                    image_scale,
+                                );
                             }
                         }
-                        
+
                         if let Some(ref image_path) = image_path {
                             if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
                                 log::error!("Failed to capture screenshot: {:?}", err);
@@ -877,9 +903,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 }
             }
 
-            let response = if success && image_path.is_some() {
+            let response = if success && let Some(image_path1) = image_path {
                 PortalResponse::Success(ScreenshotResult {
-                    uri: format!("file:///{}", image_path.unwrap().display()),
+                    uri: format!("file:///{}", image_path1.display()),
                 })
             } else if success && image_path.is_none() {
                 PortalResponse::Success(ScreenshotResult {
@@ -917,8 +943,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 if let Choice::Rectangle(new_r, new_s) = &c {
                     if let Choice::Rectangle(old_r, _) = &args.choice {
                         // If the rectangle position/size changed significantly, clear everything
-                        if new_r.left != old_r.left || new_r.top != old_r.top 
-                            || new_r.right != old_r.right || new_r.bottom != old_r.bottom {
+                        if new_r.left != old_r.left
+                            || new_r.top != old_r.top
+                            || new_r.right != old_r.right
+                            || new_r.bottom != old_r.bottom
+                        {
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
                             args.ocr_text = None;
@@ -946,7 +975,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     }
                 }
                 // Clear arrows/redactions when switching modes (Region, Window, or Output)
-                if matches!(&c, Choice::Rectangle(_, DragState::None) | Choice::Window(_, None) | Choice::Output(_)) {
+                if matches!(
+                    &c,
+                    Choice::Rectangle(_, DragState::None)
+                        | Choice::Window(_, None)
+                        | Choice::Output(_)
+                ) {
                     args.arrows.clear();
                     args.arrow_mode = false;
                     args.arrow_drawing = None;
@@ -966,8 +1000,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::OutputChanged(wl_output) => {
             if let (Some(args), Some(o)) = (
                 app.screenshot_args.as_mut(),
-                app
-                    .outputs
+                app.outputs
                     .iter()
                     .find(|o| o.output == wl_output)
                     .map(|o| o.name.clone()),
@@ -1048,15 +1081,16 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.redact_mode = false;
                 args.redact_drawing = None;
             }
-            
+
             // Get the selection and run QR detection on that area
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
                 let outputs_clone = app.outputs.clone();
-                
+
                 // Get image data and parameters based on choice type
                 // Returns: (image, output_name, scale, origin_x, origin_y, selection_rect_for_redactions)
-                let qr_params: Option<(RgbaImage, String, f32, f32, f32, Rect)> = match &args.choice {
+                let qr_params: Option<(RgbaImage, String, f32, f32, f32, Rect)> = match &args.choice
+                {
                     Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
                         let mut params = None;
                         for output in &app.outputs {
@@ -1067,20 +1101,31 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     right: output.logical_pos.0 + output.logical_size.0 as i32,
                                     bottom: output.logical_pos.1 + output.logical_size.1 as i32,
                                 };
-                                
+
                                 if let Some(intersection) = rect.intersect(output_rect) {
-                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
-                                    let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
-                                    let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
+                                    let scale =
+                                        img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                    let x = ((intersection.left - output_rect.left) as f32 * scale)
+                                        as u32;
+                                    let y = ((intersection.top - output_rect.top) as f32 * scale)
+                                        as u32;
                                     let w = (intersection.width() as f32 * scale) as u32;
                                     let h = (intersection.height() as f32 * scale) as u32;
-                                    
-                                    let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
+
+                                    let cropped =
+                                        image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
                                     let origin_x = (intersection.left - output_rect.left) as f32;
                                     let origin_y = (intersection.top - output_rect.top) as f32;
-                                    
+
                                     // Selection rect is the intersection in global coords
-                                    params = Some((cropped, output.name.clone(), scale, origin_x, origin_y, intersection));
+                                    params = Some((
+                                        cropped,
+                                        output.name.clone(),
+                                        scale,
+                                        origin_x,
+                                        origin_y,
+                                        intersection,
+                                    ));
                                     break;
                                 }
                             }
@@ -1093,57 +1138,77 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             .and_then(|imgs| imgs.get(*window_index))
                             .and_then(|img| {
                                 // Calculate where the window was displayed (matching Capture logic)
-                                outputs_clone.iter().find(|o| &o.name == output_name).map(|output| {
-                                    let img_width = img.rgba.width() as f32;
-                                    let img_height = img.rgba.height() as f32;
-                                    let output_width = output.logical_size.0 as f32;
-                                    let output_height = output.logical_size.1 as f32;
-                                    
-                                    let available_width = output_width - 20.0;
-                                    let available_height = output_height - 20.0;
-                                    let scale_x = available_width / img_width;
-                                    let scale_y = available_height / img_height;
-                                    let display_scale = scale_x.min(scale_y).min(1.0);
-                                    
-                                    let display_width = img_width * display_scale;
-                                    let display_height = img_height * display_scale;
-                                    let sel_x = (output_width - display_width) / 2.0;
-                                    let sel_y = (output_height - display_height) / 2.0;
-                                    
-                                    let output_left = output.logical_pos.0 as f32;
-                                    let output_top = output.logical_pos.1 as f32;
-                                    let window_rect = Rect {
-                                        left: (output_left + sel_x) as i32,
-                                        top: (output_top + sel_y) as i32,
-                                        right: (output_left + sel_x + display_width) as i32,
-                                        bottom: (output_top + sel_y + display_height) as i32,
-                                    };
-                                    let img_scale = 1.0 / display_scale;
-                                    
-                                    (img.rgba.clone(), output_name.clone(), img_scale, 0.0, 0.0, window_rect)
-                                })
+                                outputs_clone.iter().find(|o| &o.name == output_name).map(
+                                    |output| {
+                                        let img_width = img.rgba.width() as f32;
+                                        let img_height = img.rgba.height() as f32;
+                                        let output_width = output.logical_size.0 as f32;
+                                        let output_height = output.logical_size.1 as f32;
+
+                                        let available_width = output_width - 20.0;
+                                        let available_height = output_height - 20.0;
+                                        let scale_x = available_width / img_width;
+                                        let scale_y = available_height / img_height;
+                                        let display_scale = scale_x.min(scale_y).min(1.0);
+
+                                        let display_width = img_width * display_scale;
+                                        let display_height = img_height * display_scale;
+                                        let sel_x = (output_width - display_width) / 2.0;
+                                        let sel_y = (output_height - display_height) / 2.0;
+
+                                        let output_left = output.logical_pos.0 as f32;
+                                        let output_top = output.logical_pos.1 as f32;
+                                        let window_rect = Rect {
+                                            left: (output_left + sel_x) as i32,
+                                            top: (output_top + sel_y) as i32,
+                                            right: (output_left + sel_x + display_width) as i32,
+                                            bottom: (output_top + sel_y + display_height) as i32,
+                                        };
+                                        let img_scale = 1.0 / display_scale;
+
+                                        (
+                                            img.rgba.clone(),
+                                            output_name.clone(),
+                                            img_scale,
+                                            0.0,
+                                            0.0,
+                                            window_rect,
+                                        )
+                                    },
+                                )
                             })
                     }
                     Choice::Output(output_name) => {
-                        args.output_images
-                            .get(output_name)
-                            .and_then(|img| {
-                                outputs_clone.iter().find(|o| &o.name == output_name).map(|output| {
-                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
+                        args.output_images.get(output_name).and_then(|img| {
+                            outputs_clone
+                                .iter()
+                                .find(|o| &o.name == output_name)
+                                .map(|output| {
+                                    let scale =
+                                        img.rgba.width() as f32 / output.logical_size.0 as f32;
                                     let output_rect = Rect {
                                         left: output.logical_pos.0,
                                         top: output.logical_pos.1,
                                         right: output.logical_pos.0 + output.logical_size.0 as i32,
                                         bottom: output.logical_pos.1 + output.logical_size.1 as i32,
                                     };
-                                    (img.rgba.clone(), output_name.clone(), scale, 0.0, 0.0, output_rect)
+                                    (
+                                        img.rgba.clone(),
+                                        output_name.clone(),
+                                        scale,
+                                        0.0,
+                                        0.0,
+                                        output_rect,
+                                    )
                                 })
-                            })
+                        })
                     }
                     _ => None,
                 };
-                
-                if let Some((mut cropped, output_name, scale, origin_x, origin_y, selection_rect)) = qr_params {
+
+                if let Some((mut cropped, output_name, scale, origin_x, origin_y, selection_rect)) =
+                    qr_params
+                {
                     // Apply redactions to the image before QR scanning
                     if !redactions.is_empty() {
                         draw_redactions_on_image(&mut cropped, &redactions, &selection_rect, scale);
@@ -1151,31 +1216,38 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     // Spawn progressive QR detection tasks (3 passes with increasing resolution)
                     let resolutions = [500u32, 1500, 0]; // 0 = full resolution
                     let mut qr_detection_tasks = Vec::new();
-                    
-                    for (_pass_idx, max_dim) in resolutions.into_iter().enumerate() {
+
+                    resolutions.into_iter().for_each(|max_dim| {
                         let cropped_clone = cropped.clone();
                         let output_name_clone = output_name.clone();
                         let task = cosmic::Task::perform(
                             async move {
                                 tokio::task::spawn_blocking(move || {
                                     let detected = detect_qr_codes_at_resolution(
-                                        &cropped_clone, 
-                                        &output_name_clone, 
-                                        scale, 
-                                        max_dim
+                                        &cropped_clone,
+                                        &output_name_clone,
+                                        scale,
+                                        max_dim,
                                     );
-                                    detected.into_iter().map(|mut qr| {
-                                        qr.center_x += origin_x;
-                                        qr.center_y += origin_y;
-                                        qr
-                                    }).collect::<Vec<_>>()
-                                }).await.unwrap_or_default()
+                                    detected
+                                        .into_iter()
+                                        .map(|mut qr| {
+                                            qr.center_x += origin_x;
+                                            qr.center_y += origin_y;
+                                            qr
+                                        })
+                                        .collect::<Vec<_>>()
+                                })
+                                .await
+                                .unwrap_or_default()
                             },
-                            move |qr_codes| crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
+                            move |qr_codes| {
+                                crate::app::Msg::Screenshot(Msg::QrCodesDetected(qr_codes))
+                            },
                         );
                         qr_detection_tasks.push(task);
-                    }
-                    
+                    });
+
                     return cosmic::Task::batch(qr_detection_tasks);
                 }
             }
@@ -1185,7 +1257,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut() {
                 // Scanning pass completed - hide scanning indicator after first pass
                 args.qr_scanning = false;
-                
+
                 // Merge new QR codes, avoiding duplicates
                 for qr in new_qr_codes {
                     if !is_duplicate_qr(&args.qr_codes, &qr) {
@@ -1217,12 +1289,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.redact_mode = false;
                 args.redact_drawing = None;
             }
-            
+
             // Get the selection and run OCR on that area
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
                 let outputs_clone = app.outputs.clone();
-                
+
                 // Returns: (image, mapping, selection_rect_for_redactions, scale_for_redactions)
                 let region_data: Option<(RgbaImage, OcrMapping, Rect, f32)> = match &args.choice {
                     Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
@@ -1236,21 +1308,25 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     right: output.logical_pos.0 + output.logical_size.0 as i32,
                                     bottom: output.logical_pos.1 + output.logical_size.1 as i32,
                                 };
-                                
+
                                 if let Some(intersection) = rect.intersect(output_rect) {
-                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
-                                    let x = ((intersection.left - output_rect.left) as f32 * scale) as u32;
-                                    let y = ((intersection.top - output_rect.top) as f32 * scale) as u32;
+                                    let scale =
+                                        img.rgba.width() as f32 / output.logical_size.0 as f32;
+                                    let x = ((intersection.left - output_rect.left) as f32 * scale)
+                                        as u32;
+                                    let y = ((intersection.top - output_rect.top) as f32 * scale)
+                                        as u32;
                                     let w = (intersection.width() as f32 * scale) as u32;
                                     let h = (intersection.height() as f32 * scale) as u32;
-                                    
-                                    let cropped = image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
-                                    
+
+                                    let cropped =
+                                        image::imageops::crop_imm(&img.rgba, x, y, w, h).to_image();
+
                                     let origin_x = (intersection.left - output_rect.left) as f32;
                                     let origin_y = (intersection.top - output_rect.top) as f32;
                                     let size_w = intersection.width() as f32;
                                     let size_h = intersection.height() as f32;
-                                    
+
                                     data = Some((
                                         cropped,
                                         OcrMapping {
@@ -1275,59 +1351,63 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             .and_then(|imgs| imgs.get(*window_index))
                             .and_then(|img| {
                                 // Calculate where the window was displayed (matching Capture logic)
-                                outputs_clone.iter().find(|o| &o.name == output_name).map(|output| {
-                                    let img_width = img.rgba.width() as f32;
-                                    let img_height = img.rgba.height() as f32;
-                                    let output_width = output.logical_size.0 as f32;
-                                    let output_height = output.logical_size.1 as f32;
-                                    
-                                    let available_width = output_width - 20.0;
-                                    let available_height = output_height - 20.0;
-                                    let scale_x = available_width / img_width;
-                                    let scale_y = available_height / img_height;
-                                    let display_scale = scale_x.min(scale_y).min(1.0);
-                                    
-                                    let display_width = img_width * display_scale;
-                                    let display_height = img_height * display_scale;
-                                    let sel_x = (output_width - display_width) / 2.0;
-                                    let sel_y = (output_height - display_height) / 2.0;
-                                    
-                                    let output_left = output.logical_pos.0 as f32;
-                                    let output_top = output.logical_pos.1 as f32;
-                                    let window_rect = Rect {
-                                        left: (output_left + sel_x) as i32,
-                                        top: (output_top + sel_y) as i32,
-                                        right: (output_left + sel_x + display_width) as i32,
-                                        bottom: (output_top + sel_y + display_height) as i32,
-                                    };
-                                    let img_scale = 1.0 / display_scale;
-                                    
-                                    // OCR origin is where the window is displayed on the output (in output-relative coords)
-                                    // OCR scale is display_scale (pixels per logical unit in the displayed image)
-                                    // The image is the original, so OCR sees original pixels, but mapping needs display coords
-                                    let ocr_scale = img.rgba.width() as f32 / display_width;
-                                    
-                                    (
-                                        img.rgba.clone(),
-                                        OcrMapping {
-                                            origin: (sel_x, sel_y),
-                                            size: (display_width, display_height),
-                                            scale: ocr_scale,
-                                            output_name: output_name.clone(),
-                                        },
-                                        window_rect,
-                                        img_scale,
-                                    )
-                                })
+                                outputs_clone.iter().find(|o| &o.name == output_name).map(
+                                    |output| {
+                                        let img_width = img.rgba.width() as f32;
+                                        let img_height = img.rgba.height() as f32;
+                                        let output_width = output.logical_size.0 as f32;
+                                        let output_height = output.logical_size.1 as f32;
+
+                                        let available_width = output_width - 20.0;
+                                        let available_height = output_height - 20.0;
+                                        let scale_x = available_width / img_width;
+                                        let scale_y = available_height / img_height;
+                                        let display_scale = scale_x.min(scale_y).min(1.0);
+
+                                        let display_width = img_width * display_scale;
+                                        let display_height = img_height * display_scale;
+                                        let sel_x = (output_width - display_width) / 2.0;
+                                        let sel_y = (output_height - display_height) / 2.0;
+
+                                        let output_left = output.logical_pos.0 as f32;
+                                        let output_top = output.logical_pos.1 as f32;
+                                        let window_rect = Rect {
+                                            left: (output_left + sel_x) as i32,
+                                            top: (output_top + sel_y) as i32,
+                                            right: (output_left + sel_x + display_width) as i32,
+                                            bottom: (output_top + sel_y + display_height) as i32,
+                                        };
+                                        let img_scale = 1.0 / display_scale;
+
+                                        // OCR origin is where the window is displayed on the output (in output-relative coords)
+                                        // OCR scale is display_scale (pixels per logical unit in the displayed image)
+                                        // The image is the original, so OCR sees original pixels, but mapping needs display coords
+                                        let ocr_scale = img.rgba.width() as f32 / display_width;
+
+                                        (
+                                            img.rgba.clone(),
+                                            OcrMapping {
+                                                origin: (sel_x, sel_y),
+                                                size: (display_width, display_height),
+                                                scale: ocr_scale,
+                                                output_name: output_name.clone(),
+                                            },
+                                            window_rect,
+                                            img_scale,
+                                        )
+                                    },
+                                )
                             })
                     }
                     Choice::Output(output_name) => {
                         // Get full output image
-                        args.output_images
-                            .get(output_name)
-                            .and_then(|img| {
-                                outputs_clone.iter().find(|o| &o.name == output_name).map(|output| {
-                                    let scale = img.rgba.width() as f32 / output.logical_size.0 as f32;
+                        args.output_images.get(output_name).and_then(|img| {
+                            outputs_clone
+                                .iter()
+                                .find(|o| &o.name == output_name)
+                                .map(|output| {
+                                    let scale =
+                                        img.rgba.width() as f32 / output.logical_size.0 as f32;
                                     let output_rect = Rect {
                                         left: output.logical_pos.0,
                                         top: output.logical_pos.1,
@@ -1338,7 +1418,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                         img.rgba.clone(),
                                         OcrMapping {
                                             origin: (0.0, 0.0),
-                                            size: (img.rgba.width() as f32, img.rgba.height() as f32),
+                                            size: (
+                                                img.rgba.width() as f32,
+                                                img.rgba.height() as f32,
+                                            ),
                                             scale: 1.0,
                                             output_name: output_name.clone(),
                                         },
@@ -1346,25 +1429,32 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                         scale,
                                     )
                                 })
-                            })
+                        })
                     }
                     _ => None,
                 };
-                        
+
                 if let Some((mut cropped_img, mapping, selection_rect, scale)) = region_data {
                     // Apply redactions to the image before OCR
                     if !redactions.is_empty() {
-                        draw_redactions_on_image(&mut cropped_img, &redactions, &selection_rect, scale);
+                        draw_redactions_on_image(
+                            &mut cropped_img,
+                            &redactions,
+                            &selection_rect,
+                            scale,
+                        );
                     }
-                    
+
                     // Run OCR in background with status updates
                     return cosmic::Task::perform(
                         async move {
                             tokio::task::spawn_blocking(move || {
                                 run_ocr_on_image_with_status(&cropped_img, mapping)
-                            }).await.unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
+                            })
+                            .await
+                            .unwrap_or_else(|_| OcrStatus::Error("OCR task panicked".to_string()))
                         },
-                        |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status))
+                        |status| crate::app::Msg::Screenshot(Msg::OcrStatus(status)),
                     );
                 }
             }
@@ -1375,8 +1465,15 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 OcrStatus::Done(text, overlays) => {
                     log::info!("OCR Result: {} ({} overlays)", text, overlays.len());
                     for overlay in overlays.iter() {
-                        log::info!("  Overlay block {}: ({}, {}, {}x{}) on {}", 
-                            overlay.block_num, overlay.left, overlay.top, overlay.width, overlay.height, overlay.output_name);
+                        log::info!(
+                            "  Overlay block {}: ({}, {}, {}x{}) on {}",
+                            overlay.block_num,
+                            overlay.left,
+                            overlay.top,
+                            overlay.width,
+                            overlay.height,
+                            overlay.output_name
+                        );
                     }
                     if let Some(args) = app.screenshot_args.as_mut() {
                         args.ocr_status = status.clone();
@@ -1418,14 +1515,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 .iter()
                 .map(|o| destroy_layer_surface(o.id))
                 .collect();
-            
+
             if let Some(args) = app.screenshot_args.take() {
                 let Args { tx, ocr_text, .. } = args;
-                
+
                 if let Some(text) = ocr_text {
                     cmds.push(clipboard::write(text));
                 }
-                
+
                 tokio::spawn(async move {
                     if let Err(err) = tx.send(PortalResponse::Cancelled).await {
                         log::error!("Failed to send screenshot event");
@@ -1441,15 +1538,15 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 .iter()
                 .map(|o| destroy_layer_surface(o.id))
                 .collect();
-            
+
             if let Some(args) = app.screenshot_args.take() {
                 let Args { tx, qr_codes, .. } = args;
-                
+
                 // Copy first QR code content
                 if let Some(qr) = qr_codes.first() {
                     cmds.push(clipboard::write(qr.content.clone()));
                 }
-                
+
                 tokio::spawn(async move {
                     if let Err(err) = tx.send(PortalResponse::Cancelled).await {
                         log::error!("Failed to send screenshot event");
@@ -1478,23 +1575,23 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::ArrowStart(x, y) => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if args.arrow_mode {
-                    args.arrow_drawing = Some((x, y));
-                }
+            if let Some(args) = app.screenshot_args.as_mut()
+                && args.arrow_mode
+            {
+                args.arrow_drawing = Some((x, y));
             }
             cosmic::Task::none()
         }
         Msg::ArrowEnd(x, y) => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if let Some((start_x, start_y)) = args.arrow_drawing.take() {
-                    args.arrows.push(ArrowAnnotation {
-                        start_x,
-                        start_y,
-                        end_x: x,
-                        end_y: y,
-                    });
-                }
+            if let Some(args) = app.screenshot_args.as_mut()
+                && let Some((start_x, start_y)) = args.arrow_drawing.take()
+            {
+                args.arrows.push(ArrowAnnotation {
+                    start_x,
+                    start_y,
+                    end_x: x,
+                    end_y: y,
+                });
             }
             cosmic::Task::none()
         }
@@ -1524,23 +1621,23 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::RedactStart(x, y) => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if args.redact_mode {
-                    args.redact_drawing = Some((x, y));
-                }
+            if let Some(args) = app.screenshot_args.as_mut()
+                && args.redact_mode
+            {
+                args.redact_drawing = Some((x, y));
             }
             cosmic::Task::none()
         }
         Msg::RedactEnd(x, y) => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if let Some((start_x, start_y)) = args.redact_drawing.take() {
-                    args.redactions.push(RedactAnnotation {
-                        x: start_x,
-                        y: start_y,
-                        x2: x,
-                        y2: y,
-                    });
-                }
+            if let Some(args) = app.screenshot_args.as_mut()
+                && let Some((start_x, start_y)) = args.redact_drawing.take()
+            {
+                args.redactions.push(RedactAnnotation {
+                    x: start_x,
+                    y: start_y,
+                    x2: x,
+                    y2: y,
+                });
             }
             cosmic::Task::none()
         }
@@ -1571,13 +1668,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::OpenUrl(url) => {
             // Open URL using xdg-open and close the screenshot tool
             log::info!("Opening URL: {}", url);
-            if let Err(e) = std::process::Command::new("xdg-open")
-                .arg(&url)
-                .spawn()
-            {
+            if let Err(e) = std::process::Command::new("xdg-open").arg(&url).spawn() {
                 log::error!("Failed to open URL: {}", e);
             }
-            
+
             // Close the screenshot tool
             let cmds = app.outputs.iter().map(|o| destroy_layer_surface(o.id));
             let Some(args) = app.screenshot_args.take() else {
@@ -1590,7 +1684,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     log::error!("Failed to send screenshot event");
                 }
             });
-            
+
             cosmic::Task::batch(cmds)
         }
     }

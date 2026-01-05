@@ -1,13 +1,13 @@
-use crate::{screenshot, DBUS_NAME, DBUS_PATH};
+use crate::{DBUS_NAME, DBUS_PATH, screenshot};
 use cosmic::Task;
 use cosmic::iced_core::event::wayland::OutputEvent;
 use cosmic::{
-    app, 
+    app,
     iced::window,
     iced_futures::{Subscription, event::listen_with},
 };
-use std::any::TypeId;
 use futures::SinkExt;
+use std::any::TypeId;
 use wayland_client::protocol::wl_output::WlOutput;
 
 pub(crate) fn run() -> cosmic::iced::Result {
@@ -39,6 +39,7 @@ pub struct OutputState {
     pub bg_source: Option<cosmic_bg_config::Source>,
 }
 
+#[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Msg {
     Screenshot(screenshot::Msg),
@@ -92,7 +93,9 @@ impl cosmic::Application for App {
         if self.outputs.iter().any(|o| o.id == id) {
             screenshot::view(self, id).map(Msg::Screenshot)
         } else {
-            cosmic::widget::horizontal_space().width(cosmic::iced_core::Length::Fixed(1.0)).into()
+            cosmic::widget::horizontal_space()
+                .width(cosmic::iced_core::Length::Fixed(1.0))
+                .into()
         }
     }
 
@@ -191,13 +194,10 @@ impl cosmic::Application for App {
             portal_subscription(self.wayland_helper.clone()).map(Msg::Portal),
             listen_with(|e, _, _| match e {
                 cosmic::iced_core::Event::PlatformSpecific(
-                    cosmic::iced_core::event::PlatformSpecific::Wayland(w_e),
-                ) => match w_e {
-                    cosmic::iced_core::event::wayland::Event::Output(o_event, wl_output) => {
-                        Some(Msg::Output(o_event, wl_output))
-                    }
-                    _ => None,
-                },
+                    cosmic::iced_core::event::PlatformSpecific::Wayland(
+                        cosmic::iced_core::event::wayland::Event::Output(o_event, wl_output),
+                    ),
+                ) => Some(Msg::Output(o_event, wl_output)),
                 _ => None,
             }),
         ];
@@ -207,7 +207,10 @@ impl cosmic::Application for App {
 
 pub enum SubscriptionState {
     Init,
-    Waiting(zbus::Connection, tokio::sync::mpsc::Receiver<screenshot::Event>),
+    Waiting(
+        zbus::Connection,
+        tokio::sync::mpsc::Receiver<screenshot::Event>,
+    ),
 }
 
 pub(crate) fn portal_subscription(

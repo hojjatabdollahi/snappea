@@ -17,8 +17,8 @@ use cosmic::{
     widget::{self, Widget},
 };
 
-use crate::screenshot::Rect;
 use super::magnifier::draw_magnifier;
+use crate::screenshot::Rect;
 
 pub const MIME: &str = "X-BLAZINGSHOT-MyData";
 pub struct MyData;
@@ -100,6 +100,7 @@ pub struct RectangleSelection<'a, Msg> {
 }
 
 impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         output_rect: Rect,
         rectangle_selection: Rect,

@@ -66,27 +66,42 @@ pub fn draw_arrows_on_image(
         let shaft_end_y = end_y - ny * head_size;
 
         // Draw shaft as filled quadrilateral (rotated rectangle) - split into 2 triangles
-        fill_triangle(img, 
-            start_x + px, start_y + py,
-            start_x - px, start_y - py,
-            shaft_end_x - px, shaft_end_y - py,
-            arrow_color);
-        fill_triangle(img,
-            start_x + px, start_y + py,
-            shaft_end_x - px, shaft_end_y - py,
-            shaft_end_x + px, shaft_end_y + py,
-            arrow_color);
+        fill_triangle(
+            img,
+            start_x + px,
+            start_y + py,
+            start_x - px,
+            start_y - py,
+            shaft_end_x - px,
+            shaft_end_y - py,
+            arrow_color,
+        );
+        fill_triangle(
+            img,
+            start_x + px,
+            start_y + py,
+            shaft_end_x - px,
+            shaft_end_y - py,
+            shaft_end_x + px,
+            shaft_end_y + py,
+            arrow_color,
+        );
 
         // Draw arrowhead as filled triangle
         let head_width = head_size * 0.5;
         let hpx = -ny * head_width;
         let hpy = nx * head_width;
 
-        fill_triangle(img,
-            shaft_end_x + hpx, shaft_end_y + hpy,
-            shaft_end_x - hpx, shaft_end_y - hpy,
-            end_x, end_y,
-            arrow_color);
+        fill_triangle(
+            img,
+            shaft_end_x + hpx,
+            shaft_end_y + hpy,
+            shaft_end_x - hpx,
+            shaft_end_y - hpy,
+            end_x,
+            end_y,
+            arrow_color,
+        );
     }
 }
 
@@ -128,9 +143,19 @@ pub fn draw_redactions_on_image(
 }
 
 /// Fill a triangle using edge function rasterization
-fn fill_triangle(img: &mut RgbaImage, x0: f32, y0: f32, x1: f32, y1: f32, x2: f32, y2: f32, color: image::Rgba<u8>) {
+#[allow(clippy::too_many_arguments)]
+fn fill_triangle(
+    img: &mut RgbaImage,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    x2: f32,
+    y2: f32,
+    color: image::Rgba<u8>,
+) {
     let (w, h) = (img.width() as i32, img.height() as i32);
-    
+
     // Bounding box (no padding needed - we only fill inside pixels)
     let min_x = (x0.min(x1).min(x2).floor() as i32).max(0);
     let max_x = (x0.max(x1).max(x2).ceil() as i32).min(w - 1);

@@ -13,16 +13,17 @@ use cosmic::{
         color::pack,
         mesh::{Indexed, Renderer as MeshRenderer, SolidVertex2D},
     },
-    widget::{
-        Row, button, horizontal_space, image, layer_container,
-    },
+    widget::{Row, button, horizontal_space, image, layer_container},
 };
 use cosmic_bg_config::Source;
 use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::{
     app::OutputState,
-    screenshot::{ArrowAnnotation, RedactAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, ScreenshotImage, ToolbarPosition},
+    screenshot::{
+        ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, RedactAnnotation,
+        ScreenshotImage, ToolbarPosition,
+    },
 };
 
 use super::{
@@ -53,12 +54,17 @@ impl SelectedImageWidget {
             toplevel_images
                 .get(&output_name)
                 .and_then(|imgs| imgs.get(window_index))
-                .map(|img| (Some(img.handle.clone()), (img.rgba.width(), img.rgba.height())))
+                .map(|img| {
+                    (
+                        Some(img.handle.clone()),
+                        (img.rgba.width(), img.rgba.height()),
+                    )
+                })
                 .unwrap_or((None, (0, 0)))
         } else {
             (None, (0, 0))
         };
-        
+
         Self {
             image_handle,
             image_size,
@@ -66,23 +72,26 @@ impl SelectedImageWidget {
     }
 
     /// Calculate the bounds where the image should be drawn (centered in the output)
-    pub fn image_bounds(&self, layout_bounds: cosmic::iced_core::Rectangle) -> cosmic::iced_core::Rectangle {
+    pub fn image_bounds(
+        &self,
+        layout_bounds: cosmic::iced_core::Rectangle,
+    ) -> cosmic::iced_core::Rectangle {
         if self.image_handle.is_some() && self.image_size.0 > 0 {
             let img_width = self.image_size.0 as f32;
             let img_height = self.image_size.1 as f32;
-            
+
             // Leave small margin around the image
             let available_width = layout_bounds.width - 20.0;
             let available_height = layout_bounds.height - 20.0;
-            
+
             // Calculate scale to fit image within available space
             let scale_x = available_width / img_width;
             let scale_y = available_height / img_height;
             let scale = scale_x.min(scale_y).min(1.0); // Don't upscale
-            
+
             let display_width = img_width * scale;
             let display_height = img_height * scale;
-            
+
             cosmic::iced_core::Rectangle {
                 x: layout_bounds.x + (layout_bounds.width - display_width) / 2.0,
                 y: layout_bounds.y + (layout_bounds.height - display_height) / 2.0,
@@ -95,12 +104,19 @@ impl SelectedImageWidget {
     }
 }
 
-impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer> for SelectedImageWidget {
+impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
+    for SelectedImageWidget
+{
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
     }
 
-    fn layout(&self, _tree: &mut Tree, _renderer: &cosmic::Renderer, limits: &cosmic::iced::Limits) -> layout::Node {
+    fn layout(
+        &self,
+        _tree: &mut Tree,
+        _renderer: &cosmic::Renderer,
+        limits: &cosmic::iced::Limits,
+    ) -> layout::Node {
         let limits = limits.width(Length::Fill).height(Length::Fill);
         layout::Node::new(limits.resolve(Length::Fill, Length::Fill, Size::ZERO))
     }
@@ -116,11 +132,11 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
         _viewport: &cosmic::iced_core::Rectangle,
     ) {
         use cosmic::iced_core::Renderer as _;
-        
+
         let cosmic_theme = theme.cosmic();
         let layout_bounds = layout.bounds();
         let image_bounds = self.image_bounds(layout_bounds);
-        
+
         // Draw the image
         if let Some(ref handle) = self.image_handle {
             cosmic::iced_core::image::Renderer::draw_image(
@@ -133,10 +149,10 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 [0.0, 0.0, 0.0, 0.0],
             );
         }
-        
+
         // Draw border around the image
         let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
-        
+
         // Semi-transparent glow
         let mut glow_color = accent;
         glow_color.a = 0.5;
@@ -157,7 +173,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
             },
             Background::Color(cosmic::iced::Color::TRANSPARENT),
         );
-        
+
         // Solid accent border
         renderer.fill_quad(
             cosmic::iced_core::renderer::Quad {
@@ -171,14 +187,17 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
             },
             Background::Color(cosmic::iced::Color::TRANSPARENT),
         );
-        
+
         // Corner handles
         let corner_size = 12.0;
         let corners = [
             (image_bounds.x, image_bounds.y),
             (image_bounds.x + image_bounds.width, image_bounds.y),
             (image_bounds.x, image_bounds.y + image_bounds.height),
-            (image_bounds.x + image_bounds.width, image_bounds.y + image_bounds.height),
+            (
+                image_bounds.x + image_bounds.width,
+                image_bounds.y + image_bounds.height,
+            ),
         ];
         for (cx, cy) in corners {
             renderer.fill_quad(
@@ -265,6 +284,7 @@ impl<'a, Msg> ScreenshotSelection<'a, Msg>
 where
     Msg: 'static + Clone,
 {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         choice: Choice,
         image: &'a ScreenshotImage,
@@ -319,7 +339,7 @@ where
         let on_choice_change_clone = on_choice_change.clone();
         // Calculate scale factor (physical pixels per logical pixel)
         let image_scale = image.rgba.width() as f32 / output.logical_size.0 as f32;
-        
+
         let fg_element = match choice {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -376,12 +396,8 @@ where
             }
             Choice::Window(ref win_output, Some(win_index)) => {
                 // Selected window mode - show the window image with border (buttons are in toolbar)
-                SelectedImageWidget::new(
-                    win_output.clone(),
-                    Some(win_index),
-                    toplevel_images,
-                )
-                .into()
+                SelectedImageWidget::new(win_output.clone(), Some(win_index), toplevel_images)
+                    .into()
             }
         };
 
@@ -445,21 +461,25 @@ where
                 .into(),
             },
         };
-        
+
         // Build QR overlay - only show when not actively dragging a rectangle
         let show_qr_overlays = match choice {
             Choice::Rectangle(_, DragState::None) => true,
             Choice::Rectangle(_, _) => false, // Hide when dragging
             _ => true,
         };
-        
+
         // Filter and prepare QR codes for this output
         let qr_codes_for_output: Vec<(f32, f32, String)> = qr_codes
             .iter()
             .filter(|qr| qr.output_name == output.name)
             .map(|qr| (qr.center_x, qr.center_y, qr.content.clone()))
             .collect();
-        log::debug!("Widget received {} OCR overlays, filtering for output '{}'", ocr_overlays.len(), output.name);
+        log::debug!(
+            "Widget received {} OCR overlays, filtering for output '{}'",
+            ocr_overlays.len(),
+            output.name
+        );
         let ocr_overlays_for_output: Vec<(f32, f32, f32, f32, i32)> = ocr_overlays
             .iter()
             .filter(|o| {
@@ -469,8 +489,11 @@ where
             })
             .map(|o| (o.left, o.top, o.width, o.height, o.block_num))
             .collect();
-        log::debug!("After filtering: {} OCR overlays for this output", ocr_overlays_for_output.len());
-        
+        log::debug!(
+            "After filtering: {} OCR overlays for this output",
+            ocr_overlays_for_output.len()
+        );
+
         // Calculate selection rectangle relative to this output
         let selection_rect = match &choice {
             Choice::Rectangle(r, _) => {
@@ -490,24 +513,27 @@ where
             }
             Choice::Window(win_output, Some(win_idx)) => {
                 // For selected window mode, calculate where the window image will be drawn (centered)
-                if let Some(img) = toplevel_images.get(win_output).and_then(|imgs| imgs.get(*win_idx)) {
+                if let Some(img) = toplevel_images
+                    .get(win_output)
+                    .and_then(|imgs| imgs.get(*win_idx))
+                {
                     let img_width = img.rgba.width() as f32;
                     let img_height = img.rgba.height() as f32;
                     let output_width = output.logical_size.0 as f32;
                     let output_height = output.logical_size.1 as f32;
-                    
+
                     // Match the centering logic in SelectedImageWidget::image_bounds (20px margin)
                     let available_width = output_width - 20.0;
                     let available_height = output_height - 20.0;
                     let scale_x = available_width / img_width;
                     let scale_y = available_height / img_height;
                     let scale = scale_x.min(scale_y).min(1.0);
-                    
+
                     let display_width = img_width * scale;
                     let display_height = img_height * scale;
                     let x = (output_width - display_width) / 2.0;
                     let y = (output_height - display_height) / 2.0;
-                    
+
                     Some((x, y, display_width, display_height))
                 } else {
                     None
@@ -515,11 +541,16 @@ where
             }
             Choice::Output(_) => {
                 // For output mode, the entire output is the selection area
-                Some((0.0, 0.0, output.logical_size.0 as f32, output.logical_size.1 as f32))
+                Some((
+                    0.0,
+                    0.0,
+                    output.logical_size.0 as f32,
+                    output.logical_size.1 as f32,
+                ))
             }
             _ => None,
         };
-        
+
         Self {
             id: cosmic::widget::Id::unique(),
             choices: Vec::new(),
@@ -541,7 +572,7 @@ where
                     Choice::Output(_) => true,
                     _ => false,
                 };
-                
+
                 build_toolbar(
                     choice.clone(),
                     output.name.clone(),
@@ -645,54 +676,58 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         viewport: &cosmic::iced_core::Rectangle,
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
-        
+
         // FIRST: Handle clicks on QR code URL open buttons (before child widgets)
-        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event {
-            if let Some(pos) = cursor.position() {
-                if matches!(mouse_event, MouseEvent::ButtonPressed(Button::Left)) {
-                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        let button_size = 28.0_f32;
-                        let padding = 8.0;
-                        
-                        for (x, y, content) in &self.qr_codes {
-                            if !is_url(content) {
-                                continue;
-                            }
-                            
-                            let font_size = 14.0_f32;
-                            let button_space = button_size + padding;
-                            let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
-                            
-                            let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
-                            let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
-                            let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
-                            
-                            let bg_width = max_label_width + padding * 2.0 + button_space;
-                            let bg_height = text_height.max(button_size) + padding * 2.0;
-                            
-                            let mut label_x = *x - bg_width / 2.0;
-                            let mut label_y = *y - bg_height / 2.0;
-                            
-                            label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
-                            label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
-                            
-                            let button_x = label_x + bg_width - padding - button_size;
-                            let button_y = label_y + (bg_height - button_size) / 2.0;
-                            
-                            // Check if click is inside button bounds
-                            if pos.x >= button_x && pos.x <= button_x + button_size &&
-                               pos.y >= button_y && pos.y <= button_y + button_size {
-                                if let Some(ref on_open_url) = self.on_open_url {
-                                    shell.publish(on_open_url(content.clone()));
-                                    return cosmic::iced_core::event::Status::Captured;
-                                }
-                            }
-                        }
-                    }
+        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event
+            && let Some(pos) = cursor.position()
+            && matches!(mouse_event, MouseEvent::ButtonPressed(Button::Left))
+            && let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect
+        {
+            let button_size = 28.0_f32;
+            let padding = 8.0;
+
+            for (x, y, content) in &self.qr_codes {
+                if !is_url(content) {
+                    continue;
+                }
+
+                let font_size = 14.0_f32;
+                let button_space = button_size + padding;
+                let max_label_width = (sel_w - padding * 4.0 - button_space).clamp(80.0, 400.0);
+
+                let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
+                let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
+                let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
+
+                let bg_width = max_label_width + padding * 2.0 + button_space;
+                let bg_height = text_height.max(button_size) + padding * 2.0;
+
+                let mut label_x = *x - bg_width / 2.0;
+                let mut label_y = *y - bg_height / 2.0;
+
+                label_x = label_x
+                    .max(sel_x + padding)
+                    .min(sel_x + sel_w - bg_width - padding);
+                label_y = label_y
+                    .max(sel_y + padding)
+                    .min(sel_y + sel_h - bg_height - padding);
+
+                let button_x = label_x + bg_width - padding - button_size;
+                let button_y = label_y + (bg_height - button_size) / 2.0;
+
+                // Check if click is inside button bounds
+                if pos.x >= button_x
+                    && pos.x <= button_x + button_size
+                    && pos.y >= button_y
+                    && pos.y <= button_y + button_size
+                    && let Some(ref on_open_url) = self.on_open_url
+                {
+                    shell.publish(on_open_url(content.clone()));
+                    return cosmic::iced_core::event::Status::Captured;
                 }
             }
         }
-        
+
         // Let child widgets handle the event (this includes toolbar buttons)
         let children = [
             &mut self.bg_element,
@@ -727,78 +762,84 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 return status;
             }
         }
-        
+
         // If child widgets didn't capture the event, handle arrow events
-        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event {
-            if let Some(pos) = cursor.position() {
-                // Handle arrow drawing mode - press to start, release to end
-                if self.arrow_mode {
-                    // Check if position is inside selection rectangle
-                    let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        pos.x >= sel_x && pos.x <= sel_x + sel_w &&
-                        pos.y >= sel_y && pos.y <= sel_y + sel_h
+        if let cosmic::iced_core::Event::Mouse(mouse_event) = &event
+            && let Some(pos) = cursor.position()
+        {
+            // Handle arrow drawing mode - press to start, release to end
+            if self.arrow_mode {
+                // Check if position is inside selection rectangle
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x
+                            && pos.x <= sel_x + sel_w
+                            && pos.y >= sel_y
+                            && pos.y <= sel_y + sel_h
                     } else {
                         false
                     };
-                    
-                    match mouse_event {
-                        MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
-                            // Start a new arrow on press
-                            let global_x = pos.x + self.output_rect.left as f32;
-                            let global_y = pos.y + self.output_rect.top as f32;
-                            if let Some(ref on_arrow_start) = self.on_arrow_start {
-                                shell.publish(on_arrow_start(global_x, global_y));
-                            }
-                            return cosmic::iced_core::event::Status::Captured;
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                        // Start a new arrow on press
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_arrow_start) = self.on_arrow_start {
+                            shell.publish(on_arrow_start(global_x, global_y));
                         }
-                        MouseEvent::ButtonReleased(Button::Left) if self.arrow_drawing.is_some() => {
-                            // Finish the arrow on release
-                            let global_x = pos.x + self.output_rect.left as f32;
-                            let global_y = pos.y + self.output_rect.top as f32;
-                            if let Some(ref on_arrow_end) = self.on_arrow_end {
-                                shell.publish(on_arrow_end(global_x, global_y));
-                            }
-                            return cosmic::iced_core::event::Status::Captured;
-                        }
-                        _ => {}
+                        return cosmic::iced_core::event::Status::Captured;
                     }
+                    MouseEvent::ButtonReleased(Button::Left) if self.arrow_drawing.is_some() => {
+                        // Finish the arrow on release
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_arrow_end) = self.on_arrow_end {
+                            shell.publish(on_arrow_end(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    _ => {}
                 }
-                
-                // Handle redact drawing mode - press to start, release to end
-                if self.redact_mode {
-                    // Check if position is inside selection rectangle
-                    let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        pos.x >= sel_x && pos.x <= sel_x + sel_w &&
-                        pos.y >= sel_y && pos.y <= sel_y + sel_h
+            }
+
+            // Handle redact drawing mode - press to start, release to end
+            if self.redact_mode {
+                // Check if position is inside selection rectangle
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x
+                            && pos.x <= sel_x + sel_w
+                            && pos.y >= sel_y
+                            && pos.y <= sel_y + sel_h
                     } else {
                         false
                     };
-                    
-                    match mouse_event {
-                        MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
-                            // Start a new redaction on press
-                            let global_x = pos.x + self.output_rect.left as f32;
-                            let global_y = pos.y + self.output_rect.top as f32;
-                            if let Some(ref on_redact_start) = self.on_redact_start {
-                                shell.publish(on_redact_start(global_x, global_y));
-                            }
-                            return cosmic::iced_core::event::Status::Captured;
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                        // Start a new redaction on press
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_redact_start) = self.on_redact_start {
+                            shell.publish(on_redact_start(global_x, global_y));
                         }
-                        MouseEvent::ButtonReleased(Button::Left) if self.redact_drawing.is_some() => {
-                            // Finish the redaction on release
-                            let global_x = pos.x + self.output_rect.left as f32;
-                            let global_y = pos.y + self.output_rect.top as f32;
-                            if let Some(ref on_redact_end) = self.on_redact_end {
-                                shell.publish(on_redact_end(global_x, global_y));
-                            }
-                            return cosmic::iced_core::event::Status::Captured;
-                        }
-                        _ => {}
+                        return cosmic::iced_core::event::Status::Captured;
                     }
+                    MouseEvent::ButtonReleased(Button::Left) if self.redact_drawing.is_some() => {
+                        // Finish the redaction on release
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_redact_end) = self.on_redact_end {
+                            shell.publish(on_redact_end(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    _ => {}
                 }
             }
         }
-        
+
         status
     }
 
@@ -811,44 +852,51 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         renderer: &cosmic::Renderer,
     ) -> cosmic::iced_core::mouse::Interaction {
         // Check if hovering over a QR URL button
-        if let Some(pos) = cursor.position() {
-            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                let button_size = 28.0_f32;
-                let padding = 8.0;
-                
-                for (x, y, content) in &self.qr_codes {
-                    if !is_url(content) {
-                        continue;
-                    }
-                    
-                    let font_size = 14.0_f32;
-                    let button_space = button_size + padding;
-                    let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
-                    
-                    let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
-                    let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
-                    let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
-                    
-                    let bg_width = max_label_width + padding * 2.0 + button_space;
-                    let bg_height = text_height.max(button_size) + padding * 2.0;
-                    
-                    let mut label_x = *x - bg_width / 2.0;
-                    let mut label_y = *y - bg_height / 2.0;
-                    
-                    label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
-                    label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
-                    
-                    let button_x = label_x + bg_width - padding - button_size;
-                    let button_y = label_y + (bg_height - button_size) / 2.0;
-                    
-                    if pos.x >= button_x && pos.x <= button_x + button_size &&
-                       pos.y >= button_y && pos.y <= button_y + button_size {
-                        return cosmic::iced_core::mouse::Interaction::Pointer;
-                    }
+        if let Some(pos) = cursor.position()
+            && let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect
+        {
+            let button_size = 28.0_f32;
+            let padding = 8.0;
+
+            for (x, y, content) in &self.qr_codes {
+                if !is_url(content) {
+                    continue;
+                }
+
+                let font_size = 14.0_f32;
+                let button_space = button_size + padding;
+                let max_label_width = (sel_w - padding * 4.0 - button_space).clamp(80.0, 400.0);
+
+                let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
+                let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6);
+                let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
+
+                let bg_width = max_label_width + padding * 2.0 + button_space;
+                let bg_height = text_height.max(button_size) + padding * 2.0;
+
+                let mut label_x = *x - bg_width / 2.0;
+                let mut label_y = *y - bg_height / 2.0;
+
+                label_x = label_x
+                    .max(sel_x + padding)
+                    .min(sel_x + sel_w - bg_width - padding);
+                label_y = label_y
+                    .max(sel_y + padding)
+                    .min(sel_y + sel_h - bg_height - padding);
+
+                let button_x = label_x + bg_width - padding - button_size;
+                let button_y = label_y + (bg_height - button_size) / 2.0;
+
+                if pos.x >= button_x
+                    && pos.x <= button_x + button_size
+                    && pos.y >= button_y
+                    && pos.y <= button_y + button_size
+                {
+                    return cosmic::iced_core::mouse::Interaction::Pointer;
                 }
             }
         }
-        
+
         let children = [&self.bg_element, &self.fg_element, &self.menu_element];
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
@@ -922,7 +970,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 .layout(&mut children[2], renderer, limits);
         let menu_bounds = menu_node.bounds();
         let margin = 32.0_f32;
-        
+
         // Position menu based on toolbar_position
         let menu_pos = match self.toolbar_position {
             ToolbarPosition::Bottom => Point {
@@ -962,10 +1010,10 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     ) {
         use cosmic::iced_core::Renderer;
         use cosmic::iced_core::text::{Renderer as TextRenderer, Text};
-        
+
         let children = &[&self.bg_element, &self.fg_element, &self.menu_element];
         let mut children_iter = layout.children().zip(children).enumerate();
-        
+
         // Draw bg_element first (screenshot background)
         {
             let (i, (layout, child)) = children_iter.next().unwrap();
@@ -1001,26 +1049,26 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             if length < 5.0 {
                 return None;
             }
-            
+
             // Normalize direction
             let nx = dx / length;
             let ny = dy / length;
-            
+
             // Perpendicular vector for thickness
             let px = -ny * thickness / 2.0;
             let py = nx * thickness / 2.0;
-            
+
             // Shaft end (before arrowhead)
             let shaft_end_x = end_x - nx * head_size;
             let shaft_end_y = end_y - ny * head_size;
-            
+
             // Pack color
             let packed_color = pack(color);
-            
+
             // Vertices for the shaft (4 corners of rotated rectangle)
             // and arrowhead (3 points of triangle)
             let mut vertices = Vec::with_capacity(7);
-            
+
             // Shaft vertices (0-3)
             vertices.push(SolidVertex2D {
                 position: [start_x + px, start_y + py],
@@ -1038,13 +1086,13 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 position: [shaft_end_x + px, shaft_end_y + py],
                 color: packed_color,
             });
-            
+
             // Arrowhead vertices (4-6)
             // Base of arrowhead (wider than shaft)
             let head_width = head_size * 0.5;
             let hpx = -ny * head_width;
             let hpy = nx * head_width;
-            
+
             vertices.push(SolidVertex2D {
                 position: [shaft_end_x + hpx, shaft_end_y + hpy],
                 color: packed_color,
@@ -1057,38 +1105,38 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 position: [end_x, end_y], // Tip of arrow
                 color: packed_color,
             });
-            
+
             // Indices: 2 triangles for shaft, 1 triangle for head
             let indices = vec![
                 0, 1, 2, // First triangle of shaft
                 0, 2, 3, // Second triangle of shaft
                 4, 5, 6, // Arrowhead triangle
             ];
-            
+
             Some((vertices, indices))
         }
-        
+
         // Draw redactions (black rectangles)
         let redact_color = cosmic::iced::Color::BLACK;
-        
+
         for redact in &self.redactions {
             // Convert global coordinates to widget-local
             let x1 = redact.x - self.output_rect.left as f32;
             let y1 = redact.y - self.output_rect.top as f32;
             let x2 = redact.x2 - self.output_rect.left as f32;
             let y2 = redact.y2 - self.output_rect.top as f32;
-            
+
             // Normalize (ensure min < max)
             let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
             let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-            
+
             let rect = cosmic::iced_core::Rectangle {
                 x: min_x,
                 y: min_y,
                 width: max_x - min_x,
                 height: max_y - min_y,
             };
-            
+
             renderer.with_layer(*viewport, |renderer| {
                 renderer.fill_quad(
                     cosmic::iced_core::renderer::Quad {
@@ -1100,59 +1148,64 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 );
             });
         }
-        
+
         // Draw redaction preview (currently being drawn)
-        if let Some((start_x, start_y)) = self.redact_drawing {
-            if let Some(cursor_pos) = cursor.position() {
-                let x1 = start_x - self.output_rect.left as f32;
-                let y1 = start_y - self.output_rect.top as f32;
-                let x2 = cursor_pos.x;
-                let y2 = cursor_pos.y;
-                
-                let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-                let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-                
-                let rect = cosmic::iced_core::Rectangle {
-                    x: min_x,
-                    y: min_y,
-                    width: max_x - min_x,
-                    height: max_y - min_y,
-                };
-                
-                let preview_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7);
-                
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.fill_quad(
-                        cosmic::iced_core::renderer::Quad {
-                            bounds: rect,
-                            border: Border {
-                                radius: 0.0.into(),
-                                width: 2.0,
-                                color: cosmic::iced::Color::WHITE,
-                            },
-                            shadow: cosmic::iced_core::Shadow::default(),
+        if let Some((start_x, start_y)) = self.redact_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let x1 = start_x - self.output_rect.left as f32;
+            let y1 = start_y - self.output_rect.top as f32;
+            let x2 = cursor_pos.x;
+            let y2 = cursor_pos.y;
+
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+            let rect = cosmic::iced_core::Rectangle {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+            };
+
+            let preview_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7);
+
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: rect,
+                        border: Border {
+                            radius: 0.0.into(),
+                            width: 2.0,
+                            color: cosmic::iced::Color::WHITE,
                         },
-                        Background::Color(preview_color),
-                    );
-                });
-            }
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(preview_color),
+                );
+            });
         }
-        
+
         // Draw arrows on top of the selection using meshes
         let arrow_color = cosmic::iced::Color::from_rgb(0.9, 0.1, 0.1); // Red
         let arrow_thickness = 4.0_f32;
         let head_size = 16.0_f32;
-        
+
         for arrow in &self.arrows {
             // Convert global coordinates to widget-local
             let start_x = arrow.start_x - self.output_rect.left as f32;
             let start_y = arrow.start_y - self.output_rect.top as f32;
             let end_x = arrow.end_x - self.output_rect.left as f32;
             let end_y = arrow.end_y - self.output_rect.top as f32;
-            
+
             if let Some((vertices, indices)) = build_arrow_mesh(
-                start_x, start_y, end_x, end_y,
-                arrow_color, arrow_thickness, head_size,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                arrow_color,
+                arrow_thickness,
+                head_size,
             ) {
                 renderer.with_layer(*viewport, |renderer| {
                     renderer.draw_mesh(Mesh::Solid {
@@ -1163,29 +1216,34 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 });
             }
         }
-        
+
         // Draw arrow currently being drawn (preview)
-        if let Some((start_x, start_y)) = self.arrow_drawing {
-            if let Some(cursor_pos) = cursor.position() {
-                let local_start_x = start_x - self.output_rect.left as f32;
-                let local_start_y = start_y - self.output_rect.top as f32;
-                let end_x = cursor_pos.x;
-                let end_y = cursor_pos.y;
-                
-                let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
-                
-                if let Some((vertices, indices)) = build_arrow_mesh(
-                    local_start_x, local_start_y, end_x, end_y,
-                    preview_color, arrow_thickness, head_size,
-                ) {
-                    renderer.with_layer(*viewport, |renderer| {
-                        renderer.draw_mesh(Mesh::Solid {
-                            buffers: Indexed { vertices, indices },
-                            transformation: cosmic::iced_core::Transformation::IDENTITY,
-                            clip_bounds: *viewport,
-                        });
+        if let Some((start_x, start_y)) = self.arrow_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let local_start_x = start_x - self.output_rect.left as f32;
+            let local_start_y = start_y - self.output_rect.top as f32;
+            let end_x = cursor_pos.x;
+            let end_y = cursor_pos.y;
+
+            let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+
+            if let Some((vertices, indices)) = build_arrow_mesh(
+                local_start_x,
+                local_start_y,
+                end_x,
+                end_y,
+                preview_color,
+                arrow_thickness,
+                head_size,
+            ) {
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_mesh(Mesh::Solid {
+                        buffers: Indexed { vertices, indices },
+                        transformation: cosmic::iced_core::Transformation::IDENTITY,
+                        clip_bounds: *viewport,
                     });
-                }
+                });
             }
         }
 
@@ -1203,17 +1261,17 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 let text_height = font_size * 1.4;
                 let padding_h = 16.0;
                 let padding_v = 10.0;
-                
+
                 let bg_width = text_width + padding_h * 2.0;
                 let bg_height = text_height + padding_v * 2.0;
-                
+
                 let bg_rect = cosmic::iced_core::Rectangle {
                     x: 20.0,
                     y: 20.0,
                     width: bg_width,
                     height: bg_height,
                 };
-                
+
                 renderer.with_layer(*viewport, |renderer| {
                     renderer.fill_quad(
                         cosmic::iced_core::renderer::Quad {
@@ -1227,7 +1285,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         },
                         Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
                     );
-                    
+
                     let text = Text {
                         content: scanning_text.to_string(),
                         bounds: Size::new(bg_width, bg_height),
@@ -1239,7 +1297,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         shaping: cosmic::iced_core::text::Shaping::Advanced,
                         wrapping: cosmic::iced_core::text::Wrapping::None,
                     };
-                    
+
                     renderer.fill_text(
                         text,
                         Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
@@ -1248,44 +1306,52 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     );
                 });
             }
-            
+
             // Draw detected QR codes - constrained to selection rectangle
             if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
                 let button_size = 28.0_f32;
-                
+
                 for (x, y, content) in &self.qr_codes {
                     let font_size = 14.0_f32;
                     let padding = 8.0;
                     let content_is_url = is_url(content);
-                    
+
                     // Calculate max label width based on selection rectangle
                     // Reserve space for button if it's a URL
-                    let button_space = if content_is_url { button_size + padding } else { 0.0 };
-                    let max_label_width = (sel_w - padding * 4.0 - button_space).max(80.0).min(400.0);
-                    
+                    let button_space = if content_is_url {
+                        button_size + padding
+                    } else {
+                        0.0
+                    };
+                    let max_label_width = (sel_w - padding * 4.0 - button_space).clamp(80.0, 400.0);
+
                     // Estimate number of lines for wrapped text
                     let chars_per_line = (max_label_width / (font_size * 0.55)).max(10.0) as usize;
                     let num_lines = ((content.len() / chars_per_line).max(1) + 1).min(6); // Cap at 6 lines
                     let text_height = (num_lines as f32 * font_size * 1.3).min(sel_h * 0.6);
-                    
+
                     let bg_width = max_label_width + padding * 2.0 + button_space;
                     let bg_height = text_height.max(button_size) + padding * 2.0;
-                    
+
                     // Position centered on QR location, but clamp to selection bounds
                     let mut label_x = *x - bg_width / 2.0;
                     let mut label_y = *y - bg_height / 2.0;
-                    
+
                     // Clamp to selection rectangle
-                    label_x = label_x.max(sel_x + padding).min(sel_x + sel_w - bg_width - padding);
-                    label_y = label_y.max(sel_y + padding).min(sel_y + sel_h - bg_height - padding);
-                    
+                    label_x = label_x
+                        .max(sel_x + padding)
+                        .min(sel_x + sel_w - bg_width - padding);
+                    label_y = label_y
+                        .max(sel_y + padding)
+                        .min(sel_y + sel_h - bg_height - padding);
+
                     let bg_rect = cosmic::iced_core::Rectangle {
                         x: label_x,
                         y: label_y,
                         width: bg_width,
                         height: bg_height,
                     };
-                    
+
                     // Draw in a layer to ensure proper rendering
                     renderer.with_layer(*viewport, |renderer| {
                         // Draw background with 80% opacity
@@ -1301,7 +1367,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             },
                             Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
                         );
-                        
+
                         // Draw text with word wrapping
                         let text = Text {
                             content: content.clone(),
@@ -1314,26 +1380,26 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             shaping: cosmic::iced_core::text::Shaping::Advanced,
                             wrapping: cosmic::iced_core::text::Wrapping::Word,
                         };
-                        
+
                         renderer.fill_text(
                             text,
                             Point::new(bg_rect.x + padding, bg_rect.y + padding),
                             cosmic::iced::Color::WHITE,
                             *viewport,
                         );
-                        
+
                         // Draw "open URL" button if content is a URL
                         if content_is_url {
                             let button_x = bg_rect.x + bg_width - padding - button_size;
                             let button_y = bg_rect.y + (bg_height - button_size) / 2.0;
-                            
+
                             let button_rect = cosmic::iced_core::Rectangle {
                                 x: button_x,
                                 y: button_y,
                                 width: button_size,
                                 height: button_size,
                             };
-                            
+
                             // Draw button background
                             renderer.fill_quad(
                                 cosmic::iced_core::renderer::Quad {
@@ -1347,7 +1413,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                                 },
                                 Background::Color(accent_color),
                             );
-                            
+
                             // Draw a simple arrow/external link icon (→)
                             let icon_text = Text {
                                 content: "🔗".to_string(),
@@ -1360,10 +1426,13 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                                 shaping: cosmic::iced_core::text::Shaping::Advanced,
                                 wrapping: cosmic::iced_core::text::Wrapping::None,
                             };
-                            
+
                             renderer.fill_text(
                                 icon_text,
-                                Point::new(button_x + button_size / 2.0, button_y + button_size / 2.0),
+                                Point::new(
+                                    button_x + button_size / 2.0,
+                                    button_y + button_size / 2.0,
+                                ),
                                 cosmic::iced::Color::WHITE,
                                 *viewport,
                             );
@@ -1374,41 +1443,51 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
 
         // Show OCR status indicator (only when downloading, running, or error - not when done or idle)
-        let show_ocr_status = matches!(&self.ocr_status, OcrStatus::DownloadingModels | OcrStatus::Running | OcrStatus::Error(_));
+        let show_ocr_status = matches!(
+            &self.ocr_status,
+            OcrStatus::DownloadingModels | OcrStatus::Running | OcrStatus::Error(_)
+        );
         if show_ocr_status {
             let status_text = match &self.ocr_status {
                 OcrStatus::DownloadingModels => "Downloading OCR models...".to_string(),
                 OcrStatus::Running => "Running OCR...".to_string(),
-                OcrStatus::Error(err) => format!("OCR error: {}", if err.len() > 40 { format!("{}...", &err[..37]) } else { err.clone() }),
+                OcrStatus::Error(err) => format!(
+                    "OCR error: {}",
+                    if err.len() > 40 {
+                        format!("{}...", &err[..37])
+                    } else {
+                        err.clone()
+                    }
+                ),
                 _ => unreachable!(),
             };
-            
+
             let font_size = 16.0_f32;
             let char_width = font_size * 0.55;
             let text_width = status_text.len() as f32 * char_width;
             let text_height = font_size * 1.4;
             let padding_h = 16.0;
             let padding_v = 10.0;
-            
+
             let bg_width = text_width + padding_h * 2.0;
             let bg_height = text_height + padding_v * 2.0;
-            
+
             // Position below QR scanning indicator if it's showing
             let y_offset = if self.qr_scanning { 60.0 } else { 20.0 };
-            
+
             let bg_rect = cosmic::iced_core::Rectangle {
                 x: 20.0,
                 y: y_offset,
                 width: bg_width,
                 height: bg_height,
             };
-            
+
             // Choose border color based on status
             let border_color = match &self.ocr_status {
                 OcrStatus::Error(_) => cosmic::iced::Color::from_rgb(0.9, 0.2, 0.2), // Red
                 _ => accent_color, // Accent for in-progress
             };
-            
+
             renderer.with_layer(*viewport, |renderer| {
                 renderer.fill_quad(
                     cosmic::iced_core::renderer::Quad {
@@ -1422,7 +1501,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     },
                     Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.85)),
                 );
-                
+
                 let text = Text {
                     content: status_text,
                     bounds: Size::new(bg_width, bg_height),
@@ -1434,7 +1513,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     shaping: cosmic::iced_core::text::Shaping::Advanced,
                     wrapping: cosmic::iced_core::text::Wrapping::None,
                 };
-                
+
                 renderer.fill_text(
                     text,
                     Point::new(bg_rect.x + bg_width / 2.0, bg_rect.y + bg_height / 2.0),
@@ -1448,27 +1527,27 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if self.show_qr_overlays {
             // Color palette for different block numbers
             let block_colors = [
-                cosmic::iced::Color::from_rgb(0.2, 0.6, 0.9),  // Blue
-                cosmic::iced::Color::from_rgb(0.9, 0.3, 0.3),  // Red
-                cosmic::iced::Color::from_rgb(0.3, 0.8, 0.3),  // Green
-                cosmic::iced::Color::from_rgb(0.9, 0.6, 0.2),  // Orange
-                cosmic::iced::Color::from_rgb(0.7, 0.3, 0.9),  // Purple
-                cosmic::iced::Color::from_rgb(0.2, 0.8, 0.8),  // Cyan
-                cosmic::iced::Color::from_rgb(0.9, 0.9, 0.2),  // Yellow
-                cosmic::iced::Color::from_rgb(0.9, 0.4, 0.7),  // Pink
+                cosmic::iced::Color::from_rgb(0.2, 0.6, 0.9), // Blue
+                cosmic::iced::Color::from_rgb(0.9, 0.3, 0.3), // Red
+                cosmic::iced::Color::from_rgb(0.3, 0.8, 0.3), // Green
+                cosmic::iced::Color::from_rgb(0.9, 0.6, 0.2), // Orange
+                cosmic::iced::Color::from_rgb(0.7, 0.3, 0.9), // Purple
+                cosmic::iced::Color::from_rgb(0.2, 0.8, 0.8), // Cyan
+                cosmic::iced::Color::from_rgb(0.9, 0.9, 0.2), // Yellow
+                cosmic::iced::Color::from_rgb(0.9, 0.4, 0.7), // Pink
             ];
-            
+
             for (left, top, width, height, block_num) in &self.ocr_overlays {
                 let color_idx = (*block_num as usize) % block_colors.len();
                 let border_color = block_colors[color_idx];
-                
+
                 let rect = cosmic::iced_core::Rectangle {
                     x: *left,
                     y: *top,
                     width: *width,
                     height: *height,
                 };
-                
+
                 renderer.with_layer(*viewport, |renderer| {
                     renderer.fill_quad(
                         cosmic::iced_core::renderer::Quad {
@@ -1489,7 +1568,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         // Menu bar hidden - using radial menu instead (right-click)
         // Consume the iterator to avoid unused variable warning
         let _ = children_iter;
-        
+
         // Draw menu_element (bottom toolbar)
         if let Some((i, (layout, child))) = children_iter.next() {
             renderer.with_layer(layout.bounds(), |renderer| {
