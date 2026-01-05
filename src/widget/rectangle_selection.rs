@@ -96,6 +96,8 @@ pub struct RectangleSelection<'a, Msg> {
     arrow_mode: bool,
     /// Whether redact drawing mode is active (skip rectangle capturing)
     redact_mode: bool,
+    /// Whether magnifier is enabled
+    magnifier_enabled: bool,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -112,6 +114,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         image_scale: f32,
         arrow_mode: bool,
         redact_mode: bool,
+        magnifier_enabled: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -125,6 +128,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             image_scale,
             arrow_mode,
             redact_mode,
+            magnifier_enabled,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -657,8 +661,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             renderer.fill_quad(quad, accent);
         }
 
-        // Draw magnifier when dragging a corner or initially drawing
-        if self.drag_state != DragState::None {
+        // Draw magnifier when dragging a corner or initially drawing (if enabled)
+        if self.magnifier_enabled && self.drag_state != DragState::None {
             // Get the position of the corner being dragged (in global coords from rectangle_selection)
             let drag_corner = match self.drag_state {
                 DragState::NW => {

@@ -24,6 +24,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use zbus::zvariant;
 
 use crate::app::{App, OutputState};
+use crate::config::BlazingshotConfig;
 use crate::wayland::{CaptureSource, ShmImage, WaylandHelper};
 use crate::widget::{keyboard_wrapper::KeyboardWrapper, rectangle_selection::DragState};
 use crate::{PortalResponse, fl};
@@ -404,6 +405,8 @@ pub enum Msg {
     CopyToClipboard,                        // capture and copy to clipboard
     SaveToPictures,                         // capture and save to Pictures folder
     OpenUrl(String),                        // open URL in browser using xdg-open
+    ToggleSettingsDrawer,                   // toggle settings drawer visibility
+    ToggleMagnifier,                        // toggle magnifier on/off
 }
 
 #[derive(Debug, Clone)]
@@ -456,6 +459,10 @@ pub struct Args {
     pub redact_drawing: Option<(f32, f32)>,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
+    /// Whether settings drawer is open
+    pub settings_drawer_open: bool,
+    /// Whether magnifier is enabled (persisted setting)
+    pub magnifier_enabled: bool,
 }
 
 struct Output {
@@ -526,6 +533,9 @@ impl Screenshot {
 
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
+        // Load persisted config for settings
+        let config = BlazingshotConfig::load();
+
         // Send UI immediately with empty QR codes, detection happens async
         if let Err(err) = self
             .tx
@@ -556,6 +566,8 @@ impl Screenshot {
                 redact_mode: false,
                 redact_drawing: None,
                 toolbar_position: ToolbarPosition::default(),
+                settings_drawer_open: false,
+                magnifier_enabled: config.magnifier_enabled,
             }))
             .await
         {
@@ -638,6 +650,10 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.toolbar_position,
             Msg::ToolbarPositionChange,
             Msg::OpenUrl,
+            args.settings_drawer_open,
+            args.magnifier_enabled,
+            Msg::ToggleSettingsDrawer,
+            Msg::ToggleMagnifier,
         ),
         |key| match key {
             Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
@@ -1687,6 +1703,23 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
 
             cosmic::Task::batch(cmds)
         }
+        Msg::ToggleSettingsDrawer => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.settings_drawer_open = !args.settings_drawer_open;
+            }
+            cosmic::Task::none()
+        }
+        Msg::ToggleMagnifier => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.magnifier_enabled = !args.magnifier_enabled;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
     }
 }
 
@@ -1714,6 +1747,8 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         redact_mode: _,
         redact_drawing: _,
         toolbar_position: _,
+        settings_drawer_open: _,
+        magnifier_enabled: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

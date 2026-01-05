@@ -5,3 +5,4 @@ pub mod rectangle_selection;
 pub mod screenshot;
 pub mod toolbar;
 pub mod toolbar_position_selector;
+pub mod settings_drawer;

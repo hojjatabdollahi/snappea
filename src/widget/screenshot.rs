@@ -29,6 +29,7 @@ use crate::{
 use super::{
     output_selection::OutputSelection,
     rectangle_selection::{DragState, RectangleSelection},
+    settings_drawer::build_settings_drawer,
 };
 
 use super::toolbar::build_toolbar;
@@ -278,6 +279,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_toolbar_position: Option<Box<dyn Fn(ToolbarPosition) -> Msg + 'a>>,
     /// Callback for opening URLs from QR codes
     pub on_open_url: Option<Box<dyn Fn(String) -> Msg + 'a>>,
+    /// Whether settings drawer is open
+    pub settings_drawer_open: bool,
+    /// Whether magnifier is enabled
+    pub magnifier_enabled: bool,
+    /// Callback for toggling settings drawer
+    pub on_settings_toggle: Option<Msg>,
+    /// Callback for toggling magnifier
+    pub on_magnifier_toggle: Option<Msg>,
+    /// Settings drawer element (only present when drawer is open)
+    pub settings_drawer_element: Option<Element<'a, Msg>>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -323,6 +334,10 @@ where
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
         on_open_url: impl Fn(String) -> Msg + 'a,
+        settings_drawer_open: bool,
+        magnifier_enabled: bool,
+        on_settings_toggle: Msg,
+        on_magnifier_toggle: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -352,6 +367,7 @@ where
                 image_scale,
                 arrow_mode,
                 redact_mode,
+                magnifier_enabled,
             )
             .into(),
             Choice::Output(_) => {
@@ -596,6 +612,8 @@ where
                     on_qr_copy.clone(),
                     on_cancel,
                     &on_toolbar_position,
+                    on_settings_toggle.clone(),
+                    settings_drawer_open,
                 )
             },
             choice,
@@ -616,6 +634,21 @@ where
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
             on_open_url: Some(Box::new(on_open_url)),
+            settings_drawer_open,
+            magnifier_enabled,
+            on_settings_toggle: Some(on_settings_toggle),
+            on_magnifier_toggle: Some(on_magnifier_toggle.clone()),
+            settings_drawer_element: if settings_drawer_open {
+                Some(build_settings_drawer(
+                    toolbar_position,
+                    magnifier_enabled,
+                    on_magnifier_toggle,
+                    space_s,
+                    space_xs,
+                ))
+            } else {
+                None
+            },
         }
     }
 }
@@ -624,19 +657,27 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     for ScreenshotSelection<'a, Msg>
 {
     fn children(&self) -> Vec<cosmic::iced_core::widget::Tree> {
-        vec![
+        let mut children = vec![
             Tree::new(&self.bg_element),
             Tree::new(&self.fg_element),
             Tree::new(&self.menu_element),
-        ]
+        ];
+        if let Some(ref drawer) = self.settings_drawer_element {
+            children.push(Tree::new(drawer));
+        }
+        children
     }
 
     fn diff(&mut self, tree: &mut cosmic::iced_core::widget::Tree) {
-        tree.diff_children(&mut [
+        let mut elements: Vec<&mut Element<'_, Msg>> = vec![
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
-        ]);
+        ];
+        if let Some(ref mut drawer) = self.settings_drawer_element {
+            elements.push(drawer);
+        }
+        tree.diff_children(&mut elements);
     }
 
     fn overlay<'b>(
@@ -646,20 +687,25 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         renderer: &cosmic::Renderer,
         translation: iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
-        let children = [
+        let mut elements: Vec<&mut Element<'_, Msg>> = vec![
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
-        ]
-        .into_iter()
-        .zip(&mut state.children)
-        .zip(layout.children())
-        .filter_map(|((child, state), layout)| {
-            child
-                .as_widget_mut()
-                .overlay(state, layout, renderer, translation)
-        })
-        .collect::<Vec<_>>();
+        ];
+        if let Some(ref mut drawer) = self.settings_drawer_element {
+            elements.push(drawer);
+        }
+
+        let children = elements
+            .into_iter()
+            .zip(&mut state.children)
+            .zip(layout.children())
+            .filter_map(|((child, state), layout)| {
+                child
+                    .as_widget_mut()
+                    .overlay(state, layout, renderer, translation)
+            })
+            .collect::<Vec<_>>();
 
         (!children.is_empty()).then(|| overlay::Group::with_children(children).overlay())
     }
@@ -677,7 +723,33 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
-        // FIRST: Handle clicks on QR code URL open buttons (before child widgets)
+        // FIRST: Handle click-outside-to-close for settings drawer
+        // This must run before child widgets process the event
+        if self.settings_drawer_open
+            && let cosmic::iced_core::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) = &event
+            && let Some(pos) = cursor.position()
+        {
+            // Get the layout children to find drawer bounds
+            let layout_children: Vec<_> = layout.children().collect();
+
+            // Check if click is inside the drawer (if it exists, it's the 4th child)
+            let inside_drawer = if layout_children.len() > 3 {
+                let drawer_bounds = layout_children[3].bounds();
+                drawer_bounds.contains(pos)
+            } else {
+                false
+            };
+
+            // If clicked outside the drawer, close it
+            if !inside_drawer {
+                if let Some(ref on_settings_toggle) = self.on_settings_toggle {
+                    shell.publish(on_settings_toggle.clone());
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+        }
+
+        // Handle clicks on QR code URL open buttons (before child widgets)
         if let cosmic::iced_core::Event::Mouse(mouse_event) = &event
             && let Some(pos) = cursor.position()
             && matches!(mouse_event, MouseEvent::ButtonPressed(Button::Left))
@@ -728,12 +800,15 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
-        // Let child widgets handle the event (this includes toolbar buttons)
-        let children = [
+        // Let child widgets handle the event (this includes toolbar buttons and drawer)
+        let mut children: Vec<&mut Element<'_, Msg>> = vec![
             &mut self.bg_element,
             &mut self.fg_element,
             &mut self.menu_element,
         ];
+        if let Some(ref mut drawer) = self.settings_drawer_element {
+            children.push(drawer);
+        }
 
         let layout_children = layout.children().collect::<Vec<_>>();
         let mut status = cosmic::iced_core::event::Status::Ignored;
@@ -897,7 +972,10 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
-        let children = [&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        if let Some(ref drawer) = self.settings_drawer_element {
+            children.push(drawer);
+        }
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
             .into_iter()
@@ -924,7 +1002,10 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         operation: &mut dyn cosmic::widget::Operation<()>,
     ) {
         let layout = layout.children().collect::<Vec<_>>();
-        let children = [&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        if let Some(ref drawer) = self.settings_drawer_element {
+            children.push(drawer);
+        }
         for (i, (layout, child)) in layout
             .into_iter()
             .zip(children.into_iter())
@@ -992,9 +1073,72 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         };
         menu_node = menu_node.move_to(menu_pos);
 
+        let mut nodes = vec![bg_node, fg_node, menu_node.clone()];
+
+        // Layout settings drawer if present
+        if let Some(ref drawer) = self.settings_drawer_element {
+            let mut drawer_node = drawer.as_widget().layout(&mut children[3], renderer, limits);
+            let drawer_bounds = drawer_node.bounds();
+            let drawer_margin = 8.0_f32;
+
+            // The settings button is second-to-last in the toolbar
+            // We need to calculate its position relative to the toolbar
+            // For horizontal toolbars: button is near the right edge
+            // For vertical toolbars: button is near the bottom
+
+            // Calculate settings button center position
+            // The settings button is about 40px wide, positioned before the close button
+            let button_offset = 40.0 + 8.0; // button width + half spacing
+
+            let drawer_pos = match self.toolbar_position {
+                ToolbarPosition::Bottom => {
+                    // Drawer opens above the toolbar, centered on settings button
+                    let settings_btn_x = menu_pos.x + menu_bounds.width - button_offset - 20.0;
+                    Point {
+                        x: (settings_btn_x - drawer_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - drawer_bounds.width - margin),
+                        y: menu_pos.y - drawer_bounds.height - drawer_margin,
+                    }
+                }
+                ToolbarPosition::Top => {
+                    // Drawer opens below the toolbar
+                    let settings_btn_x = menu_pos.x + menu_bounds.width - button_offset - 20.0;
+                    Point {
+                        x: (settings_btn_x - drawer_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - drawer_bounds.width - margin),
+                        y: menu_pos.y + menu_bounds.height + drawer_margin,
+                    }
+                }
+                ToolbarPosition::Left => {
+                    // Drawer opens to the right of the toolbar
+                    let settings_btn_y = menu_pos.y + menu_bounds.height - button_offset - 20.0;
+                    Point {
+                        x: menu_pos.x + menu_bounds.width + drawer_margin,
+                        y: (settings_btn_y - drawer_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - drawer_bounds.height - margin),
+                    }
+                }
+                ToolbarPosition::Right => {
+                    // Drawer opens to the left of the toolbar
+                    let settings_btn_y = menu_pos.y + menu_bounds.height - button_offset - 20.0;
+                    Point {
+                        x: menu_pos.x - drawer_bounds.width - drawer_margin,
+                        y: (settings_btn_y - drawer_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - drawer_bounds.height - margin),
+                    }
+                }
+            };
+            drawer_node = drawer_node.move_to(drawer_pos);
+            nodes.push(drawer_node);
+        }
+
         layout::Node::with_children(
             limits.resolve(Length::Fill, Length::Fill, Size::ZERO),
-            vec![bg_node, fg_node, menu_node],
+            nodes,
         )
     }
 
@@ -1578,6 +1722,27 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     .draw(tree, renderer, theme, style, layout, cursor, viewport);
             });
         }
+
+        // Draw settings drawer if present
+        if let Some(ref drawer) = self.settings_drawer_element {
+            // Get the drawer layout (4th child)
+            let layout_children: Vec<_> = layout.children().collect();
+            if layout_children.len() > 3 {
+                let drawer_layout = layout_children[3];
+                renderer.with_layer(drawer_layout.bounds(), |renderer| {
+                    let drawer_tree = &tree.children[3];
+                    drawer.as_widget().draw(
+                        drawer_tree,
+                        renderer,
+                        theme,
+                        style,
+                        drawer_layout,
+                        cursor,
+                        viewport,
+                    );
+                });
+            }
+        }
     }
 
     fn drag_destinations(
@@ -1587,7 +1752,10 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         renderer: &cosmic::Renderer,
         dnd_rectangles: &mut cosmic::iced_core::clipboard::DndDestinationRectangles,
     ) {
-        let children = &[&self.bg_element, &self.fg_element, &self.menu_element];
+        let mut children: Vec<&Element<'_, Msg>> = vec![&self.bg_element, &self.fg_element, &self.menu_element];
+        if let Some(ref drawer) = self.settings_drawer_element {
+            children.push(drawer);
+        }
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {
             let state = &state.children[i];
             child

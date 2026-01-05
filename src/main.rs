@@ -4,6 +4,7 @@ use zbus::zvariant;
 mod app;
 mod arrow;
 mod buffer;
+mod config;
 mod localize;
 mod ocr;
 mod qr;

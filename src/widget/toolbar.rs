@@ -14,9 +14,12 @@ use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
 
 /// A wrapper widget that reduces opacity when not hovered
 /// Draws a background with opacity and passes through all events
+/// Used by both toolbar and settings drawer for consistent appearance
 pub struct HoverOpacity<'a, Msg> {
     content: Element<'a, Msg>,
     unhovered_opacity: f32,
+    /// When true, always use full opacity (ignores hover state)
+    force_opaque: bool,
 }
 
 impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
@@ -24,7 +27,14 @@ impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
         Self {
             content: content.into(),
             unhovered_opacity: 0.5,
+            force_opaque: false,
         }
+    }
+
+    /// Force full opacity regardless of hover state
+    pub fn force_opaque(mut self, force: bool) -> Self {
+        self.force_opaque = force;
+        self
     }
 }
 
@@ -71,7 +81,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             .position()
             .map(|p| bounds.contains(p))
             .unwrap_or(false);
-        let opacity = if is_hovered {
+        let opacity = if self.force_opaque || is_hovered {
             1.0
         } else {
             self.unhovered_opacity
@@ -208,6 +218,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_qr_copy: Msg,
     on_cancel: Msg,
     on_toolbar_position: &(impl Fn(ToolbarPosition) -> Msg + 'a),
+    on_settings_toggle: Msg,
+    settings_drawer_open: bool,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
 
@@ -415,6 +427,24 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         )
     };
 
+    // Settings button
+    let btn_settings = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("application-menu-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(if settings_drawer_open {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_settings_toggle)
+        .padding(space_xs),
+        "Settings",
+        tooltip::Position::Bottom,
+    );
+
     let btn_close = tooltip(
         button::custom(
             icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
@@ -451,7 +481,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                btn_close,
+                column![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
             ]
             .align_x(cosmic::iced_core::Alignment::Center)
             .spacing(space_s)
@@ -465,7 +497,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                btn_close,
+                column![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
             ]
             .align_x(cosmic::iced_core::Alignment::Center)
             .spacing(space_s)
@@ -490,7 +524,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                btn_close,
+                row![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
             ]
             .align_y(cosmic::iced_core::Alignment::Center)
             .spacing(space_s)
@@ -504,7 +540,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                btn_close,
+                row![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
             ]
             .align_y(cosmic::iced_core::Alignment::Center)
             .spacing(space_s)
@@ -526,5 +564,5 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })),
     );
 
-    HoverOpacity::new(toolbar).into()
+    HoverOpacity::new(toolbar).force_opaque(settings_drawer_open).into()
 }
