@@ -814,9 +814,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     {
                         let mut final_img = img.rgba.clone();
                         
-                        // Draw arrows if any
-                        // Arrows are stored in output-relative coords where the window was displayed centered
-                        if !arrows.is_empty() {
+                        // Draw arrows/redactions if any
+                        // They are stored in output-relative coords where the window was displayed centered
+                        if !arrows.is_empty() || !redactions.is_empty() {
                             // Find the output to calculate where the window was displayed
                             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
                                 let img_width = final_img.width() as f32;
@@ -1302,12 +1302,17 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     };
                                     let img_scale = 1.0 / display_scale;
                                     
+                                    // OCR origin is where the window is displayed on the output (in output-relative coords)
+                                    // OCR scale is display_scale (pixels per logical unit in the displayed image)
+                                    // The image is the original, so OCR sees original pixels, but mapping needs display coords
+                                    let ocr_scale = img.rgba.width() as f32 / display_width;
+                                    
                                     (
                                         img.rgba.clone(),
                                         OcrMapping {
-                                            origin: (0.0, 0.0),
-                                            size: (img.rgba.width() as f32, img.rgba.height() as f32),
-                                            scale: 1.0,
+                                            origin: (sel_x, sel_y),
+                                            size: (display_width, display_height),
+                                            scale: ocr_scale,
                                             output_name: output_name.clone(),
                                         },
                                         window_rect,
