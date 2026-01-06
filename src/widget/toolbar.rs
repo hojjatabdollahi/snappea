@@ -239,7 +239,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             on_toolbar_position(ToolbarPosition::Left),
             on_toolbar_position(ToolbarPosition::Right),
         ),
-        "Move Toolbar",
+        "Move Toolbar (Ctrl+hjkl)",
         tooltip::Position::Bottom,
     )
     .into();

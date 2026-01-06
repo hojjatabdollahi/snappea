@@ -742,6 +742,31 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             let in_screen_picker = matches!(&args.choice, Choice::Output(_));
 
             move |key, modifiers| match key {
+                // Ctrl+hjkl or Ctrl+arrows: move toolbar position
+                Key::Character(c) if c.as_str() == "h" && modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Left))
+                }
+                Key::Character(c) if c.as_str() == "j" && modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Bottom))
+                }
+                Key::Character(c) if c.as_str() == "k" && modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Top))
+                }
+                Key::Character(c) if c.as_str() == "l" && modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Right))
+                }
+                Key::Named(Named::ArrowLeft) if modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Left))
+                }
+                Key::Named(Named::ArrowDown) if modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Bottom))
+                }
+                Key::Named(Named::ArrowUp) if modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Top))
+                }
+                Key::Named(Named::ArrowRight) if modifiers.control() => {
+                    Some(Msg::ToolbarPositionChange(ToolbarPosition::Right))
+                }
                 // Save/copy shortcuts (always available - empty selection captures all screens)
                 Key::Named(Named::Enter) if modifiers.control() => Some(Msg::SaveToPictures),
                 Key::Named(Named::Enter) if !in_window_picker => Some(Msg::CopyToClipboard),
@@ -749,12 +774,12 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 // Space to confirm selection in picker mode, or Enter in window picker
                 Key::Named(Named::Space) if in_window_picker => Some(Msg::ConfirmSelection),
                 Key::Named(Named::Enter) if in_window_picker => Some(Msg::ConfirmSelection),
-                // Navigation keys - h/l and left/right for screens, j/k and up/down for windows
-                Key::Character(c) if c.as_str() == "h" && (in_window_picker || in_screen_picker) => {
-                    Some(Msg::NavigateLeft)
+                // Navigation keys in window picker: hjkl and arrows all navigate windows
+                Key::Character(c) if c.as_str() == "h" && in_window_picker => {
+                    Some(Msg::NavigateUp)
                 }
-                Key::Character(c) if c.as_str() == "l" && (in_window_picker || in_screen_picker) => {
-                    Some(Msg::NavigateRight)
+                Key::Character(c) if c.as_str() == "l" && in_window_picker => {
+                    Some(Msg::NavigateDown)
                 }
                 Key::Character(c) if c.as_str() == "j" && in_window_picker => {
                     Some(Msg::NavigateDown)
@@ -762,14 +787,19 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 Key::Character(c) if c.as_str() == "k" && in_window_picker => {
                     Some(Msg::NavigateUp)
                 }
-                Key::Named(Named::ArrowLeft) if in_window_picker || in_screen_picker => {
+                // Navigation keys in screen picker: h/l and arrows navigate screens
+                Key::Character(c) if c.as_str() == "h" && in_screen_picker => {
                     Some(Msg::NavigateLeft)
                 }
-                Key::Named(Named::ArrowRight) if in_window_picker || in_screen_picker => {
+                Key::Character(c) if c.as_str() == "l" && in_screen_picker => {
                     Some(Msg::NavigateRight)
                 }
+                Key::Named(Named::ArrowLeft) if in_window_picker => Some(Msg::NavigateUp),
+                Key::Named(Named::ArrowRight) if in_window_picker => Some(Msg::NavigateDown),
                 Key::Named(Named::ArrowUp) if in_window_picker => Some(Msg::NavigateUp),
                 Key::Named(Named::ArrowDown) if in_window_picker => Some(Msg::NavigateDown),
+                Key::Named(Named::ArrowLeft) if in_screen_picker => Some(Msg::NavigateLeft),
+                Key::Named(Named::ArrowRight) if in_screen_picker => Some(Msg::NavigateRight),
                 // Mode toggle shortcuts (require selection)
                 Key::Character(c) if c.as_str() == "a" && has_selection => {
                     Some(Msg::ArrowModeToggle)
