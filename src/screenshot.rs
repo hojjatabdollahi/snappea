@@ -866,7 +866,8 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             };
             let arrow_mode = args.arrow_mode;
             let redact_mode = args.redact_mode;
-            let output_index = i;
+            // current_output_index is the screen where this keyboard event is received
+            let current_output_index = i;
             // Check if we're in a mode that supports navigation
             let in_window_picker = matches!(&args.choice, Choice::Window(_, None));
             let in_screen_picker = matches!(&args.choice, Choice::Output(_));
@@ -981,14 +982,15 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                     Some(Msg::QrRequested)
                 }
                 // Selection mode shortcuts (always available, but not when in draw mode)
+                // Use current_output_index (the screen where this key was pressed)
                 Key::Character(c) if c.as_str() == "r" && !arrow_mode && !redact_mode => {
                     Some(Msg::SelectRegionMode)
                 }
                 Key::Character(c) if c.as_str() == "w" && !arrow_mode && !redact_mode => {
-                    Some(Msg::SelectWindowMode(output_index))
+                    Some(Msg::SelectWindowMode(current_output_index))
                 }
                 Key::Character(c) if c.as_str() == "s" && !arrow_mode && !redact_mode => {
-                    Some(Msg::SelectScreenMode(output_index))
+                    Some(Msg::SelectScreenMode(current_output_index))
                 }
                 _ => None,
             }
@@ -3047,25 +3049,68 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut() {
                 let output_count = app.outputs.len();
                 if output_count > 0 {
-                    // Move to previous screen
-                    args.focused_output_index = if args.focused_output_index == 0 {
-                        output_count - 1
-                    } else {
-                        args.focused_output_index - 1
-                    };
-                    // Reset window index for new output
-                    args.highlighted_window_index = 0;
-                    // Update choice to reflect new focused output
-                    if let Some(output) = app.outputs.get(args.focused_output_index) {
-                        match &args.choice {
-                            Choice::Window(_, None) => {
-                                args.choice = Choice::Window(output.name.clone(), None);
+                    match &args.choice {
+                        Choice::Window(_, None) => {
+                            // In window picker mode: navigate through windows across screens
+                            // Get current window count
+                            let current_window_count = app
+                                .outputs
+                                .get(args.focused_output_index)
+                                .and_then(|o| args.toplevel_images.get(&o.name))
+                                .map(|v| v.len())
+                                .unwrap_or(0);
+
+                            if args.highlighted_window_index > 0 {
+                                // Move to previous window on same screen
+                                args.highlighted_window_index -= 1;
+                            } else {
+                                // Move to previous screen and select its last window
+                                // Keep going left until we find a screen with windows or wrap around
+                                let start_index = args.focused_output_index;
+                                loop {
+                                    args.focused_output_index = if args.focused_output_index == 0 {
+                                        output_count - 1
+                                    } else {
+                                        args.focused_output_index - 1
+                                    };
+
+                                    let window_count = app
+                                        .outputs
+                                        .get(args.focused_output_index)
+                                        .and_then(|o| args.toplevel_images.get(&o.name))
+                                        .map(|v| v.len())
+                                        .unwrap_or(0);
+
+                                    if window_count > 0 {
+                                        // Found a screen with windows, select the last one
+                                        args.highlighted_window_index = window_count - 1;
+                                        if let Some(output) = app.outputs.get(args.focused_output_index) {
+                                            args.choice = Choice::Window(output.name.clone(), None);
+                                        }
+                                        break;
+                                    }
+
+                                    // If we've checked all screens and found none with windows,
+                                    // stay on current screen
+                                    if args.focused_output_index == start_index {
+                                        args.highlighted_window_index = 0;
+                                        break;
+                                    }
+                                }
                             }
-                            Choice::Output(_) => {
+                        }
+                        Choice::Output(_) => {
+                            // In screen picker mode: move to previous screen
+                            args.focused_output_index = if args.focused_output_index == 0 {
+                                output_count - 1
+                            } else {
+                                args.focused_output_index - 1
+                            };
+                            if let Some(output) = app.outputs.get(args.focused_output_index) {
                                 args.choice = Choice::Output(output.name.clone());
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
@@ -3075,66 +3120,74 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut() {
                 let output_count = app.outputs.len();
                 if output_count > 0 {
-                    // Move to next screen
-                    args.focused_output_index = (args.focused_output_index + 1) % output_count;
-                    // Reset window index for new output
-                    args.highlighted_window_index = 0;
-                    // Update choice to reflect new focused output
-                    if let Some(output) = app.outputs.get(args.focused_output_index) {
-                        match &args.choice {
-                            Choice::Window(_, None) => {
-                                args.choice = Choice::Window(output.name.clone(), None);
+                    match &args.choice {
+                        Choice::Window(_, None) => {
+                            // In window picker mode: navigate through windows across screens
+                            let current_window_count = app
+                                .outputs
+                                .get(args.focused_output_index)
+                                .and_then(|o| args.toplevel_images.get(&o.name))
+                                .map(|v| v.len())
+                                .unwrap_or(0);
+
+                            if current_window_count > 0
+                                && args.highlighted_window_index < current_window_count - 1
+                            {
+                                // Move to next window on same screen
+                                args.highlighted_window_index += 1;
+                            } else {
+                                // Move to next screen and select its first window
+                                // Keep going right until we find a screen with windows or wrap around
+                                let start_index = args.focused_output_index;
+                                loop {
+                                    args.focused_output_index =
+                                        (args.focused_output_index + 1) % output_count;
+
+                                    let window_count = app
+                                        .outputs
+                                        .get(args.focused_output_index)
+                                        .and_then(|o| args.toplevel_images.get(&o.name))
+                                        .map(|v| v.len())
+                                        .unwrap_or(0);
+
+                                    if window_count > 0 {
+                                        // Found a screen with windows, select the first one
+                                        args.highlighted_window_index = 0;
+                                        if let Some(output) = app.outputs.get(args.focused_output_index) {
+                                            args.choice = Choice::Window(output.name.clone(), None);
+                                        }
+                                        break;
+                                    }
+
+                                    // If we've checked all screens and found none with windows,
+                                    // stay on current screen
+                                    if args.focused_output_index == start_index {
+                                        args.highlighted_window_index = 0;
+                                        break;
+                                    }
+                                }
                             }
-                            Choice::Output(_) => {
+                        }
+                        Choice::Output(_) => {
+                            // In screen picker mode: move to next screen
+                            args.focused_output_index = (args.focused_output_index + 1) % output_count;
+                            if let Some(output) = app.outputs.get(args.focused_output_index) {
                                 args.choice = Choice::Output(output.name.clone());
                             }
-                            _ => {}
                         }
+                        _ => {}
                     }
                 }
             }
             cosmic::Task::none()
         }
         Msg::NavigateUp => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if let Choice::Window(_, None) = &args.choice {
-                    // Get window count for focused output
-                    if let Some(output) = app.outputs.get(args.focused_output_index) {
-                        let window_count = args
-                            .toplevel_images
-                            .get(&output.name)
-                            .map(|v| v.len())
-                            .unwrap_or(0);
-                        if window_count > 0 {
-                            args.highlighted_window_index = if args.highlighted_window_index == 0 {
-                                window_count - 1
-                            } else {
-                                args.highlighted_window_index - 1
-                            };
-                        }
-                    }
-                }
-            }
-            cosmic::Task::none()
+            // Same as NavigateLeft for window picker mode
+            update_msg(app, Msg::NavigateLeft)
         }
         Msg::NavigateDown => {
-            if let Some(args) = app.screenshot_args.as_mut() {
-                if let Choice::Window(_, None) = &args.choice {
-                    // Get window count for focused output
-                    if let Some(output) = app.outputs.get(args.focused_output_index) {
-                        let window_count = args
-                            .toplevel_images
-                            .get(&output.name)
-                            .map(|v| v.len())
-                            .unwrap_or(0);
-                        if window_count > 0 {
-                            args.highlighted_window_index =
-                                (args.highlighted_window_index + 1) % window_count;
-                        }
-                    }
-                }
-            }
-            cosmic::Task::none()
+            // Same as NavigateRight for window picker mode
+            update_msg(app, Msg::NavigateRight)
         }
         Msg::ConfirmSelection => {
             if let Some(args) = app.screenshot_args.as_mut() {
