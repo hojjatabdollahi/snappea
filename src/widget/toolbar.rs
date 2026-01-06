@@ -203,7 +203,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     has_ocr_text: bool,
     qr_codes: &[DetectedQrCode],
     arrow_mode: bool,
+    circle_mode: bool,
+    rect_outline_mode: bool,
     redact_mode: bool,
+    has_any_annotations: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
@@ -211,12 +214,15 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
     on_arrow_toggle: Msg,
+    on_circle_toggle: Msg,
+    on_rect_outline_toggle: Msg,
     on_redact_toggle: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
     on_qr_copy: Msg,
     on_cancel: Msg,
+    on_clear_annotations: Msg,
     on_toolbar_position: &(impl Fn(ToolbarPosition) -> Msg + 'a),
     on_settings_toggle: Msg,
     settings_drawer_open: bool,
@@ -369,6 +375,42 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
+    // Circle/ellipse outline button
+    let btn_circle = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("circle-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(if circle_mode {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press_maybe(has_selection.then_some(on_circle_toggle.clone()))
+        .padding(space_xs),
+        "Draw Circle (hold Ctrl for perfect circle)",
+        tooltip::Position::Bottom,
+    );
+
+    // Rectangle outline button
+    let btn_rect_outline = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("square-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(if rect_outline_mode {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press_maybe(has_selection.then_some(on_rect_outline_toggle.clone()))
+        .padding(space_xs),
+        "Draw Rectangle (hold Ctrl for square)",
+        tooltip::Position::Bottom,
+    );
+
     // Redact drawing button
     let btn_redact = tooltip(
         button::custom(
@@ -384,6 +426,19 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .on_press_maybe(has_selection.then_some(on_redact_toggle.clone()))
         .padding(space_xs),
         "Redact (D)",
+        tooltip::Position::Bottom,
+    );
+
+    let btn_clear = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press_maybe(has_any_annotations.then_some(on_clear_annotations.clone()))
+        .padding(space_xs),
+        "Clear Annotations",
         tooltip::Position::Bottom,
     );
 
@@ -492,7 +547,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_arrow, btn_redact, btn_ocr, btn_qr]
+                column![btn_arrow, btn_circle, btn_rect_outline, btn_redact, btn_clear, btn_ocr, btn_qr]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -539,7 +594,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_arrow, btn_redact, btn_ocr, btn_qr]
+                row![btn_arrow, btn_circle, btn_rect_outline, btn_redact, btn_clear, btn_ocr, btn_qr]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),

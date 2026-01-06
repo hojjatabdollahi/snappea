@@ -21,8 +21,8 @@ use wayland_client::protocol::wl_output::WlOutput;
 use crate::{
     app::OutputState,
     screenshot::{
-        ArrowAnnotation, Choice, DetectedQrCode, OcrStatus, OcrTextOverlay, Rect, RedactAnnotation,
-        ScreenshotImage, ToolbarPosition,
+        ArrowAnnotation, Choice, CircleOutlineAnnotation, DetectedQrCode, OcrStatus, OcrTextOverlay,
+        Rect, RectOutlineAnnotation, RedactAnnotation, ScreenshotImage, ToolbarPosition,
     },
 };
 
@@ -367,6 +367,26 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_arrow_toggle: Option<Msg>,
     pub on_arrow_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     pub on_arrow_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Circle/ellipse outline annotations (no fill)
+    pub circles: Vec<CircleOutlineAnnotation>,
+    /// Whether circle/ellipse mode is active
+    pub circle_mode: bool,
+    /// Circle/ellipse currently being drawn (start point)
+    pub circle_drawing: Option<(f32, f32)>,
+    /// Callbacks for circle mode
+    pub on_circle_toggle: Option<Msg>,
+    pub on_circle_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    pub on_circle_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Rectangle outline annotations (no fill)
+    pub rect_outlines: Vec<RectOutlineAnnotation>,
+    /// Whether rectangle outline mode is active
+    pub rect_outline_mode: bool,
+    /// Rectangle outline currently being drawn (start point)
+    pub rect_outline_drawing: Option<(f32, f32)>,
+    /// Callbacks for rectangle outline mode
+    pub on_rect_outline_toggle: Option<Msg>,
+    pub on_rect_outline_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    pub on_rect_outline_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     /// Redaction annotations
     pub redactions: Vec<RedactAnnotation>,
     /// Whether redact mode is active
@@ -377,6 +397,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_redact_toggle: Option<Msg>,
     pub on_redact_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     pub on_redact_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Callback for clearing all annotations
+    pub on_clear_annotations: Option<Msg>,
     /// Toolbar position
     pub toolbar_position: ToolbarPosition,
     /// Callback for toolbar position change
@@ -403,6 +425,21 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_copy_on_save_toggle: Option<Msg>,
     /// Settings drawer element (only present when drawer is open)
     pub settings_drawer_element: Option<Element<'a, Msg>>,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct InputState {
+    ctrl_down: bool,
+    ctrl_latched: bool,
+}
+
+impl InputState {
+    fn update_modifiers(&mut self, ctrl_down: bool, drawing_active: bool) {
+        self.ctrl_down = ctrl_down;
+        if drawing_active && ctrl_down {
+            self.ctrl_latched = true;
+        }
+    }
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -439,12 +476,25 @@ where
         on_arrow_toggle: Msg,
         on_arrow_start: impl Fn(f32, f32) -> Msg + 'a,
         on_arrow_end: impl Fn(f32, f32) -> Msg + 'a,
+        circles: &[CircleOutlineAnnotation],
+        circle_mode: bool,
+        circle_drawing: Option<(f32, f32)>,
+        on_circle_toggle: Msg,
+        on_circle_start: impl Fn(f32, f32) -> Msg + 'a,
+        on_circle_end: impl Fn(f32, f32) -> Msg + 'a,
+        rect_outlines: &[RectOutlineAnnotation],
+        rect_outline_mode: bool,
+        rect_outline_drawing: Option<(f32, f32)>,
+        on_rect_outline_toggle: Msg,
+        on_rect_outline_start: impl Fn(f32, f32) -> Msg + 'a,
+        on_rect_outline_end: impl Fn(f32, f32) -> Msg + 'a,
         redactions: &[RedactAnnotation],
         redact_mode: bool,
         redact_drawing: Option<(f32, f32)>,
         on_redact_toggle: Msg,
         on_redact_start: impl Fn(f32, f32) -> Msg + 'a,
         on_redact_end: impl Fn(f32, f32) -> Msg + 'a,
+        on_clear_annotations: Msg,
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
         on_open_url: impl Fn(String) -> Msg + 'a,
@@ -490,6 +540,8 @@ where
                 image_scale,
                 arrow_mode,
                 redact_mode,
+                circle_mode,
+                rect_outline_mode,
                 magnifier_enabled,
             )
             .into(),
@@ -725,6 +777,11 @@ where
                     _ => false,
                 };
 
+                let has_any_annotations = !arrows.is_empty()
+                    || !redactions.is_empty()
+                    || !circles.is_empty()
+                    || !rect_outlines.is_empty();
+
                 build_toolbar(
                     choice.clone(),
                     output.name.clone(),
@@ -733,7 +790,10 @@ where
                     has_ocr_text,
                     qr_codes,
                     arrow_mode,
+                    circle_mode,
+                    rect_outline_mode,
                     redact_mode,
+                    has_any_annotations,
                     space_s,
                     space_xs,
                     space_xxs,
@@ -741,12 +801,15 @@ where
                     on_copy_to_clipboard,
                     on_save_to_pictures,
                     on_arrow_toggle.clone(),
+                    on_circle_toggle.clone(),
+                    on_rect_outline_toggle.clone(),
                     on_redact_toggle.clone(),
                     on_ocr.clone(),
                     on_ocr_copy.clone(),
                     on_qr.clone(),
                     on_qr_copy.clone(),
                     on_cancel,
+                    on_clear_annotations.clone(),
                     &on_toolbar_position,
                     on_settings_toggle.clone(),
                     settings_drawer_open,
@@ -762,12 +825,25 @@ where
             on_arrow_toggle: Some(on_arrow_toggle),
             on_arrow_start: Some(Box::new(on_arrow_start)),
             on_arrow_end: Some(Box::new(on_arrow_end)),
+            circles: circles.to_vec(),
+            circle_mode,
+            circle_drawing,
+            on_circle_toggle: Some(on_circle_toggle),
+            on_circle_start: Some(Box::new(on_circle_start)),
+            on_circle_end: Some(Box::new(on_circle_end)),
+            rect_outlines: rect_outlines.to_vec(),
+            rect_outline_mode,
+            rect_outline_drawing,
+            on_rect_outline_toggle: Some(on_rect_outline_toggle),
+            on_rect_outline_start: Some(Box::new(on_rect_outline_start)),
+            on_rect_outline_end: Some(Box::new(on_rect_outline_end)),
             redactions: redactions.to_vec(),
             redact_mode,
             redact_drawing,
             on_redact_toggle: Some(on_redact_toggle),
             on_redact_start: Some(Box::new(on_redact_start)),
             on_redact_end: Some(Box::new(on_redact_end)),
+            on_clear_annotations: Some(on_clear_annotations),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
             on_open_url: Some(Box::new(on_open_url)),
@@ -803,6 +879,14 @@ where
 impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
     for ScreenshotSelection<'a, Msg>
 {
+    fn state(&self) -> cosmic::iced_core::widget::tree::State {
+        cosmic::iced_core::widget::tree::State::new(InputState::default())
+    }
+
+    fn tag(&self) -> cosmic::iced_core::widget::tree::Tag {
+        cosmic::iced_core::widget::tree::Tag::of::<InputState>()
+    }
+
     fn children(&self) -> Vec<cosmic::iced_core::widget::Tree> {
         let mut children = vec![
             Tree::new(&self.bg_element),
@@ -869,6 +953,14 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         viewport: &cosmic::iced_core::Rectangle,
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
+        use cosmic::iced_core::{keyboard, Event as CoreEvent};
+
+        // Track Ctrl state for "constrain to circle/square"
+        if let CoreEvent::Keyboard(keyboard::Event::ModifiersChanged(mods)) = &event {
+            let st = tree.state.downcast_mut::<InputState>();
+            let drawing_active = self.circle_drawing.is_some() || self.rect_outline_drawing.is_some();
+            st.update_modifiers(mods.control(), drawing_active);
+        }
 
         // FIRST: Handle click-outside-to-close for settings drawer
         // This must run before child widgets process the event
@@ -1052,6 +1144,102 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         let global_y = pos.y + self.output_rect.top as f32;
                         if let Some(ref on_redact_end) = self.on_redact_end {
                             shell.publish(on_redact_end(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Helper: compute constrained end point (square/circle) in global coords.
+            let constrain_end = |sx: f32, sy: f32, ex: f32, ey: f32| -> (f32, f32) {
+                let dx = ex - sx;
+                let dy = ey - sy;
+                let side = dx.abs().min(dy.abs());
+                let sign_x = if dx < 0.0 { -1.0 } else { 1.0 };
+                let sign_y = if dy < 0.0 { -1.0 } else { 1.0 };
+                (sx + side * sign_x, sy + side * sign_y)
+            };
+
+            // Handle circle/ellipse drawing mode - press to start, release to end
+            if self.circle_mode {
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x
+                            && pos.x <= sel_x + sel_w
+                            && pos.y >= sel_y
+                            && pos.y <= sel_y + sel_h
+                    } else {
+                        false
+                    };
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                        let st = tree.state.downcast_mut::<InputState>();
+                        st.ctrl_latched = st.ctrl_down;
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_circle_start) = self.on_circle_start {
+                            shell.publish(on_circle_start(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    MouseEvent::ButtonReleased(Button::Left) if self.circle_drawing.is_some() => {
+                        let st = tree.state.downcast_mut::<InputState>();
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        let (end_x, end_y) = if st.ctrl_latched || st.ctrl_down {
+                            let (sx, sy) = self.circle_drawing.unwrap_or((global_x, global_y));
+                            constrain_end(sx, sy, global_x, global_y)
+                        } else {
+                            (global_x, global_y)
+                        };
+                        st.ctrl_latched = false;
+                        if let Some(ref on_circle_end) = self.on_circle_end {
+                            shell.publish(on_circle_end(end_x, end_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Handle rectangle outline drawing mode - press to start, release to end
+            if self.rect_outline_mode {
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x
+                            && pos.x <= sel_x + sel_w
+                            && pos.y >= sel_y
+                            && pos.y <= sel_y + sel_h
+                    } else {
+                        false
+                    };
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                        let st = tree.state.downcast_mut::<InputState>();
+                        st.ctrl_latched = st.ctrl_down;
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_rect_outline_start) = self.on_rect_outline_start {
+                            shell.publish(on_rect_outline_start(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    MouseEvent::ButtonReleased(Button::Left) if self.rect_outline_drawing.is_some() => {
+                        let st = tree.state.downcast_mut::<InputState>();
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        let (end_x, end_y) = if st.ctrl_latched || st.ctrl_down {
+                            let (sx, sy) = self.rect_outline_drawing.unwrap_or((global_x, global_y));
+                            constrain_end(sx, sy, global_x, global_y)
+                        } else {
+                            (global_x, global_y)
+                        };
+                        st.ctrl_latched = false;
+                        if let Some(ref on_rect_outline_end) = self.on_rect_outline_end {
+                            shell.publish(on_rect_outline_end(end_x, end_y));
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1617,6 +1805,282 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         let arrow_thickness = 4.0_f32;
         let head_size = 16.0_f32;
         let outline_px = 1.0_f32;
+
+        // Helper: build a feathered thick line mesh (no arrowhead), using the same 3-step alpha ramp.
+        fn build_line_mesh(
+            x0: f32,
+            y0: f32,
+            x1: f32,
+            y1: f32,
+            mut color: cosmic::iced::Color,
+            thickness: f32,
+        ) -> Option<(Vec<SolidVertex2D>, Vec<u32>)> {
+            let dx = x1 - x0;
+            let dy = y1 - y0;
+            let len = (dx * dx + dy * dy).sqrt();
+            if len < 0.5 {
+                return None;
+            }
+            let nx = dx / len;
+            let ny = dy / len;
+
+            let feather_outer = 3.0_f32;
+            let feather_mid = 1.5_f32;
+            let r_in = thickness / 2.0;
+            let r_mid = r_in + feather_mid;
+            let r_out = r_in + feather_outer;
+
+            let px_in = -ny * r_in;
+            let py_in = nx * r_in;
+            let px_mid = -ny * r_mid;
+            let py_mid = nx * r_mid;
+            let px_out = -ny * r_out;
+            let py_out = nx * r_out;
+
+            let a_in = color.a.clamp(0.0, 1.0);
+            color.a = a_in;
+            let packed_inner = pack(color);
+            let mut mid = color;
+            mid.a = (a_in * 0.35).clamp(0.12, 0.45);
+            let packed_mid = pack(mid);
+            let mut outer = color;
+            outer.a = 0.0;
+            let packed_outer = pack(outer);
+
+            // Cap feathering
+            let x0_mid = x0 - nx * feather_mid;
+            let y0_mid = y0 - ny * feather_mid;
+            let x1_mid = x1 + nx * feather_mid;
+            let y1_mid = y1 + ny * feather_mid;
+            let x0_out = x0 - nx * feather_outer;
+            let y0_out = y0 - ny * feather_outer;
+            let x1_out = x1 + nx * feather_outer;
+            let y1_out = y1 + ny * feather_outer;
+
+            // Vertices: outer(0..3), mid(4..7), inner(8..11)
+            let mut vertices = Vec::with_capacity(12);
+            // Outer
+            vertices.push(SolidVertex2D {
+                position: [x0_out + px_out, y0_out + py_out],
+                color: packed_outer,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x0_out - px_out, y0_out - py_out],
+                color: packed_outer,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1_out - px_out, y1_out - py_out],
+                color: packed_outer,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1_out + px_out, y1_out + py_out],
+                color: packed_outer,
+            });
+            // Mid
+            vertices.push(SolidVertex2D {
+                position: [x0_mid + px_mid, y0_mid + py_mid],
+                color: packed_mid,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x0_mid - px_mid, y0_mid - py_mid],
+                color: packed_mid,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1_mid - px_mid, y1_mid - py_mid],
+                color: packed_mid,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1_mid + px_mid, y1_mid + py_mid],
+                color: packed_mid,
+            });
+            // Inner
+            vertices.push(SolidVertex2D {
+                position: [x0 + px_in, y0 + py_in],
+                color: packed_inner,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x0 - px_in, y0 - py_in],
+                color: packed_inner,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1 - px_in, y1 - py_in],
+                color: packed_inner,
+            });
+            vertices.push(SolidVertex2D {
+                position: [x1 + px_in, y1 + py_in],
+                color: packed_inner,
+            });
+
+            let indices: Vec<u32> = vec![
+                // Inner
+                8, 9, 10, 8, 10, 11,
+                // Mid <-> inner (+)
+                4, 8, 11, 4, 11, 7,
+                // Mid <-> inner (-)
+                5, 6, 10, 5, 10, 9,
+                // Outer <-> mid (+)
+                0, 4, 7, 0, 7, 3,
+                // Outer <-> mid (-)
+                1, 2, 6, 1, 6, 5,
+            ];
+
+            Some((vertices, indices))
+        }
+
+        // Draw rectangle/circle outlines (red, no fill)
+        let shape_color = cosmic::iced::Color::from_rgb(0.9, 0.1, 0.1);
+        let shape_thickness = 3.0_f32;
+
+        // Rectangle outlines
+        for r in &self.rect_outlines {
+            let x1 = r.start_x - self.output_rect.left as f32;
+            let y1 = r.start_y - self.output_rect.top as f32;
+            let x2 = r.end_x - self.output_rect.left as f32;
+            let y2 = r.end_y - self.output_rect.top as f32;
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+            let segments = [
+                (min_x, min_y, max_x, min_y),
+                (max_x, min_y, max_x, max_y),
+                (max_x, max_y, min_x, max_y),
+                (min_x, max_y, min_x, min_y),
+            ];
+            for (sx, sy, ex, ey) in segments {
+                if let Some((vertices, indices)) =
+                    build_line_mesh(sx, sy, ex, ey, shape_color, shape_thickness)
+                {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
+                    });
+                }
+            }
+        }
+
+        // Circle/ellipse outlines (polyline approximation)
+        for c in &self.circles {
+            let x1 = c.start_x - self.output_rect.left as f32;
+            let y1 = c.start_y - self.output_rect.top as f32;
+            let x2 = c.end_x - self.output_rect.left as f32;
+            let y2 = c.end_y - self.output_rect.top as f32;
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+            let cx = (min_x + max_x) * 0.5;
+            let cy = (min_y + max_y) * 0.5;
+            let rx = ((max_x - min_x) * 0.5).max(1.0);
+            let ry = ((max_y - min_y) * 0.5).max(1.0);
+            let approx_r = rx.max(ry);
+            let segs = ((approx_r * 0.35).clamp(24.0, 96.0)) as usize;
+            let step = std::f32::consts::TAU / segs as f32;
+            let mut prev_x = cx + rx;
+            let mut prev_y = cy;
+            for i in 1..=segs {
+                let t = i as f32 * step;
+                let x = cx + rx * t.cos();
+                let y = cy + ry * t.sin();
+                if let Some((vertices, indices)) =
+                    build_line_mesh(prev_x, prev_y, x, y, shape_color, shape_thickness)
+                {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
+                    });
+                }
+                prev_x = x;
+                prev_y = y;
+            }
+        }
+
+        // Live previews for shapes being drawn
+        let input_state = tree.state.downcast_ref::<InputState>();
+        let constrain_now = input_state.ctrl_down || input_state.ctrl_latched;
+        let constrain_end = |sx: f32, sy: f32, ex: f32, ey: f32| -> (f32, f32) {
+            let dx = ex - sx;
+            let dy = ey - sy;
+            let side = dx.abs().min(dy.abs());
+            let sign_x = if dx < 0.0 { -1.0 } else { 1.0 };
+            let sign_y = if dy < 0.0 { -1.0 } else { 1.0 };
+            (sx + side * sign_x, sy + side * sign_y)
+        };
+
+        if let Some((sx_g, sy_g)) = self.rect_outline_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let sx = sx_g - self.output_rect.left as f32;
+            let sy = sy_g - self.output_rect.top as f32;
+            let ex = cursor_pos.x;
+            let ey = cursor_pos.y;
+            let (ex, ey) = if constrain_now { constrain_end(sx, sy, ex, ey) } else { (ex, ey) };
+            let (min_x, max_x) = if sx < ex { (sx, ex) } else { (ex, sx) };
+            let (min_y, max_y) = if sy < ey { (sy, ey) } else { (ey, sy) };
+            let segments = [
+                (min_x, min_y, max_x, min_y),
+                (max_x, min_y, max_x, max_y),
+                (max_x, max_y, min_x, max_y),
+                (min_x, max_y, min_x, min_y),
+            ];
+            let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+            for (a, b, c, d) in segments {
+                if let Some((vertices, indices)) =
+                    build_line_mesh(a, b, c, d, preview_color, shape_thickness)
+                {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
+                    });
+                }
+            }
+        }
+
+        if let Some((sx_g, sy_g)) = self.circle_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let sx = sx_g - self.output_rect.left as f32;
+            let sy = sy_g - self.output_rect.top as f32;
+            let ex = cursor_pos.x;
+            let ey = cursor_pos.y;
+            let (ex, ey) = if constrain_now { constrain_end(sx, sy, ex, ey) } else { (ex, ey) };
+            let (min_x, max_x) = if sx < ex { (sx, ex) } else { (ex, sx) };
+            let (min_y, max_y) = if sy < ey { (sy, ey) } else { (ey, sy) };
+            let cx = (min_x + max_x) * 0.5;
+            let cy = (min_y + max_y) * 0.5;
+            let rx = ((max_x - min_x) * 0.5).max(1.0);
+            let ry = ((max_y - min_y) * 0.5).max(1.0);
+            let approx_r = rx.max(ry);
+            let segs = ((approx_r * 0.35).clamp(24.0, 96.0)) as usize;
+            let step = std::f32::consts::TAU / segs as f32;
+            let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+            let mut prev_x = cx + rx;
+            let mut prev_y = cy;
+            for i in 1..=segs {
+                let t = i as f32 * step;
+                let x = cx + rx * t.cos();
+                let y = cy + ry * t.sin();
+                if let Some((vertices, indices)) =
+                    build_line_mesh(prev_x, prev_y, x, y, preview_color, shape_thickness)
+                {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
+                    });
+                }
+                prev_x = x;
+                prev_y = y;
+            }
+        }
 
         for arrow in &self.arrows {
             // Convert global coordinates to widget-local

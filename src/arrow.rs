@@ -26,6 +26,28 @@ pub struct RedactAnnotation {
     pub y2: f32,
 }
 
+/// Outline rectangle annotation (no fill)
+#[derive(Clone, Debug, PartialEq)]
+pub struct RectOutlineAnnotation {
+    /// Start point in global logical coordinates
+    pub start_x: f32,
+    pub start_y: f32,
+    /// End point in global logical coordinates
+    pub end_x: f32,
+    pub end_y: f32,
+}
+
+/// Outline circle/ellipse annotation (no fill)
+#[derive(Clone, Debug, PartialEq)]
+pub struct CircleOutlineAnnotation {
+    /// Start point in global logical coordinates
+    pub start_x: f32,
+    pub start_y: f32,
+    /// End point in global logical coordinates
+    pub end_x: f32,
+    pub end_y: f32,
+}
+
 /// Draw arrows onto an image using the same geometry as the screen rendering
 /// selection_rect: the selection rectangle in logical coordinates (used as origin)
 /// scale: pixels per logical unit
@@ -178,6 +200,101 @@ pub fn draw_redactions_on_image(
             }
         }
     }
+}
+
+/// Draw rectangle outlines onto an image (red stroke, no fill)
+pub fn draw_rect_outlines_on_image(
+    img: &mut RgbaImage,
+    rects: &[RectOutlineAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    let color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let thickness = (3.0 * scale).max(1.0);
+
+    for r in rects {
+        // Convert to pixel coords
+        let x1 = (r.start_x - selection_rect.left as f32) * scale;
+        let y1 = (r.start_y - selection_rect.top as f32) * scale;
+        let x2 = (r.end_x - selection_rect.left as f32) * scale;
+        let y2 = (r.end_y - selection_rect.top as f32) * scale;
+
+        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+        // 4 sides
+        draw_thick_line_aa(img, min_x, min_y, max_x, min_y, thickness, color);
+        draw_thick_line_aa(img, max_x, min_y, max_x, max_y, thickness, color);
+        draw_thick_line_aa(img, max_x, max_y, min_x, max_y, thickness, color);
+        draw_thick_line_aa(img, min_x, max_y, min_x, min_y, thickness, color);
+    }
+}
+
+/// Draw circle/ellipse outlines onto an image (red stroke, no fill)
+pub fn draw_circle_outlines_on_image(
+    img: &mut RgbaImage,
+    circles: &[CircleOutlineAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    let color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let thickness = (3.0 * scale).max(1.0);
+
+    for c in circles {
+        let x1 = (c.start_x - selection_rect.left as f32) * scale;
+        let y1 = (c.start_y - selection_rect.top as f32) * scale;
+        let x2 = (c.end_x - selection_rect.left as f32) * scale;
+        let y2 = (c.end_y - selection_rect.top as f32) * scale;
+
+        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+        let cx = (min_x + max_x) * 0.5;
+        let cy = (min_y + max_y) * 0.5;
+        let rx = ((max_x - min_x) * 0.5).max(1.0);
+        let ry = ((max_y - min_y) * 0.5).max(1.0);
+
+        // Adaptive segment count: more segments for larger circles
+        let approx_r = rx.max(ry);
+        let segments = ((approx_r * 0.35).clamp(24.0, 96.0)) as usize;
+        let step = std::f32::consts::TAU / segments as f32;
+
+        let mut prev_x = cx + rx;
+        let mut prev_y = cy;
+        for i in 1..=segments {
+            let t = i as f32 * step;
+            let x = cx + rx * t.cos();
+            let y = cy + ry * t.sin();
+            draw_thick_line_aa(img, prev_x, prev_y, x, y, thickness, color);
+            prev_x = x;
+            prev_y = y;
+        }
+    }
+}
+
+fn draw_thick_line_aa(
+    img: &mut RgbaImage,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    thickness: f32,
+    color: image::Rgba<u8>,
+) {
+    let dx = x1 - x0;
+    let dy = y1 - y0;
+    let len = (dx * dx + dy * dy).sqrt();
+    if len < 0.01 {
+        return;
+    }
+    let nx = dx / len;
+    let ny = dy / len;
+    let px = -ny * thickness / 2.0;
+    let py = nx * thickness / 2.0;
+
+    // Quad as 2 triangles
+    fill_triangle(img, x0 + px, y0 + py, x0 - px, y0 - py, x1 - px, y1 - py, color);
+    fill_triangle(img, x0 + px, y0 + py, x1 - px, y1 - py, x1 + px, y1 + py, color);
 }
 
 /// Fill a triangle using edge function rasterization

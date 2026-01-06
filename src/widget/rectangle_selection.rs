@@ -95,6 +95,10 @@ pub struct RectangleSelection<'a, Msg> {
     arrow_mode: bool,
     /// Whether redact drawing mode is active (skip rectangle capturing)
     redact_mode: bool,
+    /// Whether circle drawing mode is active (skip rectangle capturing)
+    circle_mode: bool,
+    /// Whether rectangle-outline drawing mode is active (skip rectangle capturing)
+    rect_outline_mode: bool,
     /// Whether magnifier is enabled
     magnifier_enabled: bool,
     _phantom: std::marker::PhantomData<Msg>,
@@ -113,6 +117,8 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         image_scale: f32,
         arrow_mode: bool,
         redact_mode: bool,
+        circle_mode: bool,
+        rect_outline_mode: bool,
         magnifier_enabled: bool,
     ) -> Self {
         Self {
@@ -127,6 +133,8 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             image_scale,
             arrow_mode,
             redact_mode,
+            circle_mode,
+            rect_outline_mode,
             magnifier_enabled,
             _phantom: std::marker::PhantomData,
         }
@@ -455,7 +463,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
 
                 // Skip rectangle drawing when arrow or redact mode is active
-                if self.arrow_mode || self.redact_mode {
+                if self.arrow_mode || self.redact_mode || self.circle_mode || self.rect_outline_mode
+                {
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 

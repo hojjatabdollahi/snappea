@@ -52,6 +52,8 @@ install:
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/ocr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/qr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/arrow-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
+    install -Dm0644 {{icons-src}}/hicolor/scalable/actions/circle-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/circle-symbolic.svg
+    install -Dm0644 {{icons-src}}/hicolor/scalable/actions/square-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/square-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/redact-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg
 
 # Uninstall files
@@ -62,4 +64,6 @@ uninstall:
     rm -f {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
+    rm -f {{icons-dst}}/hicolor/scalable/actions/circle-symbolic.svg
+    rm -f {{icons-dst}}/hicolor/scalable/actions/square-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg

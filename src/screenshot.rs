@@ -66,11 +66,16 @@ pub use crate::ocr::{OcrMapping, OcrStatus, OcrTextOverlay};
 // Re-export QR types from the qr module
 pub use crate::qr::DetectedQrCode;
 
-// Re-export arrow/redact types from the arrow module
-pub use crate::arrow::{ArrowAnnotation, RedactAnnotation};
+// Re-export arrow/redact/shape types from the arrow module
+pub use crate::arrow::{
+    ArrowAnnotation, CircleOutlineAnnotation, RectOutlineAnnotation, RedactAnnotation,
+};
 
-// Arrow/redact functions are now in crate::arrow module
-use crate::arrow::{draw_arrows_on_image, draw_redactions_on_image};
+// Arrow/redact/shape functions are now in crate::arrow module
+use crate::arrow::{
+    draw_arrows_on_image, draw_circle_outlines_on_image, draw_rect_outlines_on_image,
+    draw_redactions_on_image,
+};
 
 // OCR functions are now in crate::ocr module
 use crate::ocr::{models_need_download, run_ocr_on_image_with_status};
@@ -406,6 +411,15 @@ pub enum Msg {
     RedactStart(f32, f32),                  // start drawing redact rectangle at position
     RedactEnd(f32, f32),                    // finish redact rectangle at position
     RedactCancel,                           // cancel current redact drawing
+    CircleModeToggle,                       // toggle circle/ellipse drawing mode
+    CircleStart(f32, f32),                  // start drawing circle at position
+    CircleEnd(f32, f32),                    // finish drawing circle at position
+    CircleCancel,                           // cancel current circle drawing
+    RectOutlineModeToggle,                  // toggle rectangle outline drawing mode
+    RectOutlineStart(f32, f32),             // start drawing rectangle outline at position
+    RectOutlineEnd(f32, f32),               // finish drawing rectangle outline at position
+    RectOutlineCancel,                      // cancel current rectangle outline drawing
+    ClearAnnotations,                       // clear all annotations (arrows, redactions, circles, rectangles)
     ToolbarPositionChange(ToolbarPosition), // change toolbar position
     CopyToClipboard,                        // capture and copy to clipboard
     SaveToPictures,                         // capture and save to Pictures folder
@@ -473,6 +487,18 @@ pub struct Args {
     pub redact_mode: bool,
     /// Current redaction being drawn (start point set, waiting for end point)
     pub redact_drawing: Option<(f32, f32)>,
+    /// Circle/ellipse outline annotations (no fill)
+    pub circles: Vec<CircleOutlineAnnotation>,
+    /// Whether circle/ellipse drawing mode is active
+    pub circle_mode: bool,
+    /// Current circle/ellipse being drawn (start point set, waiting for end point)
+    pub circle_drawing: Option<(f32, f32)>,
+    /// Rectangle outline annotations (no fill)
+    pub rect_outlines: Vec<RectOutlineAnnotation>,
+    /// Whether rectangle outline drawing mode is active
+    pub rect_outline_mode: bool,
+    /// Current rectangle outline being drawn (start point set, waiting for end point)
+    pub rect_outline_drawing: Option<(f32, f32)>,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
     /// Whether settings drawer is open
@@ -622,6 +648,12 @@ impl Screenshot {
                 redactions: Vec::new(),
                 redact_mode: false,
                 redact_drawing: None,
+                circles: Vec::new(),
+                circle_mode: false,
+                circle_drawing: None,
+                rect_outlines: Vec::new(),
+                rect_outline_mode: false,
+                rect_outline_drawing: None,
                 toolbar_position: ToolbarPosition::default(),
                 settings_drawer_open: false,
                 magnifier_enabled: config.magnifier_enabled,
@@ -703,12 +735,25 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ArrowModeToggle,
             Msg::ArrowStart,
             Msg::ArrowEnd,
+            &args.circles,
+            args.circle_mode,
+            args.circle_drawing,
+            Msg::CircleModeToggle,
+            Msg::CircleStart,
+            Msg::CircleEnd,
+            &args.rect_outlines,
+            args.rect_outline_mode,
+            args.rect_outline_drawing,
+            Msg::RectOutlineModeToggle,
+            Msg::RectOutlineStart,
+            Msg::RectOutlineEnd,
             &args.redactions,
             args.redact_mode,
             args.redact_drawing,
             Msg::RedactModeToggle,
             Msg::RedactStart,
             Msg::RedactEnd,
+            Msg::ClearAnnotations,
             args.toolbar_position,
             Msg::ToolbarPositionChange,
             Msg::OpenUrl,
@@ -861,6 +906,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 location,
                 arrows,
                 redactions,
+                circles,
+                rect_outlines,
                 also_copy_to_clipboard,
                 ..
             } = args;
@@ -873,8 +920,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     if let Some(img) = images.remove(&output_name) {
                         let mut final_img = img.rgba.clone();
 
-                        // Draw arrows/redactions if any (they are in global coords, output_rect is also global)
-                        if !arrows.is_empty() || !redactions.is_empty() {
+                        // Draw annotations (they are in global coords, output_rect is also global)
+                        if !arrows.is_empty()
+                            || !redactions.is_empty()
+                            || !circles.is_empty()
+                            || !rect_outlines.is_empty()
+                        {
                             // Find the output to get scale factor and position
                             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
                                 let scale = final_img.width() as f32 / output.logical_size.0 as f32;
@@ -893,6 +944,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     scale,
                                 );
                                 draw_arrows_on_image(&mut final_img, &arrows, &output_rect, scale);
+                                draw_rect_outlines_on_image(
+                                    &mut final_img,
+                                    &rect_outlines,
+                                    &output_rect,
+                                    scale,
+                                );
+                                draw_circle_outlines_on_image(
+                                    &mut final_img,
+                                    &circles,
+                                    &output_rect,
+                                    scale,
+                                );
                             }
                         }
 
@@ -1002,12 +1065,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             .collect::<Vec<_>>();
                         let mut img = combined_image(physical_bounds, frames);
 
-                        // Draw redactions and arrows onto the final image
+                        // Draw annotations onto the final image
                         if !redactions.is_empty() {
                             draw_redactions_on_image(&mut img, &redactions, &r, target_scale);
                         }
                         if !arrows.is_empty() {
                             draw_arrows_on_image(&mut img, &arrows, &r, target_scale);
+                        }
+                        if !rect_outlines.is_empty() {
+                            draw_rect_outlines_on_image(&mut img, &rect_outlines, &r, target_scale);
+                        }
+                        if !circles.is_empty() {
+                            draw_circle_outlines_on_image(&mut img, &circles, &r, target_scale);
                         }
 
                         if let Some(ref image_path) = image_path {
@@ -1184,6 +1253,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &window_rect,
                                     image_scale,
                                 );
+                                draw_rect_outlines_on_image(
+                                    &mut final_img,
+                                    &rect_outlines,
+                                    &window_rect,
+                                    image_scale,
+                                );
+                                draw_circle_outlines_on_image(
+                                    &mut final_img,
+                                    &circles,
+                                    &window_rect,
+                                    image_scale,
+                                );
                             }
                         }
 
@@ -1277,6 +1358,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.redactions.clear();
                             args.redact_mode = false;
                             args.redact_drawing = None;
+                            args.circles.clear();
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                            args.rect_outlines.clear();
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
                         }
                     }
                     // Also clear if we're starting a new drag from None state
@@ -1291,6 +1378,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         args.redactions.clear();
                         args.redact_mode = false;
                         args.redact_drawing = None;
+                        args.circles.clear();
+                        args.circle_mode = false;
+                        args.circle_drawing = None;
+                        args.rect_outlines.clear();
+                        args.rect_outline_mode = false;
+                        args.rect_outline_drawing = None;
                     }
                 }
                 // Clear arrows/redactions when switching modes (Region, Window, or Output)
@@ -1306,6 +1399,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.redactions.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.circles.clear();
+                    args.circle_mode = false;
+                    args.circle_drawing = None;
+                    args.rect_outlines.clear();
+                    args.rect_outline_mode = false;
+                    args.rect_outline_drawing = None;
                 }
                 args.choice = c;
                 if let Choice::Rectangle(r, s) = &args.choice {
@@ -1325,13 +1424,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     .map(|o| o.name.clone()),
             ) {
                 args.choice = Choice::Output(o);
-                // Clear arrows/redactions when selecting an output
+                // Clear annotations when selecting an output
                 args.arrows.clear();
                 args.arrow_mode = false;
                 args.arrow_drawing = None;
                 args.redactions.clear();
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                args.circles.clear();
+                args.circle_mode = false;
+                args.circle_drawing = None;
+                args.rect_outlines.clear();
+                args.rect_outline_mode = false;
+                args.rect_outline_drawing = None;
             } else {
                 log::error!(
                     "Failed to find output for OutputChange message: {:?}",
@@ -1356,6 +1461,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.redactions.clear();
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                args.circles.clear();
+                args.circle_mode = false;
+                args.circle_drawing = None;
+                args.rect_outlines.clear();
+                args.rect_outline_mode = false;
+                args.rect_outline_drawing = None;
             } else {
                 log::error!("Failed to find screenshot Args for WindowChosen message.");
             }
@@ -1966,6 +2077,121 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::CircleModeToggle => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.circle_mode = !args.circle_mode;
+                if !args.circle_mode {
+                    args.circle_drawing = None;
+                } else {
+                    // Mutually exclusive with other draw modes
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                    args.rect_outline_mode = false;
+                    args.rect_outline_drawing = None;
+                    // Clear OCR/QR when enabling draw mode
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::CircleStart(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && args.circle_mode
+            {
+                args.circle_drawing = Some((x, y));
+            }
+            cosmic::Task::none()
+        }
+        Msg::CircleEnd(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && let Some((start_x, start_y)) = args.circle_drawing.take()
+            {
+                args.circles.push(CircleOutlineAnnotation {
+                    start_x,
+                    start_y,
+                    end_x: x,
+                    end_y: y,
+                });
+            }
+            cosmic::Task::none()
+        }
+        Msg::CircleCancel => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.circle_drawing = None;
+            }
+            cosmic::Task::none()
+        }
+        Msg::RectOutlineModeToggle => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.rect_outline_mode = !args.rect_outline_mode;
+                if !args.rect_outline_mode {
+                    args.rect_outline_drawing = None;
+                } else {
+                    // Mutually exclusive with other draw modes
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                    args.circle_mode = false;
+                    args.circle_drawing = None;
+                    // Clear OCR/QR when enabling draw mode
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::RectOutlineStart(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && args.rect_outline_mode
+            {
+                args.rect_outline_drawing = Some((x, y));
+            }
+            cosmic::Task::none()
+        }
+        Msg::RectOutlineEnd(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && let Some((start_x, start_y)) = args.rect_outline_drawing.take()
+            {
+                args.rect_outlines.push(RectOutlineAnnotation {
+                    start_x,
+                    start_y,
+                    end_x: x,
+                    end_y: y,
+                });
+            }
+            cosmic::Task::none()
+        }
+        Msg::RectOutlineCancel => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.rect_outline_drawing = None;
+            }
+            cosmic::Task::none()
+        }
+        Msg::ClearAnnotations => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.arrows.clear();
+                args.arrow_drawing = None;
+                args.arrow_mode = false;
+                args.redactions.clear();
+                args.redact_drawing = None;
+                args.redact_mode = false;
+                args.circles.clear();
+                args.circle_drawing = None;
+                args.circle_mode = false;
+                args.rect_outlines.clear();
+                args.rect_outline_drawing = None;
+                args.rect_outline_mode = false;
+            }
+            cosmic::Task::none()
+        }
         Msg::ToolbarPositionChange(position) => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.toolbar_position = position;
@@ -2284,6 +2510,12 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         also_copy_to_clipboard: _,
         highlighted_window_index: _,
         focused_output_index: _,
+        circles: _,
+        circle_mode: _,
+        circle_drawing: _,
+        rect_outlines: _,
+        rect_outline_mode: _,
+        rect_outline_drawing: _,
     } = &args;
 
     if app.outputs.len() != images.len() {
