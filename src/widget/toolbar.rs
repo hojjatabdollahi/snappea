@@ -208,6 +208,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     shape_mode_active: bool,
     shape_popup_open: bool,
     redact_mode: bool,
+    pixelate_mode: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
@@ -217,6 +218,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_shape_popup_toggle: Msg,
     on_open_shape_popup: Msg,
     on_redact_toggle: Msg,
+    on_pixelate_toggle: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
@@ -394,6 +396,24 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
+    // Pixelate drawing button
+    let btn_pixelate = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("pixelate-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(if pixelate_mode {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press_maybe(has_selection.then_some(on_pixelate_toggle.clone()))
+        .padding(space_xs),
+        "Pixelate (P)",
+        tooltip::Position::Bottom,
+    );
+
     // OCR button
     let btn_ocr = if has_ocr_text {
         tooltip(
@@ -487,7 +507,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
         if has_selection {
-            let tool_buttons = column![btn_shapes, btn_redact, btn_ocr, btn_qr]
+            let tool_buttons = column![btn_shapes, btn_redact, btn_pixelate, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_x(cosmic::iced_core::Alignment::Center);
 
@@ -536,7 +556,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     } else {
         // Horizontal layout for top/bottom positions
         if has_selection {
-            let tool_buttons = row![btn_shapes, btn_redact, btn_ocr, btn_qr]
+            let tool_buttons = row![btn_shapes, btn_redact, btn_pixelate, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_y(cosmic::iced_core::Alignment::Center);
 

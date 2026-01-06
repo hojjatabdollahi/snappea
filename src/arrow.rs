@@ -27,6 +27,20 @@ pub struct RedactAnnotation {
     pub y2: f32,
 }
 
+/// Pixelation annotation for obscuring sensitive content with pixelation effect
+#[derive(Clone, Debug, PartialEq)]
+pub struct PixelateAnnotation {
+    /// Top-left point in global logical coordinates
+    pub x: f32,
+    pub y: f32,
+    /// Bottom-right point in global logical coordinates
+    pub x2: f32,
+    pub y2: f32,
+}
+
+/// Default pixelation block size (in pixels)
+pub const DEFAULT_PIXELATE_BLOCK_SIZE: u32 = 16;
+
 /// Outline rectangle annotation (no fill)
 #[derive(Clone, Debug, PartialEq)]
 pub struct RectOutlineAnnotation {
@@ -204,6 +218,86 @@ pub fn draw_redactions_on_image(
             for px in min_x..=max_x {
                 img.put_pixel(px, py, redact_color);
             }
+        }
+    }
+}
+
+/// Draw pixelation rectangles onto an image
+/// selection_rect: the selection rectangle in logical coordinates (used as origin)
+/// scale: pixels per logical unit
+/// block_size: size of each pixelation block in pixels
+pub fn draw_pixelations_on_image(
+    img: &mut RgbaImage,
+    pixelations: &[PixelateAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+    block_size: u32,
+) {
+    let block_size = block_size.max(1); // Ensure at least 1 pixel blocks
+
+    for pixelate in pixelations {
+        // Convert from global logical to image pixel coordinates
+        let x1 = ((pixelate.x - selection_rect.left as f32) * scale).round() as i32;
+        let y1 = ((pixelate.y - selection_rect.top as f32) * scale).round() as i32;
+        let x2 = ((pixelate.x2 - selection_rect.left as f32) * scale).round() as i32;
+        let y2 = ((pixelate.y2 - selection_rect.top as f32) * scale).round() as i32;
+
+        // Normalize coordinates (ensure x1 < x2 and y1 < y2)
+        let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+        let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+        // Clamp to image bounds
+        let min_x = min_x.max(0) as u32;
+        let max_x = (max_x as u32).min(img.width().saturating_sub(1));
+        let min_y = min_y.max(0) as u32;
+        let max_y = (max_y as u32).min(img.height().saturating_sub(1));
+
+        // Process each block
+        let mut block_y = min_y;
+        while block_y <= max_y {
+            let block_end_y = (block_y + block_size - 1).min(max_y);
+
+            let mut block_x = min_x;
+            while block_x <= max_x {
+                let block_end_x = (block_x + block_size - 1).min(max_x);
+
+                // Calculate average color for this block
+                let mut total_r: u64 = 0;
+                let mut total_g: u64 = 0;
+                let mut total_b: u64 = 0;
+                let mut total_a: u64 = 0;
+                let mut pixel_count: u64 = 0;
+
+                for py in block_y..=block_end_y {
+                    for px in block_x..=block_end_x {
+                        let pixel = img.get_pixel(px, py);
+                        total_r += pixel[0] as u64;
+                        total_g += pixel[1] as u64;
+                        total_b += pixel[2] as u64;
+                        total_a += pixel[3] as u64;
+                        pixel_count += 1;
+                    }
+                }
+
+                if pixel_count > 0 {
+                    let avg_color = image::Rgba([
+                        (total_r / pixel_count) as u8,
+                        (total_g / pixel_count) as u8,
+                        (total_b / pixel_count) as u8,
+                        (total_a / pixel_count) as u8,
+                    ]);
+
+                    // Fill the block with the average color
+                    for py in block_y..=block_end_y {
+                        for px in block_x..=block_end_x {
+                            img.put_pixel(px, py, avg_color);
+                        }
+                    }
+                }
+
+                block_x += block_size;
+            }
+            block_y += block_size;
         }
     }
 }

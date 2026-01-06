@@ -55,6 +55,7 @@ install:
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/circle-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/circle-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/square-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/square-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/redact-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg
+    install -Dm0644 {{icons-src}}/hicolor/scalable/actions/pixelate-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/pixelate-symbolic.svg
 
 # Uninstall files
 uninstall:
@@ -67,3 +68,4 @@ uninstall:
     rm -f {{icons-dst}}/hicolor/scalable/actions/circle-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/square-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg
+    rm -f {{icons-dst}}/hicolor/scalable/actions/pixelate-symbolic.svg

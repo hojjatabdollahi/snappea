@@ -68,13 +68,14 @@ pub use crate::qr::DetectedQrCode;
 
 // Re-export arrow/redact/shape types from the arrow module
 pub use crate::arrow::{
-    ArrowAnnotation, CircleOutlineAnnotation, RectOutlineAnnotation, RedactAnnotation,
+    ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, RectOutlineAnnotation,
+    RedactAnnotation, DEFAULT_PIXELATE_BLOCK_SIZE,
 };
 
 // Arrow/redact/shape functions are now in crate::arrow module
 use crate::arrow::{
-    draw_arrows_on_image, draw_circle_outlines_on_image, draw_rect_outlines_on_image,
-    draw_redactions_on_image,
+    draw_arrows_on_image, draw_circle_outlines_on_image, draw_pixelations_on_image,
+    draw_rect_outlines_on_image, draw_redactions_on_image,
 };
 
 // OCR functions are now in crate::ocr module
@@ -414,6 +415,10 @@ pub enum Msg {
     RedactStart(f32, f32),                  // start drawing redact rectangle at position
     RedactEnd(f32, f32),                    // finish redact rectangle at position
     RedactCancel,                           // cancel current redact drawing
+    PixelateModeToggle,                     // toggle pixelate drawing mode
+    PixelateStart(f32, f32),                // start drawing pixelate rectangle at position
+    PixelateEnd(f32, f32),                  // finish pixelate rectangle at position
+    PixelateCancel,                         // cancel current pixelate drawing
     CircleModeToggle,                       // toggle circle/ellipse drawing mode
     CircleStart(f32, f32),                  // start drawing circle at position
     CircleEnd(f32, f32),                    // finish drawing circle at position
@@ -498,6 +503,12 @@ pub struct Args {
     pub redact_mode: bool,
     /// Current redaction being drawn (start point set, waiting for end point)
     pub redact_drawing: Option<(f32, f32)>,
+    /// Pixelation annotations drawn on the screenshot
+    pub pixelations: Vec<PixelateAnnotation>,
+    /// Whether pixelate drawing mode is active
+    pub pixelate_mode: bool,
+    /// Current pixelation being drawn (start point set, waiting for end point)
+    pub pixelate_drawing: Option<(f32, f32)>,
     /// Circle/ellipse outline annotations (no fill)
     pub circles: Vec<CircleOutlineAnnotation>,
     /// Whether circle/ellipse drawing mode is active
@@ -667,6 +678,9 @@ impl Screenshot {
                 redactions: Vec::new(),
                 redact_mode: false,
                 redact_drawing: None,
+                pixelations: Vec::new(),
+                pixelate_mode: false,
+                pixelate_drawing: None,
                 circles: Vec::new(),
                 circle_mode: false,
                 circle_drawing: None,
@@ -776,6 +790,12 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::RedactModeToggle,
             Msg::RedactStart,
             Msg::RedactEnd,
+            &args.pixelations,
+            args.pixelate_mode,
+            args.pixelate_drawing,
+            Msg::PixelateModeToggle,
+            Msg::PixelateStart,
+            Msg::PixelateEnd,
             Msg::ClearAnnotations,
             args.toolbar_position,
             Msg::ToolbarPositionChange,
@@ -954,6 +974,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 location,
                 arrows,
                 redactions,
+                pixelations,
                 circles,
                 rect_outlines,
                 also_copy_to_clipboard,
@@ -992,6 +1013,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &redactions,
                                     &output_rect,
                                     scale,
+                                );
+                                draw_pixelations_on_image(
+                                    &mut final_img,
+                                    &pixelations,
+                                    &output_rect,
+                                    scale,
+                                    DEFAULT_PIXELATE_BLOCK_SIZE,
                                 );
                                 draw_arrows_on_image(
                                     &mut final_img,
@@ -1129,6 +1157,15 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         // Draw annotations onto the final image
                         if !redactions.is_empty() {
                             draw_redactions_on_image(&mut img, &redactions, &r, target_scale);
+                        }
+                        if !pixelations.is_empty() {
+                            draw_pixelations_on_image(
+                                &mut img,
+                                &pixelations,
+                                &r,
+                                target_scale,
+                                DEFAULT_PIXELATE_BLOCK_SIZE,
+                            );
                         }
                         if !arrows.is_empty() {
                             draw_arrows_on_image(
@@ -1329,6 +1366,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &window_rect,
                                     image_scale,
                                 );
+                                draw_pixelations_on_image(
+                                    &mut final_img,
+                                    &pixelations,
+                                    &window_rect,
+                                    image_scale,
+                                    DEFAULT_PIXELATE_BLOCK_SIZE,
+                                );
                                 draw_arrows_on_image(
                                     &mut final_img,
                                     &arrows,
@@ -1444,8 +1488,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.arrow_mode = false;
                             args.arrow_drawing = None;
                             args.redactions.clear();
+                                args.pixelations.clear();
                             args.redact_mode = false;
                             args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                             args.circles.clear();
                             args.circle_mode = false;
                             args.circle_drawing = None;
@@ -1464,8 +1511,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         args.arrow_mode = false;
                         args.arrow_drawing = None;
                         args.redactions.clear();
+                                args.pixelations.clear();
                         args.redact_mode = false;
                         args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                         args.circles.clear();
                         args.circle_mode = false;
                         args.circle_drawing = None;
@@ -1485,8 +1535,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.arrow_mode = false;
                     args.arrow_drawing = None;
                     args.redactions.clear();
+                                args.pixelations.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                     args.circles.clear();
                     args.circle_mode = false;
                     args.circle_drawing = None;
@@ -1517,8 +1570,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.arrow_mode = false;
                 args.arrow_drawing = None;
                 args.redactions.clear();
+                                args.pixelations.clear();
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                 args.circles.clear();
                 args.circle_mode = false;
                 args.circle_drawing = None;
@@ -1547,8 +1603,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.arrow_mode = false;
                 args.arrow_drawing = None;
                 args.redactions.clear();
+                                args.pixelations.clear();
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                 args.circles.clear();
                 args.circle_mode = false;
                 args.circle_drawing = None;
@@ -1598,11 +1657,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 // Toggle off redact mode (keep redactions themselves)
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
             }
 
             // Get the selection and run QR detection on that area
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
+                let pixelations = args.pixelations.clone();
                 let outputs_clone = app.outputs.clone();
 
                 // Get image data and parameters based on choice type
@@ -1727,9 +1789,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 if let Some((mut cropped, output_name, scale, origin_x, origin_y, selection_rect)) =
                     qr_params
                 {
-                    // Apply redactions to the image before QR scanning
+                    // Apply redactions and pixelations to the image before QR scanning
                     if !redactions.is_empty() {
                         draw_redactions_on_image(&mut cropped, &redactions, &selection_rect, scale);
+                    }
+                    if !pixelations.is_empty() {
+                        draw_pixelations_on_image(
+                            &mut cropped,
+                            &pixelations,
+                            &selection_rect,
+                            scale,
+                            DEFAULT_PIXELATE_BLOCK_SIZE,
+                        );
                     }
                     // Spawn progressive QR detection tasks (3 passes with increasing resolution)
                     let resolutions = [500u32, 1500, 0]; // 0 = full resolution
@@ -1806,11 +1877,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 // Toggle off redact mode (keep redactions themselves)
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
             }
 
             // Get the selection and run OCR on that area
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
+                let pixelations = args.pixelations.clone();
                 let outputs_clone = app.outputs.clone();
 
                 // Returns: (image, mapping, selection_rect_for_redactions, scale_for_redactions)
@@ -1953,13 +2027,22 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 };
 
                 if let Some((mut cropped_img, mapping, selection_rect, scale)) = region_data {
-                    // Apply redactions to the image before OCR
+                    // Apply redactions and pixelations to the image before OCR
                     if !redactions.is_empty() {
                         draw_redactions_on_image(
                             &mut cropped_img,
                             &redactions,
                             &selection_rect,
                             scale,
+                        );
+                    }
+                    if !pixelations.is_empty() {
+                        draw_pixelations_on_image(
+                            &mut cropped_img,
+                            &pixelations,
+                            &selection_rect,
+                            scale,
+                            DEFAULT_PIXELATE_BLOCK_SIZE,
                         );
                     }
 
@@ -2083,6 +2166,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     // Disable redact mode when enabling arrow mode (mutually exclusive)
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                     // Clear OCR/QR when enabling arrow mode
                     args.ocr_overlays.clear();
                     args.ocr_status = OcrStatus::Idle;
@@ -2165,6 +2250,60 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::PixelateModeToggle => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.pixelate_mode = !args.pixelate_mode;
+                // Cancel any in-progress pixelation when toggling off
+                if !args.pixelate_mode {
+                    args.pixelate_drawing = None;
+                } else {
+                    // Disable other modes when enabling pixelate mode
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                    args.circle_mode = false;
+                    args.circle_drawing = None;
+                    args.rect_outline_mode = false;
+                    args.rect_outline_drawing = None;
+                    // Close shape popup
+                    args.shape_popup_open = false;
+                    // Clear OCR/QR
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::PixelateStart(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && args.pixelate_mode
+            {
+                args.pixelate_drawing = Some((x, y));
+            }
+            cosmic::Task::none()
+        }
+        Msg::PixelateEnd(x, y) => {
+            if let Some(args) = app.screenshot_args.as_mut()
+                && let Some((start_x, start_y)) = args.pixelate_drawing.take()
+            {
+                args.pixelations.push(PixelateAnnotation {
+                    x: start_x,
+                    y: start_y,
+                    x2: x,
+                    y2: y,
+                });
+            }
+            cosmic::Task::none()
+        }
+        Msg::PixelateCancel => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.pixelate_drawing = None;
+            }
+            cosmic::Task::none()
+        }
         Msg::CircleModeToggle => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.circle_mode = !args.circle_mode;
@@ -2176,6 +2315,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.arrow_drawing = None;
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                     args.rect_outline_mode = false;
                     args.rect_outline_drawing = None;
                     // Clear OCR/QR when enabling draw mode
@@ -2225,6 +2366,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.arrow_drawing = None;
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                     args.circle_mode = false;
                     args.circle_drawing = None;
                     // Clear OCR/QR when enabling draw mode
@@ -2269,6 +2412,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.arrow_drawing = None;
                 args.arrow_mode = false;
                 args.redactions.clear();
+                                args.pixelations.clear();
                 args.redact_drawing = None;
                 args.redact_mode = false;
                 args.circles.clear();
@@ -2418,6 +2562,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.rect_outline_drawing = None;
                             args.redact_mode = false;
                             args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                             // Clear OCR/QR
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
@@ -2436,6 +2582,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.rect_outline_drawing = None;
                             args.redact_mode = false;
                             args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
                             args.ocr_text = None;
@@ -2453,6 +2601,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.circle_drawing = None;
                             args.redact_mode = false;
                             args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                             args.ocr_overlays.clear();
                             args.ocr_status = OcrStatus::Idle;
                             args.ocr_text = None;
@@ -2550,6 +2700,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     // Disable other modes first
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                     args.ocr_overlays.clear();
                     args.ocr_status = OcrStatus::Idle;
                     args.ocr_text = None;
@@ -2592,6 +2744,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 // Disable other modes first
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                 args.ocr_overlays.clear();
                 args.ocr_status = OcrStatus::Idle;
                 args.ocr_text = None;
@@ -2681,8 +2835,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 args.arrow_mode = false;
                 args.arrow_drawing = None;
                 args.redactions.clear();
+                                args.pixelations.clear();
                 args.redact_mode = false;
                 args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
             }
             cosmic::Task::none()
         }
@@ -2703,8 +2860,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.arrow_mode = false;
                     args.arrow_drawing = None;
                     args.redactions.clear();
+                                args.pixelations.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                 }
             }
             cosmic::Task::none()
@@ -2725,8 +2885,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.arrow_mode = false;
                     args.arrow_drawing = None;
                     args.redactions.clear();
+                                args.pixelations.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                    args.pixelate_mode = false;
+                    args.pixelate_drawing = None;
                 }
             }
             cosmic::Task::none()
@@ -2871,6 +3034,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         redactions: _,
         redact_mode: _,
         redact_drawing: _,
+        pixelations: _,
+        pixelate_mode: _,
+        pixelate_drawing: _,
         toolbar_position: _,
         settings_drawer_open: _,
         magnifier_enabled: _,

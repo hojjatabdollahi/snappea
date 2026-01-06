@@ -24,7 +24,8 @@ use crate::{
     config::ShapeTool,
     screenshot::{
         ArrowAnnotation, Choice, CircleOutlineAnnotation, DetectedQrCode, OcrStatus, OcrTextOverlay,
-        Rect, RectOutlineAnnotation, RedactAnnotation, ScreenshotImage, ToolbarPosition,
+        PixelateAnnotation, Rect, RectOutlineAnnotation, RedactAnnotation, ScreenshotImage,
+        ToolbarPosition,
     },
 };
 
@@ -684,6 +685,16 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_redact_toggle: Option<Msg>,
     pub on_redact_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     pub on_redact_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    /// Pixelation annotations
+    pub pixelations: Vec<PixelateAnnotation>,
+    /// Whether pixelate mode is active
+    pub pixelate_mode: bool,
+    /// Pixelation currently being drawn (start point)
+    pub pixelate_drawing: Option<(f32, f32)>,
+    /// Callbacks for pixelate mode
+    pub on_pixelate_toggle: Option<Msg>,
+    pub on_pixelate_start: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
+    pub on_pixelate_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     /// Callback for clearing all annotations
     pub on_clear_annotations: Option<Msg>,
     /// Toolbar position
@@ -794,6 +805,12 @@ where
         on_redact_toggle: Msg,
         on_redact_start: impl Fn(f32, f32) -> Msg + 'a,
         on_redact_end: impl Fn(f32, f32) -> Msg + 'a,
+        pixelations: &[PixelateAnnotation],
+        pixelate_mode: bool,
+        pixelate_drawing: Option<(f32, f32)>,
+        on_pixelate_toggle: Msg,
+        on_pixelate_start: impl Fn(f32, f32) -> Msg + 'a,
+        on_pixelate_end: impl Fn(f32, f32) -> Msg + 'a,
         on_clear_annotations: Msg,
         toolbar_position: ToolbarPosition,
         on_toolbar_position: impl Fn(ToolbarPosition) -> Msg + 'a,
@@ -852,6 +869,7 @@ where
                 image_scale,
                 arrow_mode,
                 redact_mode,
+                pixelate_mode,
                 circle_mode,
                 rect_outline_mode,
                 magnifier_enabled,
@@ -1107,6 +1125,7 @@ where
                     shape_mode_active,
                     shape_popup_open,
                     redact_mode,
+                    pixelate_mode,
                     space_s,
                     space_xs,
                     space_xxs,
@@ -1116,6 +1135,7 @@ where
                     on_shape_popup_toggle.clone(),
                     on_open_shape_popup.clone(),
                     on_redact_toggle.clone(),
+                    on_pixelate_toggle.clone(),
                     on_ocr.clone(),
                     on_ocr_copy.clone(),
                     on_qr.clone(),
@@ -1151,6 +1171,12 @@ where
             on_redact_toggle: Some(on_redact_toggle),
             on_redact_start: Some(Box::new(on_redact_start)),
             on_redact_end: Some(Box::new(on_redact_end)),
+            pixelations: pixelations.to_vec(),
+            pixelate_mode,
+            pixelate_drawing,
+            on_pixelate_toggle: Some(on_pixelate_toggle),
+            on_pixelate_start: Some(Box::new(on_pixelate_start)),
+            on_pixelate_end: Some(Box::new(on_pixelate_end)),
             on_clear_annotations: Some(on_clear_annotations.clone()),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
@@ -1544,6 +1570,42 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         let global_y = pos.y + self.output_rect.top as f32;
                         if let Some(ref on_redact_end) = self.on_redact_end {
                             shell.publish(on_redact_end(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    _ => {}
+                }
+            }
+
+            // Handle pixelate drawing mode - press to start, release to end
+            if self.pixelate_mode {
+                // Check if position is inside selection rectangle
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        pos.x >= sel_x
+                            && pos.x <= sel_x + sel_w
+                            && pos.y >= sel_y
+                            && pos.y <= sel_y + sel_h
+                    } else {
+                        false
+                    };
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
+                        // Start a new pixelation on press
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_pixelate_start) = self.on_pixelate_start {
+                            shell.publish(on_pixelate_start(global_x, global_y));
+                        }
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                    MouseEvent::ButtonReleased(Button::Left) if self.pixelate_drawing.is_some() => {
+                        // Finish the pixelation on release
+                        let global_x = pos.x + self.output_rect.left as f32;
+                        let global_y = pos.y + self.output_rect.top as f32;
+                        if let Some(ref on_pixelate_end) = self.on_pixelate_end {
+                            shell.publish(on_pixelate_end(global_x, global_y));
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -2149,6 +2211,55 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             });
         }
 
+        // Draw pixelation previews (mosaic pattern to indicate pixelated areas)
+        for pixelate in &self.pixelations {
+            // Convert global coordinates to widget-local
+            let x1 = pixelate.x - self.output_rect.left as f32;
+            let y1 = pixelate.y - self.output_rect.top as f32;
+            let x2 = pixelate.x2 - self.output_rect.left as f32;
+            let y2 = pixelate.y2 - self.output_rect.top as f32;
+
+            // Normalize (ensure min < max)
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+            // Draw a checkerboard pattern to indicate pixelation
+            let block_size = 16.0_f32;
+            let color1 = cosmic::iced::Color::from_rgba(0.3, 0.3, 0.3, 0.7);
+            let color2 = cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 0.7);
+
+            renderer.with_layer(*viewport, |renderer| {
+                let mut row = 0;
+                let mut y = min_y;
+                while y < max_y {
+                    let mut col = 0;
+                    let mut x = min_x;
+                    let block_h = block_size.min(max_y - y);
+                    while x < max_x {
+                        let block_w = block_size.min(max_x - x);
+                        let color = if (row + col) % 2 == 0 { color1 } else { color2 };
+                        renderer.fill_quad(
+                            cosmic::iced_core::renderer::Quad {
+                                bounds: cosmic::iced_core::Rectangle {
+                                    x,
+                                    y,
+                                    width: block_w,
+                                    height: block_h,
+                                },
+                                border: Border::default(),
+                                shadow: cosmic::iced_core::Shadow::default(),
+                            },
+                            Background::Color(color),
+                        );
+                        x += block_size;
+                        col += 1;
+                    }
+                    y += block_size;
+                    row += 1;
+                }
+            });
+        }
+
         // Draw redaction preview (currently being drawn)
         if let Some((start_x, start_y)) = self.redact_drawing
             && let Some(cursor_pos) = cursor.position()
@@ -2178,6 +2289,44 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             radius: 0.0.into(),
                             width: 2.0,
                             color: cosmic::iced::Color::WHITE,
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(preview_color),
+                );
+            });
+        }
+
+        // Draw pixelation preview (currently being drawn) - use a checkered pattern
+        if let Some((start_x, start_y)) = self.pixelate_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let x1 = start_x - self.output_rect.left as f32;
+            let y1 = start_y - self.output_rect.top as f32;
+            let x2 = cursor_pos.x;
+            let y2 = cursor_pos.y;
+
+            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+            let rect = cosmic::iced_core::Rectangle {
+                x: min_x,
+                y: min_y,
+                width: max_x - min_x,
+                height: max_y - min_y,
+            };
+
+            // Use a semi-transparent gray with a mosaic-like border
+            let preview_color = cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5);
+
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: rect,
+                        border: Border {
+                            radius: 0.0.into(),
+                            width: 2.0,
+                            color: cosmic::iced::Color::from_rgba(0.8, 0.8, 0.8, 1.0),
                         },
                         shadow: cosmic::iced_core::Shadow::default(),
                     },
