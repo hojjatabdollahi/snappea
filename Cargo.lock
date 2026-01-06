@@ -770,6 +770,7 @@ dependencies = [
  "rusty-tesseract",
  "serde",
  "tempfile",
+ "tiny-skia",
  "tokio",
  "wayland-client",
  "wayland-protocols",
