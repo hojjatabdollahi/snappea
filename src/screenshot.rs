@@ -411,8 +411,13 @@ pub enum Msg {
     SetSaveLocationDocuments,               // set save location to Documents
     ToggleCopyOnSave,                       // toggle copy to clipboard on save
     SelectRegionMode,                       // switch to rectangle selection mode (R)
-    SelectWindowMode,                       // switch to window selection mode (W)
-    SelectScreenMode,                       // select current screen/output (S)
+    SelectWindowMode(usize),                // switch to window selection mode, param is output index (W)
+    SelectScreenMode(usize),                // select screen at index (S)
+    NavigateLeft,                           // navigate left (prev screen)
+    NavigateRight,                          // navigate right (next screen)
+    NavigateUp,                             // navigate up (prev window)
+    NavigateDown,                           // navigate down (next window)
+    ConfirmSelection,                       // confirm current highlight (Space/Enter)
 }
 
 #[derive(Debug, Clone)]
@@ -475,6 +480,10 @@ pub struct Args {
     pub copy_to_clipboard_on_save: bool,
     /// Whether to also copy to clipboard for the current save operation
     pub also_copy_to_clipboard: bool,
+    /// Highlighted window index for keyboard navigation (when in Window mode with None selected)
+    pub highlighted_window_index: usize,
+    /// Focused output index for keyboard navigation (which screen is active)
+    pub focused_output_index: usize,
 }
 
 struct Output {
@@ -583,6 +592,8 @@ impl Screenshot {
                 save_location_setting: config.save_location,
                 copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                 also_copy_to_clipboard: false,
+                highlighted_window_index: 0,
+                focused_output_index: 0,
             }))
             .await
         {
@@ -675,6 +686,9 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.copy_to_clipboard_on_save,
             Msg::ToggleCopyOnSave,
             app.outputs.len(),
+            args.highlighted_window_index,
+            args.focused_output_index,
+            i,
         ),
         {
             // Determine if we have a complete selection for action shortcuts
@@ -686,12 +700,40 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             };
             let arrow_mode = args.arrow_mode;
             let redact_mode = args.redact_mode;
+            let output_index = i;
+            // Check if we're in a mode that supports navigation
+            let in_window_picker = matches!(&args.choice, Choice::Window(_, None));
+            let in_screen_picker = matches!(&args.choice, Choice::Output(_));
 
             move |key, modifiers| match key {
                 // Save/copy shortcuts (always available - empty selection captures all screens)
                 Key::Named(Named::Enter) if modifiers.control() => Some(Msg::SaveToPictures),
-                Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
+                Key::Named(Named::Enter) if !in_window_picker => Some(Msg::CopyToClipboard),
                 Key::Named(Named::Escape) => Some(Msg::Cancel),
+                // Space to confirm selection in picker mode, or Enter in window picker
+                Key::Named(Named::Space) if in_window_picker => Some(Msg::ConfirmSelection),
+                Key::Named(Named::Enter) if in_window_picker => Some(Msg::ConfirmSelection),
+                // Navigation keys - h/l and left/right for screens, j/k and up/down for windows
+                Key::Character(c) if c.as_str() == "h" && (in_window_picker || in_screen_picker) => {
+                    Some(Msg::NavigateLeft)
+                }
+                Key::Character(c) if c.as_str() == "l" && (in_window_picker || in_screen_picker) => {
+                    Some(Msg::NavigateRight)
+                }
+                Key::Character(c) if c.as_str() == "j" && in_window_picker => {
+                    Some(Msg::NavigateDown)
+                }
+                Key::Character(c) if c.as_str() == "k" && in_window_picker => {
+                    Some(Msg::NavigateUp)
+                }
+                Key::Named(Named::ArrowLeft) if in_window_picker || in_screen_picker => {
+                    Some(Msg::NavigateLeft)
+                }
+                Key::Named(Named::ArrowRight) if in_window_picker || in_screen_picker => {
+                    Some(Msg::NavigateRight)
+                }
+                Key::Named(Named::ArrowUp) if in_window_picker => Some(Msg::NavigateUp),
+                Key::Named(Named::ArrowDown) if in_window_picker => Some(Msg::NavigateDown),
                 // Mode toggle shortcuts (require selection)
                 Key::Character(c) if c.as_str() == "a" && has_selection => {
                     Some(Msg::ArrowModeToggle)
@@ -704,10 +746,10 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                     Some(Msg::SelectRegionMode)
                 }
                 Key::Character(c) if c.as_str() == "w" && !arrow_mode && !redact_mode => {
-                    Some(Msg::SelectWindowMode)
+                    Some(Msg::SelectWindowMode(output_index))
                 }
                 Key::Character(c) if c.as_str() == "s" && !arrow_mode && !redact_mode => {
-                    Some(Msg::SelectScreenMode)
+                    Some(Msg::SelectScreenMode(output_index))
                 }
                 _ => None,
             }
@@ -1966,11 +2008,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
-        Msg::SelectWindowMode => {
+        Msg::SelectWindowMode(output_index) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // Get the first output name to use for window mode
-                if let Some(output) = app.outputs.first() {
+                // Get the output name from the index
+                if let Some(output) = app.outputs.get(output_index) {
                     args.choice = Choice::Window(output.name.clone(), None);
+                    args.focused_output_index = output_index;
+                    args.highlighted_window_index = 0;
                     // Clear any previous state
                     args.ocr_overlays.clear();
                     args.ocr_status = OcrStatus::Idle;
@@ -1987,11 +2031,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
-        Msg::SelectScreenMode => {
+        Msg::SelectScreenMode(output_index) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // Select the first output as screen
-                if let Some(output) = app.outputs.first() {
+                // Get the output name from the index
+                if let Some(output) = app.outputs.get(output_index) {
                     args.choice = Choice::Output(output.name.clone());
+                    args.focused_output_index = output_index;
                     // Clear any previous state
                     args.ocr_overlays.clear();
                     args.ocr_status = OcrStatus::Idle;
@@ -2004,6 +2049,120 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.redactions.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::NavigateLeft => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                let output_count = app.outputs.len();
+                if output_count > 0 {
+                    // Move to previous screen
+                    args.focused_output_index = if args.focused_output_index == 0 {
+                        output_count - 1
+                    } else {
+                        args.focused_output_index - 1
+                    };
+                    // Reset window index for new output
+                    args.highlighted_window_index = 0;
+                    // Update choice to reflect new focused output
+                    if let Some(output) = app.outputs.get(args.focused_output_index) {
+                        match &args.choice {
+                            Choice::Window(_, None) => {
+                                args.choice = Choice::Window(output.name.clone(), None);
+                            }
+                            Choice::Output(_) => {
+                                args.choice = Choice::Output(output.name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::NavigateRight => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                let output_count = app.outputs.len();
+                if output_count > 0 {
+                    // Move to next screen
+                    args.focused_output_index = (args.focused_output_index + 1) % output_count;
+                    // Reset window index for new output
+                    args.highlighted_window_index = 0;
+                    // Update choice to reflect new focused output
+                    if let Some(output) = app.outputs.get(args.focused_output_index) {
+                        match &args.choice {
+                            Choice::Window(_, None) => {
+                                args.choice = Choice::Window(output.name.clone(), None);
+                            }
+                            Choice::Output(_) => {
+                                args.choice = Choice::Output(output.name.clone());
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::NavigateUp => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if let Choice::Window(_, None) = &args.choice {
+                    // Get window count for focused output
+                    if let Some(output) = app.outputs.get(args.focused_output_index) {
+                        let window_count = args
+                            .toplevel_images
+                            .get(&output.name)
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        if window_count > 0 {
+                            args.highlighted_window_index = if args.highlighted_window_index == 0 {
+                                window_count - 1
+                            } else {
+                                args.highlighted_window_index - 1
+                            };
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::NavigateDown => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if let Choice::Window(_, None) = &args.choice {
+                    // Get window count for focused output
+                    if let Some(output) = app.outputs.get(args.focused_output_index) {
+                        let window_count = args
+                            .toplevel_images
+                            .get(&output.name)
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        if window_count > 0 {
+                            args.highlighted_window_index =
+                                (args.highlighted_window_index + 1) % window_count;
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::ConfirmSelection => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if let Choice::Window(_, None) = &args.choice {
+                    // Confirm the highlighted window on the focused output
+                    if let Some(output) = app.outputs.get(args.focused_output_index) {
+                        let window_count = args
+                            .toplevel_images
+                            .get(&output.name)
+                            .map(|v| v.len())
+                            .unwrap_or(0);
+                        if window_count > 0 && args.highlighted_window_index < window_count {
+                            args.choice = Choice::Window(
+                                output.name.clone(),
+                                Some(args.highlighted_window_index),
+                            );
+                        }
+                    }
                 }
             }
             cosmic::Task::none()
@@ -2040,6 +2199,8 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         save_location_setting: _,
         copy_to_clipboard_on_save: _,
         also_copy_to_clipboard: _,
+        highlighted_window_index: _,
+        focused_output_index: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

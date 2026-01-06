@@ -354,6 +354,9 @@ where
         copy_to_clipboard_on_save: bool,
         on_copy_on_save_toggle: Msg,
         output_count: usize,
+        highlighted_window_index: usize,
+        focused_output_index: usize,
+        current_output_index: usize,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -389,23 +392,28 @@ where
             Choice::Output(_) => {
                 OutputSelection::new(on_output_change(output.output.clone())).into()
             }
-            Choice::Window(ref win_output, None) => {
-                // Window picker mode - show all windows as buttons
+            Choice::Window(_, None) => {
+                // Window picker mode - show all windows as buttons for THIS output
+                // Each output shows its own windows, not the output from the Choice
                 let imgs = toplevel_images
-                    .get(win_output)
+                    .get(&output.name)
                     .map(|x| x.as_slice())
                     .unwrap_or_default();
                 let total_img_width = imgs.iter().map(|img| img.width()).sum::<u32>();
+                // Only show highlight on the focused output
+                let is_focused_output = current_output_index == focused_output_index;
 
                 let img_buttons = imgs.iter().enumerate().map(|(i, img)| {
                     let portion =
                         (img.width() as u64 * u16::MAX as u64 / total_img_width as u64).max(1);
+                    let is_highlighted = is_focused_output && i == highlighted_window_index;
                     layer_container(
                         button::custom(
                             image::Image::new(img.handle.clone())
                                 .content_fit(ContentFit::ScaleDown),
                         )
                         .on_press(toplevel_chosen(output.name.clone(), i))
+                        .selected(is_highlighted)
                         .class(cosmic::theme::Button::Image),
                     )
                     .align_x(alignment::Alignment::Center)
@@ -426,10 +434,14 @@ where
                 .height(Length::Fill)
                 .into()
             }
-            Choice::Window(ref win_output, Some(win_index)) => {
-                // Selected window mode - show the window image with border (buttons are in toolbar)
+            Choice::Window(ref win_output, Some(win_index)) if win_output == &output.name => {
+                // Selected window mode - show the window image with border (only on matching output)
                 SelectedImageWidget::new(win_output.clone(), Some(win_index), toplevel_images)
                     .into()
+            }
+            Choice::Window(_, Some(_)) => {
+                // Window selected on a different output - show nothing (just the background screenshot)
+                cosmic::widget::horizontal_space().width(Length::Fill).into()
             }
         };
 
