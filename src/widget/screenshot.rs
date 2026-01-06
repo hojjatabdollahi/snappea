@@ -745,6 +745,10 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_close_shape_popup: Option<Msg>,
     /// Callback for setting the primary shape tool
     pub on_set_shape_tool: Option<Box<dyn Fn(ShapeTool) -> Msg + 'a>>,
+    /// Reference to the screenshot image for pixelation preview
+    pub screenshot_image: &'a ::image::RgbaImage,
+    /// Scale factor (physical pixels per logical pixel)
+    pub image_scale: f32,
     /// Callback for setting shape color
     pub on_set_shape_color: Option<Box<dyn Fn(crate::config::ShapeColor) -> Msg + 'a>>,
     /// Callback for toggling shape shadow
@@ -1260,6 +1264,8 @@ where
             on_set_shape_color: Some(Box::new(on_set_shape_color)),
             on_toggle_shape_shadow: Some(on_toggle_shape_shadow),
             has_any_annotations,
+            screenshot_image: &image.rgba,
+            image_scale,
         }
     }
 }
@@ -2211,7 +2217,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             });
         }
 
-        // Draw pixelation previews (mosaic pattern to indicate pixelated areas)
+        // Draw pixelation previews (actual pixelated content from screenshot)
         for pixelate in &self.pixelations {
             // Convert global coordinates to widget-local
             let x1 = pixelate.x - self.output_rect.left as f32;
@@ -2223,21 +2229,57 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
             let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
-            // Draw a checkerboard pattern to indicate pixelation
-            let block_size = 16.0_f32;
-            let color1 = cosmic::iced::Color::from_rgba(0.3, 0.3, 0.3, 0.7);
-            let color2 = cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 0.7);
+            // Block size in logical pixels (will be scaled for image sampling)
+            let block_size_logical = 16.0_f32 / self.image_scale;
+            let _block_size_pixels = 16u32;
 
             renderer.with_layer(*viewport, |renderer| {
-                let mut row = 0;
                 let mut y = min_y;
                 while y < max_y {
-                    let mut col = 0;
                     let mut x = min_x;
-                    let block_h = block_size.min(max_y - y);
+                    let block_h = block_size_logical.min(max_y - y);
                     while x < max_x {
-                        let block_w = block_size.min(max_x - x);
-                        let color = if (row + col) % 2 == 0 { color1 } else { color2 };
+                        let block_w = block_size_logical.min(max_x - x);
+
+                        // Sample the average color from the screenshot image
+                        // Convert logical coords to image pixel coords
+                        let img_x = (x * self.image_scale).round() as u32;
+                        let img_y = (y * self.image_scale).round() as u32;
+                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+
+                        // Clamp to image bounds
+                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                        let img_x2 = img_x2.min(self.screenshot_image.width());
+                        let img_y2 = img_y2.min(self.screenshot_image.height());
+
+                        // Calculate average color
+                        let mut total_r: u64 = 0;
+                        let mut total_g: u64 = 0;
+                        let mut total_b: u64 = 0;
+                        let mut pixel_count: u64 = 0;
+
+                        for py in img_y..img_y2 {
+                            for px in img_x..img_x2 {
+                                let pixel = self.screenshot_image.get_pixel(px, py);
+                                total_r += pixel[0] as u64;
+                                total_g += pixel[1] as u64;
+                                total_b += pixel[2] as u64;
+                                pixel_count += 1;
+                            }
+                        }
+
+                        let color = if pixel_count > 0 {
+                            cosmic::iced::Color::from_rgb8(
+                                (total_r / pixel_count) as u8,
+                                (total_g / pixel_count) as u8,
+                                (total_b / pixel_count) as u8,
+                            )
+                        } else {
+                            cosmic::iced::Color::from_rgb(0.5, 0.5, 0.5)
+                        };
+
                         renderer.fill_quad(
                             cosmic::iced_core::renderer::Quad {
                                 bounds: cosmic::iced_core::Rectangle {
@@ -2251,11 +2293,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                             },
                             Background::Color(color),
                         );
-                        x += block_size;
-                        col += 1;
+                        x += block_size_logical;
                     }
-                    y += block_size;
-                    row += 1;
+                    y += block_size_logical;
                 }
             });
         }
@@ -2297,7 +2337,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             });
         }
 
-        // Draw pixelation preview (currently being drawn) - use a checkered pattern
+        // Draw pixelation preview (currently being drawn) - actual pixelated content
         if let Some((start_x, start_y)) = self.pixelate_drawing
             && let Some(cursor_pos) = cursor.position()
         {
@@ -2309,17 +2349,81 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
             let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
-            let rect = cosmic::iced_core::Rectangle {
-                x: min_x,
-                y: min_y,
-                width: max_x - min_x,
-                height: max_y - min_y,
-            };
-
-            // Use a semi-transparent gray with a mosaic-like border
-            let preview_color = cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5);
+            // Block size in logical pixels
+            let block_size_logical = 16.0_f32 / self.image_scale;
 
             renderer.with_layer(*viewport, |renderer| {
+                // Draw pixelated blocks
+                let mut y = min_y;
+                while y < max_y {
+                    let mut x = min_x;
+                    let block_h = block_size_logical.min(max_y - y);
+                    while x < max_x {
+                        let block_w = block_size_logical.min(max_x - x);
+
+                        // Sample the average color from the screenshot image
+                        let img_x = (x * self.image_scale).round() as u32;
+                        let img_y = (y * self.image_scale).round() as u32;
+                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+
+                        // Clamp to image bounds
+                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                        let img_x2 = img_x2.min(self.screenshot_image.width());
+                        let img_y2 = img_y2.min(self.screenshot_image.height());
+
+                        // Calculate average color
+                        let mut total_r: u64 = 0;
+                        let mut total_g: u64 = 0;
+                        let mut total_b: u64 = 0;
+                        let mut pixel_count: u64 = 0;
+
+                        for py in img_y..img_y2 {
+                            for px in img_x..img_x2 {
+                                let pixel = self.screenshot_image.get_pixel(px, py);
+                                total_r += pixel[0] as u64;
+                                total_g += pixel[1] as u64;
+                                total_b += pixel[2] as u64;
+                                pixel_count += 1;
+                            }
+                        }
+
+                        let color = if pixel_count > 0 {
+                            cosmic::iced::Color::from_rgb8(
+                                (total_r / pixel_count) as u8,
+                                (total_g / pixel_count) as u8,
+                                (total_b / pixel_count) as u8,
+                            )
+                        } else {
+                            cosmic::iced::Color::from_rgb(0.5, 0.5, 0.5)
+                        };
+
+                        renderer.fill_quad(
+                            cosmic::iced_core::renderer::Quad {
+                                bounds: cosmic::iced_core::Rectangle {
+                                    x,
+                                    y,
+                                    width: block_w,
+                                    height: block_h,
+                                },
+                                border: Border::default(),
+                                shadow: cosmic::iced_core::Shadow::default(),
+                            },
+                            Background::Color(color),
+                        );
+                        x += block_size_logical;
+                    }
+                    y += block_size_logical;
+                }
+
+                // Draw a border around the pixelation area
+                let rect = cosmic::iced_core::Rectangle {
+                    x: min_x,
+                    y: min_y,
+                    width: max_x - min_x,
+                    height: max_y - min_y,
+                };
                 renderer.fill_quad(
                     cosmic::iced_core::renderer::Quad {
                         bounds: rect,
@@ -2330,7 +2434,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         },
                         shadow: cosmic::iced_core::Shadow::default(),
                     },
-                    Background::Color(preview_color),
+                    Background::Color(cosmic::iced::Color::TRANSPARENT),
                 );
             });
         }
