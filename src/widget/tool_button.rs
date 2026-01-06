@@ -531,23 +531,28 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     .align_y(cosmic::iced_core::Alignment::Center)
     .width(Length::Fill);
 
-    // Clear button (bottom right)
+    // Clear button (full width)
     let clear_button = button::custom(
-        row![
-            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
-                .width(Length::Fixed(16.0))
-                .height(Length::Fixed(16.0)),
-            text::body("Clear"),
-        ]
-        .spacing(space_xs)
-        .align_y(cosmic::iced_core::Alignment::Center),
+        container(
+            row![
+                icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text::body("Clear Annotations"),
+            ]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center),
     )
     .class(cosmic::theme::Button::Destructive)
     .on_press_maybe(has_annotations.then_some(on_clear))
-    .padding([space_xs, space_s]);
+    .padding([space_xs, space_s])
+    .width(Length::Fill);
 
-    let clear_row = row![cosmic::widget::horizontal_space(), clear_button]
-        .align_y(cosmic::iced_core::Alignment::Center);
+    let clear_row = container(clear_button)
+        .width(Length::Fill);
 
     // Assemble popup content
     // Width needs to fit: 4 color swatches per row * (24px + 2*2 padding + spacing) + popup padding
@@ -588,8 +593,11 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
 pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     current_tool: RedactTool,
     has_redactions: bool,
+    pixelation_block_size: u32,
     on_select_redact: Msg,
     on_select_pixelate: Msg,
+    on_set_pixelation_size: impl Fn(u32) -> Msg + 'a,
+    on_save_pixelation_size: Msg,
     on_clear: Msg,
     space_s: u16,
     space_xs: u16,
@@ -648,34 +656,57 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     .width(Length::Fill)
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
-    // Clear button (bottom right)
+    // Pixelation size slider
+    let pixelation_label = text::body(format!("Pixelation: {}px", pixelation_block_size));
+    let pixelation_slider = cosmic::widget::slider(4..=64, pixelation_block_size as i32, move |v| {
+        on_set_pixelation_size(v as u32)
+    })
+    .step(4i32)
+    .on_release(on_save_pixelation_size)
+    .width(Length::Fill);
+
+    let pixelation_section = column![
+        pixelation_label,
+        pixelation_slider,
+    ]
+    .spacing(space_xs)
+    .width(Length::Fill);
+
+    // Clear button (full width)
     let clear_button = button::custom(
-        row![
-            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
-                .width(Length::Fixed(16.0))
-                .height(Length::Fixed(16.0)),
-            text::body("Clear Redactions"),
-        ]
-        .spacing(space_xs)
-        .align_y(cosmic::iced_core::Alignment::Center),
+        container(
+            row![
+                icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text::body("Clear Redactions"),
+            ]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center),
     )
     .class(cosmic::theme::Button::Destructive)
     .on_press_maybe(has_redactions.then_some(on_clear))
-    .padding([space_xs, space_s]);
+    .padding([space_xs, space_s])
+    .width(Length::Fill);
 
-    let clear_row = row![cosmic::widget::horizontal_space(), clear_button]
-        .align_y(cosmic::iced_core::Alignment::Center);
+    let clear_row = container(clear_button)
+        .width(Length::Fill);
 
     // Assemble popup content
     let popup_content = column![
         tool_buttons,
         redact_subtitle,
         cosmic::widget::divider::horizontal::light(),
+        pixelation_section,
+        cosmic::widget::divider::horizontal::light(),
         clear_row,
     ]
     .spacing(space_s)
     .padding(space_s)
-    .width(Length::Fixed(200.0));
+    .width(Length::Fixed(230.0)); // Same width as shapes popup
 
     container(popup_content)
         .class(cosmic::theme::Container::Custom(Box::new(|theme| {

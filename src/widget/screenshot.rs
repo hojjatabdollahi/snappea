@@ -751,6 +751,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub screenshot_image: &'a ::image::RgbaImage,
     /// Scale factor (physical pixels per logical pixel)
     pub image_scale: f32,
+    /// Pixelation block size for preview rendering
+    pub pixelation_block_size: u32,
     /// Callback for setting shape color
     pub on_set_shape_color: Option<Box<dyn Fn(crate::config::ShapeColor) -> Msg + 'a>>,
     /// Callback for toggling shape shadow
@@ -870,6 +872,9 @@ where
         on_set_redact_tool: impl Fn(crate::config::RedactTool) -> Msg + 'a + Clone,
         on_clear_redactions: Msg,
         has_any_redactions: bool,
+        pixelation_block_size: u32,
+        on_set_pixelation_size: impl Fn(u32) -> Msg + 'a,
+        on_save_pixelation_size: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -1265,8 +1270,11 @@ where
                 Some(build_redact_popup(
                     primary_redact_tool,
                     has_any_redactions,
+                    pixelation_block_size,
                     on_set_redact_tool(crate::config::RedactTool::Redact),
                     on_set_redact_tool(crate::config::RedactTool::Pixelate),
+                    on_set_pixelation_size,
+                    on_save_pixelation_size,
                     on_clear_redactions.clone(),
                     space_s,
                     space_xs,
@@ -1312,6 +1320,7 @@ where
             has_any_annotations,
             screenshot_image: &image.rgba,
             image_scale,
+            pixelation_block_size,
             primary_redact_tool,
             redact_popup_open,
             on_redact_popup_toggle: Some(on_redact_popup_toggle),
@@ -2387,8 +2396,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
             // Block size in logical pixels (will be scaled for image sampling)
-            let block_size_logical = 16.0_f32 / self.image_scale;
-            let _block_size_pixels = 16u32;
+            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
 
             renderer.with_layer(*viewport, |renderer| {
                 let mut y = min_y;
@@ -2507,7 +2515,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
             // Block size in logical pixels
-            let block_size_logical = 16.0_f32 / self.image_scale;
+            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
 
             renderer.with_layer(*viewport, |renderer| {
                 // Draw pixelated blocks

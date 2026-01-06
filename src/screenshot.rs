@@ -69,7 +69,7 @@ pub use crate::qr::DetectedQrCode;
 // Re-export arrow/redact/shape types from the arrow module
 pub use crate::arrow::{
     ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, RectOutlineAnnotation,
-    RedactAnnotation, DEFAULT_PIXELATE_BLOCK_SIZE,
+    RedactAnnotation,
 };
 
 // Arrow/redact/shape functions are now in crate::arrow module
@@ -379,19 +379,10 @@ fn write_png<W: io::Write>(w: W, image: &RgbaImage) -> Result<(), png::EncodingE
     writer.write_image_data(image.as_raw())
 }
 
-/// Toolbar position on the screen
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ToolbarPosition {
-    Top,
-    #[default]
-    Bottom,
-    Left,
-    Right,
-}
-
-// Re-export ShapeTool and RedactTool from config module
+// Re-export ShapeTool, RedactTool, and ToolbarPosition from config module
 pub use crate::config::ShapeTool;
 pub use crate::config::RedactTool;
+pub use crate::config::ToolbarPosition;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -443,6 +434,8 @@ pub enum Msg {
     OpenRedactPopup,                         // open redact popup (right-click or long-press)
     CloseRedactPopup,                        // close redact popup without deactivating mode
     ClearRedactions,                         // clear all redactions (redact and pixelate)
+    SetPixelationBlockSize(u32),             // set pixelation block size (UI only, no save)
+    SavePixelationBlockSize,                 // save current pixelation block size to config
     ToolbarPositionChange(ToolbarPosition), // change toolbar position
     CopyToClipboard,                        // capture and copy to clipboard
     SaveToPictures,                         // capture and save to Pictures folder
@@ -544,6 +537,8 @@ pub struct Args {
     pub primary_redact_tool: RedactTool,
     /// Whether redact settings popup is open
     pub redact_popup_open: bool,
+    /// Pixelation block size (larger = more pixelated)
+    pub pixelation_block_size: u32,
     /// Whether magnifier is enabled (persisted setting)
     pub magnifier_enabled: bool,
     /// Save location setting (Pictures or Documents)
@@ -698,7 +693,7 @@ impl Screenshot {
                 rect_outlines: Vec::new(),
                 rect_outline_mode: false,
                 rect_outline_drawing: None,
-                toolbar_position: ToolbarPosition::default(),
+                toolbar_position: config.toolbar_position,
                 settings_drawer_open: false,
                 primary_shape_tool: config.primary_shape_tool,
                 shape_popup_open: false,
@@ -706,6 +701,7 @@ impl Screenshot {
                 shape_shadow: config.shape_shadow,
                 primary_redact_tool: config.primary_redact_tool,
                 redact_popup_open: false,
+                pixelation_block_size: config.pixelation_block_size,
                 magnifier_enabled: config.magnifier_enabled,
                 save_location_setting: config.save_location,
                 copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
@@ -850,6 +846,9 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::ClearRedactions,
             // has_any_redactions for clear button in redact popup
             !args.redactions.is_empty() || !args.pixelations.is_empty(),
+            args.pixelation_block_size,
+            Msg::SetPixelationBlockSize,
+            Msg::SavePixelationBlockSize,
         ),
         {
             // Determine if we have a complete selection for action shortcuts
@@ -1010,6 +1009,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 also_copy_to_clipboard,
                 shape_color,
                 shape_shadow,
+                pixelation_block_size,
                 ..
             } = args;
 
@@ -1049,7 +1049,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &pixelations,
                                     &output_rect,
                                     scale,
-                                    DEFAULT_PIXELATE_BLOCK_SIZE,
+                                    pixelation_block_size,
                                 );
                                 draw_arrows_on_image(
                                     &mut final_img,
@@ -1194,7 +1194,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 &pixelations,
                                 &r,
                                 target_scale,
-                                DEFAULT_PIXELATE_BLOCK_SIZE,
+                                pixelation_block_size,
                             );
                         }
                         if !arrows.is_empty() {
@@ -1401,7 +1401,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &pixelations,
                                     &window_rect,
                                     image_scale,
-                                    DEFAULT_PIXELATE_BLOCK_SIZE,
+                                    pixelation_block_size,
                                 );
                                 draw_arrows_on_image(
                                     &mut final_img,
@@ -1695,6 +1695,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
                 let pixelations = args.pixelations.clone();
+                let pixelation_block_size = args.pixelation_block_size;
                 let outputs_clone = app.outputs.clone();
 
                 // Get image data and parameters based on choice type
@@ -1829,7 +1830,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             &pixelations,
                             &selection_rect,
                             scale,
-                            DEFAULT_PIXELATE_BLOCK_SIZE,
+                            pixelation_block_size,
                         );
                     }
                     // Spawn progressive QR detection tasks (3 passes with increasing resolution)
@@ -1915,6 +1916,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_ref() {
                 let redactions = args.redactions.clone();
                 let pixelations = args.pixelations.clone();
+                let pixelation_block_size = args.pixelation_block_size;
                 let outputs_clone = app.outputs.clone();
 
                 // Returns: (image, mapping, selection_rect_for_redactions, scale_for_redactions)
@@ -2072,7 +2074,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             &pixelations,
                             &selection_rect,
                             scale,
-                            DEFAULT_PIXELATE_BLOCK_SIZE,
+                            pixelation_block_size,
                         );
                     }
 
@@ -2454,6 +2456,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::ToolbarPositionChange(position) => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.toolbar_position = position;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
+                };
+                config.save();
             }
             cosmic::Task::none()
         }
@@ -2502,9 +2517,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::ToggleSettingsDrawer => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.settings_drawer_open = !args.settings_drawer_open;
-                // Close shape popup if opening settings drawer
+                // Close other popups if opening settings drawer
                 if args.settings_drawer_open {
                     args.shape_popup_open = false;
+                    args.redact_popup_open = false;
                 }
             }
             cosmic::Task::none()
@@ -2521,6 +2537,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2538,6 +2556,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2555,6 +2575,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2572,6 +2594,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2685,6 +2709,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2704,6 +2730,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2729,6 +2757,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     // Shape mode is inactive -> activate it (no popup)
                     args.settings_drawer_open = false;
                     args.shape_popup_open = false; // Close popup if open
+                    args.redact_popup_open = false; // Close other popups
 
                     // Disable other modes first
                     args.redact_mode = false;
@@ -2769,16 +2798,23 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::OpenShapePopup => {
-            // Right-click or long-press: open popup and activate shape mode
+            // Right-click or long-press: toggle popup (close if open, open if closed)
             if let Some(args) = app.screenshot_args.as_mut() {
+                if args.shape_popup_open {
+                    // Already open, just close it
+                    args.shape_popup_open = false;
+                    return cosmic::Task::none();
+                }
+
                 args.shape_popup_open = true;
                 args.settings_drawer_open = false;
+                args.redact_popup_open = false; // Close other popups
 
                 // Disable other modes first
                 args.redact_mode = false;
                 args.redact_drawing = None;
-                    args.pixelate_mode = false;
-                    args.pixelate_drawing = None;
+                args.pixelate_mode = false;
+                args.pixelate_drawing = None;
                 args.ocr_overlays.clear();
                 args.ocr_status = OcrStatus::Idle;
                 args.ocr_text = None;
@@ -2834,6 +2870,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2851,6 +2889,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2889,6 +2929,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2906,6 +2948,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
                     primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
                 };
                 config.save();
             }
@@ -2956,7 +3000,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::OpenRedactPopup => {
+            // Right-click or long-press: toggle popup (close if open, open if closed)
             if let Some(args) = app.screenshot_args.as_mut() {
+                if args.redact_popup_open {
+                    // Already open, just close it
+                    args.redact_popup_open = false;
+                    return cosmic::Task::none();
+                }
+
                 args.redact_popup_open = true;
                 // Close other popups
                 args.shape_popup_open = false;
@@ -2974,6 +3025,31 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.redactions.clear();
                 args.pixelations.clear();
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetPixelationBlockSize(size) => {
+            // Just update the UI value, don't save to disk (too slow for real-time slider)
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.pixelation_block_size = size.clamp(4, 64);
+            }
+            cosmic::Task::none()
+        }
+        Msg::SavePixelationBlockSize => {
+            // Save the current pixelation block size to config (called on slider release)
+            if let Some(args) = app.screenshot_args.as_ref() {
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
+                    pixelation_block_size: args.pixelation_block_size,
+                    toolbar_position: args.toolbar_position,
+                };
+                config.save();
             }
             cosmic::Task::none()
         }
@@ -3213,6 +3289,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         shape_shadow: _,
         primary_redact_tool: _,
         redact_popup_open: _,
+        pixelation_block_size: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

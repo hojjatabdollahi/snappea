@@ -97,6 +97,16 @@ impl ShapeTool {
     }
 }
 
+/// Toolbar position on screen
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ToolbarPosition {
+    Top,
+    #[default]
+    Bottom,
+    Left,
+    Right,
+}
+
 /// Redaction tool type (for split button selection)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum RedactTool {
@@ -141,7 +151,7 @@ impl RedactTool {
 
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
-#[version = 4]
+#[version = 6]
 pub struct BlazingshotConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
@@ -157,6 +167,10 @@ pub struct BlazingshotConfig {
     pub shape_shadow: bool,
     /// Primary redact tool shown in the button
     pub primary_redact_tool: RedactTool,
+    /// Pixelation block size (larger = more pixelated, range 4-64)
+    pub pixelation_block_size: u32,
+    /// Toolbar position on screen
+    pub toolbar_position: ToolbarPosition,
 }
 
 impl BlazingshotConfig {
@@ -212,6 +226,10 @@ impl Default for BlazingshotConfig {
             shape_shadow: true,
             // Default to Redact as primary redact tool
             primary_redact_tool: RedactTool::Redact,
+            // Default pixelation block size (16 is a good balance)
+            pixelation_block_size: 16,
+            // Default toolbar position at the bottom
+            toolbar_position: ToolbarPosition::Bottom,
         }
     }
 }
