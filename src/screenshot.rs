@@ -740,6 +740,9 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             // Check if we're in a mode that supports navigation
             let in_window_picker = matches!(&args.choice, Choice::Window(_, None));
             let in_screen_picker = matches!(&args.choice, Choice::Output(_));
+            // Check if OCR/QR have results (pressing O/Q again should copy and close)
+            let has_ocr_result = args.ocr_text.is_some();
+            let has_qr_result = !args.qr_codes.is_empty();
 
             move |key, modifiers| match key {
                 // Ctrl+hjkl or Ctrl+arrows: move toolbar position
@@ -806,6 +809,20 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 }
                 Key::Character(c) if c.as_str() == "d" && has_selection => {
                     Some(Msg::RedactModeToggle)
+                }
+                // OCR shortcut: if result exists, copy and close; otherwise start OCR
+                Key::Character(c) if c.as_str() == "o" && has_ocr_result => {
+                    Some(Msg::OcrCopyAndClose)
+                }
+                Key::Character(c) if c.as_str() == "o" && has_selection => {
+                    Some(Msg::OcrRequested)
+                }
+                // QR shortcut: if result exists, copy and close; otherwise start scan
+                Key::Character(c) if c.as_str() == "q" && has_qr_result => {
+                    Some(Msg::QrCopyAndClose)
+                }
+                Key::Character(c) if c.as_str() == "q" && has_selection => {
+                    Some(Msg::QrRequested)
                 }
                 // Selection mode shortcuts (always available, but not when in draw mode)
                 Key::Character(c) if c.as_str() == "r" && !arrow_mode && !redact_mode => {

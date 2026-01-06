@@ -398,7 +398,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
             .padding(space_xs),
-            "Copy OCR Text",
+            "Copy OCR Text (O)",
             tooltip::Position::Bottom,
         )
     } else {
@@ -411,7 +411,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_ocr.clone()))
             .padding(space_xs),
-            "Recognize Text (OCR)",
+            "Recognize Text (O)",
             tooltip::Position::Bottom,
         )
     };
@@ -428,7 +428,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
             .padding(space_xs),
-            "Copy QR Code",
+            "Copy QR Code (Q)",
             tooltip::Position::Bottom,
         )
     } else {
@@ -441,7 +441,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_qr.clone()))
             .padding(space_xs),
-            "Scan QR Code",
+            "Scan QR Code (Q)",
             tooltip::Position::Bottom,
         )
     };
