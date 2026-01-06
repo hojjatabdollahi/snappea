@@ -97,9 +97,51 @@ impl ShapeTool {
     }
 }
 
+/// Redaction tool type (for split button selection)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum RedactTool {
+    #[default]
+    Redact,
+    Pixelate,
+}
+
+impl RedactTool {
+    /// Get the next redact tool in the cycle
+    pub fn next(self) -> Self {
+        match self {
+            RedactTool::Redact => RedactTool::Pixelate,
+            RedactTool::Pixelate => RedactTool::Redact,
+        }
+    }
+
+    /// Get the icon name for this redact tool
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            RedactTool::Redact => "redact-symbolic",
+            RedactTool::Pixelate => "pixelate-symbolic",
+        }
+    }
+
+    /// Get the tooltip text for this redact tool
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            RedactTool::Redact => "Redact (D, right-click for settings)",
+            RedactTool::Pixelate => "Pixelate (D, right-click for settings)",
+        }
+    }
+
+    /// Get the index of this tool (for indicator dots)
+    pub fn index(self) -> usize {
+        match self {
+            RedactTool::Redact => 0,
+            RedactTool::Pixelate => 1,
+        }
+    }
+}
+
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
-#[version = 3]
+#[version = 4]
 pub struct BlazingshotConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
@@ -113,6 +155,8 @@ pub struct BlazingshotConfig {
     pub shape_color: ShapeColor,
     /// Whether to add shadow/border to shapes
     pub shape_shadow: bool,
+    /// Primary redact tool shown in the button
+    pub primary_redact_tool: RedactTool,
 }
 
 impl BlazingshotConfig {
@@ -166,6 +210,8 @@ impl Default for BlazingshotConfig {
             shape_color: ShapeColor::default(),
             // Shadow enabled by default (matches current arrow behavior)
             shape_shadow: true,
+            // Default to Redact as primary redact tool
+            primary_redact_tool: RedactTool::Redact,
         }
     }
 }

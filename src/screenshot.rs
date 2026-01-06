@@ -389,8 +389,9 @@ pub enum ToolbarPosition {
     Right,
 }
 
-// Re-export ShapeTool from config module
+// Re-export ShapeTool and RedactTool from config module
 pub use crate::config::ShapeTool;
+pub use crate::config::RedactTool;
 
 #[derive(Debug, Clone)]
 pub enum Msg {
@@ -436,6 +437,12 @@ pub enum Msg {
     CloseShapePopup,                         // close shape popup without deactivating shape mode (for click-outside)
     SetShapeColor(ShapeColor),               // set shape annotation color
     ToggleShapeShadow,                       // toggle shadow on shapes
+    SetPrimaryRedactTool(RedactTool),        // set the primary redact tool (redact/pixelate)
+    CycleRedactTool,                         // cycle to next redact tool and activate it
+    ToggleRedactPopup,                       // toggle redact mode on/off (normal click)
+    OpenRedactPopup,                         // open redact popup (right-click or long-press)
+    CloseRedactPopup,                        // close redact popup without deactivating mode
+    ClearRedactions,                         // clear all redactions (redact and pixelate)
     ToolbarPositionChange(ToolbarPosition), // change toolbar position
     CopyToClipboard,                        // capture and copy to clipboard
     SaveToPictures,                         // capture and save to Pictures folder
@@ -533,6 +540,10 @@ pub struct Args {
     pub shape_color: ShapeColor,
     /// Whether to add shadow/border to shapes
     pub shape_shadow: bool,
+    /// Primary redact tool shown in the button
+    pub primary_redact_tool: RedactTool,
+    /// Whether redact settings popup is open
+    pub redact_popup_open: bool,
     /// Whether magnifier is enabled (persisted setting)
     pub magnifier_enabled: bool,
     /// Save location setting (Pictures or Documents)
@@ -693,6 +704,8 @@ impl Screenshot {
                 shape_popup_open: false,
                 shape_color: config.shape_color,
                 shape_shadow: config.shape_shadow,
+                primary_redact_tool: config.primary_redact_tool,
+                redact_popup_open: false,
                 magnifier_enabled: config.magnifier_enabled,
                 save_location_setting: config.save_location,
                 copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
@@ -824,11 +837,19 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::SetPrimaryShapeTool,
             Msg::SetShapeColor,
             Msg::ToggleShapeShadow,
-            // has_any_annotations for clear button in popup
+            // has_any_annotations for clear button in popup (only shapes, not redactions)
             !args.arrows.is_empty()
                 || !args.circles.is_empty()
-                || !args.rect_outlines.is_empty()
-                || !args.redactions.is_empty(),
+                || !args.rect_outlines.is_empty(),
+            args.primary_redact_tool,
+            args.redact_popup_open,
+            Msg::ToggleRedactPopup,
+            Msg::OpenRedactPopup,
+            Msg::CloseRedactPopup,
+            Msg::SetPrimaryRedactTool,
+            Msg::ClearRedactions,
+            // has_any_redactions for clear button in redact popup
+            !args.redactions.is_empty() || !args.pixelations.is_empty(),
         ),
         {
             // Determine if we have a complete selection for action shortcuts
@@ -920,8 +941,17 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 Key::Character(c) if c.as_str() == "a" && has_selection => {
                     Some(Msg::ShapeModeToggle)
                 }
+                // Shift+D: cycle to next redact tool (redact/pixelate) and activate it
+                Key::Character(c)
+                    if c.as_str() == "D"
+                        && modifiers.shift()
+                        && has_selection =>
+                {
+                    Some(Msg::CycleRedactTool)
+                }
+                // D: toggle current redact tool
                 Key::Character(c) if c.as_str() == "d" && has_selection => {
-                    Some(Msg::RedactModeToggle)
+                    Some(Msg::ToggleRedactPopup)
                 }
                 // OCR shortcut: if result exists, copy and close; otherwise start OCR
                 Key::Character(c) if c.as_str() == "o" && has_ocr_result => {
@@ -2407,14 +2437,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::ClearAnnotations => {
+            // Clear only shape annotations (arrows, circles, rectangles) - NOT redactions
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.arrows.clear();
                 args.arrow_drawing = None;
                 args.arrow_mode = false;
-                args.redactions.clear();
-                                args.pixelations.clear();
-                args.redact_drawing = None;
-                args.redact_mode = false;
                 args.circles.clear();
                 args.circle_drawing = None;
                 args.circle_mode = false;
@@ -2493,6 +2520,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2509,6 +2537,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2525,6 +2554,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2541,6 +2571,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2653,6 +2684,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2671,6 +2703,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2800,6 +2833,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
             }
@@ -2816,8 +2850,130 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     primary_shape_tool: args.primary_shape_tool,
                     shape_color: args.shape_color,
                     shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
                 };
                 config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetPrimaryRedactTool(tool) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.primary_redact_tool = tool;
+                // Close the popup after selection
+                args.redact_popup_open = false;
+                // Activate the selected tool
+                match tool {
+                    RedactTool::Redact => {
+                        args.redact_mode = true;
+                        args.pixelate_mode = false;
+                    }
+                    RedactTool::Pixelate => {
+                        args.pixelate_mode = true;
+                        args.redact_mode = false;
+                    }
+                }
+                // Disable other modes
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
+                args.circle_mode = false;
+                args.circle_drawing = None;
+                args.rect_outline_mode = false;
+                args.rect_outline_drawing = None;
+                args.shape_popup_open = false;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::CycleRedactTool => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.primary_redact_tool = args.primary_redact_tool.next();
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                    primary_redact_tool: args.primary_redact_tool,
+                };
+                config.save();
+            }
+            // Also activate the new redact mode
+            update_msg(app, Msg::ToggleRedactPopup)
+        }
+        Msg::ToggleRedactPopup => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Check if redact mode is currently active
+                let is_active = match args.primary_redact_tool {
+                    RedactTool::Redact => args.redact_mode,
+                    RedactTool::Pixelate => args.pixelate_mode,
+                };
+
+                if is_active {
+                    // Turn off the mode
+                    args.redact_mode = false;
+                    args.pixelate_mode = false;
+                    args.redact_drawing = None;
+                    args.pixelate_drawing = None;
+                    args.redact_popup_open = false;
+                } else {
+                    // Turn on the mode based on primary tool
+                    match args.primary_redact_tool {
+                        RedactTool::Redact => {
+                            args.redact_mode = true;
+                            args.pixelate_mode = false;
+                        }
+                        RedactTool::Pixelate => {
+                            args.pixelate_mode = true;
+                            args.redact_mode = false;
+                        }
+                    }
+                    // Disable other modes
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.circle_mode = false;
+                    args.circle_drawing = None;
+                    args.rect_outline_mode = false;
+                    args.rect_outline_drawing = None;
+                    args.shape_popup_open = false;
+                    // Close the redact popup on normal click (don't open it)
+                    args.redact_popup_open = false;
+                    // Close settings drawer if open
+                    args.settings_drawer_open = false;
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::OpenRedactPopup => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.redact_popup_open = true;
+                // Close other popups
+                args.shape_popup_open = false;
+                args.settings_drawer_open = false;
+            }
+            cosmic::Task::none()
+        }
+        Msg::CloseRedactPopup => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.redact_popup_open = false;
+            }
+            cosmic::Task::none()
+        }
+        Msg::ClearRedactions => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.redactions.clear();
+                args.pixelations.clear();
             }
             cosmic::Task::none()
         }
@@ -3055,6 +3211,8 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         shape_popup_open: _,
         shape_color: _,
         shape_shadow: _,
+        primary_redact_tool: _,
+        redact_popup_open: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

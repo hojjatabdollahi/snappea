@@ -9,9 +9,9 @@ use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, icon, tooltip};
 
 use super::rectangle_selection::DragState;
-use super::tool_button::build_shape_button;
+use super::tool_button::{build_shape_button, build_tool_button};
 use super::toolbar_position_selector::ToolbarPositionSelector;
-use crate::config::ShapeTool;
+use crate::config::{RedactTool, ShapeTool};
 use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
 
 /// A wrapper widget that reduces opacity when not hovered
@@ -207,8 +207,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     primary_shape_tool: ShapeTool,
     shape_mode_active: bool,
     shape_popup_open: bool,
-    redact_mode: bool,
-    pixelate_mode: bool,
+    primary_redact_tool: RedactTool,
+    redact_mode_active: bool,
+    redact_popup_open: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
@@ -217,8 +218,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_save_to_pictures: Msg,
     on_shape_popup_toggle: Msg,
     on_open_shape_popup: Msg,
-    on_redact_toggle: Msg,
-    on_pixelate_toggle: Msg,
+    on_redact_popup_toggle: Msg,
+    on_open_redact_popup: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
@@ -378,40 +379,18 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         space_xxs,
     );
 
-    // Redact drawing button
-    let btn_redact = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("redact-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if redact_mode {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press_maybe(has_selection.then_some(on_redact_toggle.clone()))
-        .padding(space_xs),
-        "Redact (D)",
-        tooltip::Position::Bottom,
-    );
-
-    // Pixelate drawing button
-    let btn_pixelate = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("pixelate-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if pixelate_mode {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press_maybe(has_selection.then_some(on_pixelate_toggle.clone()))
-        .padding(space_xs),
-        "Pixelate (P)",
-        tooltip::Position::Bottom,
+    // Redact/Pixelate tool button (combined)
+    let btn_redact = build_tool_button(
+        primary_redact_tool.icon_name(),
+        primary_redact_tool.tooltip(),
+        2, // 2 options: Redact and Pixelate
+        primary_redact_tool.index(),
+        redact_mode_active,
+        redact_popup_open,
+        has_selection,
+        has_selection.then_some(on_redact_popup_toggle.clone()),
+        has_selection.then_some(on_open_redact_popup.clone()),
+        space_xs,
     );
 
     // OCR button
@@ -507,7 +486,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
         if has_selection {
-            let tool_buttons = column![btn_shapes, btn_redact, btn_pixelate, btn_ocr, btn_qr]
+            let tool_buttons = column![btn_shapes, btn_redact, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_x(cosmic::iced_core::Alignment::Center);
 
@@ -556,7 +535,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     } else {
         // Horizontal layout for top/bottom positions
         if has_selection {
-            let tool_buttons = row![btn_shapes, btn_redact, btn_pixelate, btn_ocr, btn_qr]
+            let tool_buttons = row![btn_shapes, btn_redact, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_y(cosmic::iced_core::Alignment::Center);
 

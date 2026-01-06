@@ -15,7 +15,7 @@ use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, container, icon, text, toggler, tooltip};
 use cosmic::Element;
 
-use crate::config::{ShapeColor, ShapeTool};
+use crate::config::{RedactTool, ShapeColor, ShapeTool};
 
 /// A wrapper widget that detects right-click and long-press events
 pub struct RightClickWrapper<'a, Msg> {
@@ -564,6 +564,118 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     .spacing(space_s)
     .padding(space_s)
     .width(Length::Fixed(230.0));
+
+    container(popup_content)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(
+                    cosmic_theme.background.component.base.into(),
+                )),
+                text_color: Some(cosmic_theme.background.component.on.into()),
+                border: Border {
+                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                    width: 1.0,
+                    color: cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
+                },
+                ..Default::default()
+            }
+        })))
+        .into()
+}
+
+/// Build the redact/pixelate tool popup
+pub fn build_redact_popup<'a, Msg: Clone + 'static>(
+    current_tool: RedactTool,
+    has_redactions: bool,
+    on_select_redact: Msg,
+    on_select_pixelate: Msg,
+    on_clear: Msg,
+    space_s: u16,
+    space_xs: u16,
+) -> Element<'a, Msg> {
+    let icon_size = 32.0;
+
+    // Tool selection buttons in a row
+    let btn_redact = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("redact-symbolic").size(48))
+                .width(Length::Fixed(icon_size))
+                .height(Length::Fixed(icon_size)),
+        )
+        .class(if current_tool == RedactTool::Redact {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_select_redact)
+        .padding(space_xs),
+        "Redact (black out)",
+        tooltip::Position::Bottom,
+    );
+
+    let btn_pixelate = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("pixelate-symbolic").size(48))
+                .width(Length::Fixed(icon_size))
+                .height(Length::Fixed(icon_size)),
+        )
+        .class(if current_tool == RedactTool::Pixelate {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_select_pixelate)
+        .padding(space_xs),
+        "Pixelate (blur out)",
+        tooltip::Position::Bottom,
+    );
+
+    // Center the tool buttons in the popup
+    let tool_buttons = container(
+        row![btn_redact, btn_pixelate]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    // Subtitle with keyboard shortcuts
+    let redact_subtitle = container(
+        text::caption("Shift+D to cycle tools, D to toggle")
+            .class(cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0))),
+    )
+    .width(Length::Fill)
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    // Clear button (bottom right)
+    let clear_button = button::custom(
+        row![
+            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0)),
+            text::body("Clear Redactions"),
+        ]
+        .spacing(space_xs)
+        .align_y(cosmic::iced_core::Alignment::Center),
+    )
+    .class(cosmic::theme::Button::Destructive)
+    .on_press_maybe(has_redactions.then_some(on_clear))
+    .padding([space_xs, space_s]);
+
+    let clear_row = row![cosmic::widget::horizontal_space(), clear_button]
+        .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Assemble popup content
+    let popup_content = column![
+        tool_buttons,
+        redact_subtitle,
+        cosmic::widget::divider::horizontal::light(),
+        clear_row,
+    ]
+    .spacing(space_s)
+    .padding(space_s)
+    .width(Length::Fixed(200.0));
 
     container(popup_content)
         .class(cosmic::theme::Container::Custom(Box::new(|theme| {

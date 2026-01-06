@@ -33,7 +33,7 @@ use super::{
     output_selection::OutputSelection,
     rectangle_selection::{DragState, RectangleSelection},
     settings_drawer::build_settings_drawer,
-    tool_button::build_shape_popup,
+    tool_button::{build_redact_popup, build_shape_popup},
 };
 
 use super::toolbar::build_toolbar;
@@ -725,6 +725,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub settings_drawer_element: Option<Element<'a, Msg>>,
     /// Shape settings popup element (only present when popup is open)
     pub shape_popup_element: Option<Element<'a, Msg>>,
+    /// Redact settings popup element (only present when popup is open)
+    pub redact_popup_element: Option<Element<'a, Msg>>,
     /// Canvas overlay for circle/rectangle outline rendering and input
     pub shapes_element: Element<'a, Msg>,
     /// Primary shape tool shown in button
@@ -753,6 +755,22 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_set_shape_color: Option<Box<dyn Fn(crate::config::ShapeColor) -> Msg + 'a>>,
     /// Callback for toggling shape shadow
     pub on_toggle_shape_shadow: Option<Msg>,
+    /// Primary redact tool shown in button
+    pub primary_redact_tool: crate::config::RedactTool,
+    /// Whether redact settings popup is open
+    pub redact_popup_open: bool,
+    /// Callback for toggling redact mode (normal click)
+    pub on_redact_popup_toggle: Option<Msg>,
+    /// Callback for opening redact popup (right-click or long-press)
+    pub on_open_redact_popup: Option<Msg>,
+    /// Callback for closing redact popup without deactivating mode
+    pub on_close_redact_popup: Option<Msg>,
+    /// Callback for setting the primary redact tool
+    pub on_set_redact_tool: Option<Box<dyn Fn(crate::config::RedactTool) -> Msg + 'a>>,
+    /// Callback for clearing redactions only
+    pub on_clear_redactions: Option<Msg>,
+    /// Whether there are any redactions (for enable/disable clear button)
+    pub has_any_redactions: bool,
     /// Whether there are any annotations (for clear button in popup)
     pub has_any_annotations: bool,
 }
@@ -844,6 +862,14 @@ where
         on_set_shape_color: impl Fn(crate::config::ShapeColor) -> Msg + 'a,
         on_toggle_shape_shadow: Msg,
         has_any_annotations: bool,
+        primary_redact_tool: crate::config::RedactTool,
+        redact_popup_open: bool,
+        on_redact_popup_toggle: Msg,
+        on_open_redact_popup: Msg,
+        on_close_redact_popup: Msg,
+        on_set_redact_tool: impl Fn(crate::config::RedactTool) -> Msg + 'a + Clone,
+        on_clear_redactions: Msg,
+        has_any_redactions: bool,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -1118,6 +1144,12 @@ where
                     ShapeTool::Rectangle => rect_outline_mode,
                 };
 
+                // Determine if redact mode is active (either redact or pixelate)
+                let redact_mode_active = match primary_redact_tool {
+                    crate::config::RedactTool::Redact => redact_mode,
+                    crate::config::RedactTool::Pixelate => pixelate_mode,
+                };
+
                 build_toolbar(
                     choice.clone(),
                     output.name.clone(),
@@ -1128,8 +1160,9 @@ where
                     primary_shape_tool,
                     shape_mode_active,
                     shape_popup_open,
-                    redact_mode,
-                    pixelate_mode,
+                    primary_redact_tool,
+                    redact_mode_active,
+                    redact_popup_open,
                     space_s,
                     space_xs,
                     space_xxs,
@@ -1138,8 +1171,8 @@ where
                     on_save_to_pictures,
                     on_shape_popup_toggle.clone(),
                     on_open_shape_popup.clone(),
-                    on_redact_toggle.clone(),
-                    on_pixelate_toggle.clone(),
+                    on_redact_popup_toggle.clone(),
+                    on_open_redact_popup.clone(),
                     on_ocr.clone(),
                     on_ocr_copy.clone(),
                     on_qr.clone(),
@@ -1148,7 +1181,7 @@ where
                     &on_toolbar_position,
                     on_settings_toggle.clone(),
                     settings_drawer_open,
-                    settings_drawer_open || shape_popup_open, // Keep toolbar opaque when either popup is open
+                    settings_drawer_open || shape_popup_open || redact_popup_open, // Keep toolbar opaque when any popup is open
                     output_count,
                 )
             },
@@ -1228,6 +1261,19 @@ where
             } else {
                 None
             },
+            redact_popup_element: if redact_popup_open {
+                Some(build_redact_popup(
+                    primary_redact_tool,
+                    has_any_redactions,
+                    on_set_redact_tool(crate::config::RedactTool::Redact),
+                    on_set_redact_tool(crate::config::RedactTool::Pixelate),
+                    on_clear_redactions.clone(),
+                    space_s,
+                    space_xs,
+                ))
+            } else {
+                None
+            },
             shapes_element: {
                 // Canvas overlay handles preview rendering + input for circle/rect outline
                 let program = ShapesOverlay {
@@ -1266,6 +1312,14 @@ where
             has_any_annotations,
             screenshot_image: &image.rgba,
             image_scale,
+            primary_redact_tool,
+            redact_popup_open,
+            on_redact_popup_toggle: Some(on_redact_popup_toggle),
+            on_open_redact_popup: Some(on_open_redact_popup),
+            on_close_redact_popup: Some(on_close_redact_popup),
+            on_set_redact_tool: Some(Box::new(on_set_redact_tool)),
+            on_clear_redactions: Some(on_clear_redactions),
+            has_any_redactions,
         }
     }
 }
@@ -1286,6 +1340,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let Some(ref selector) = self.shape_popup_element {
             children.push(Tree::new(selector));
         }
+        if let Some(ref popup) = self.redact_popup_element {
+            children.push(Tree::new(popup));
+        }
         children
     }
 
@@ -1301,6 +1358,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
         if let Some(ref mut selector) = self.shape_popup_element {
             elements.push(selector);
+        }
+        if let Some(ref mut popup) = self.redact_popup_element {
+            elements.push(popup);
         }
         tree.diff_children(&mut elements);
     }
@@ -1323,6 +1383,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
         if let Some(ref mut selector) = self.shape_popup_element {
             elements.push(selector);
+        }
+        if let Some(ref mut popup) = self.redact_popup_element {
+            elements.push(popup);
         }
 
         let children = elements
@@ -1382,6 +1445,35 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 if !inside_selector && !inside_toolbar {
                     if let Some(ref on_close_shape_popup) = self.on_close_shape_popup {
                         shell.publish(on_close_shape_popup.clone());
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+            }
+
+            // Handle redact popup click-outside
+            if self.redact_popup_open {
+                // Redact popup is after shape popup if present, after settings drawer if present
+                let mut popup_idx = 4;
+                if self.settings_drawer_element.is_some() { popup_idx += 1; }
+                if self.shape_popup_element.is_some() { popup_idx += 1; }
+                let inside_popup = if layout_children.len() > popup_idx {
+                    let popup_bounds = layout_children[popup_idx].bounds();
+                    popup_bounds.contains(pos)
+                } else {
+                    false
+                };
+
+                // Also check if click is inside the toolbar (on the redact button itself)
+                let inside_toolbar = if layout_children.len() > 3 {
+                    layout_children[3].bounds().contains(pos)
+                } else {
+                    false
+                };
+
+                // If clicked outside the popup and toolbar, just close popup (keep redact mode active)
+                if !inside_popup && !inside_toolbar {
+                    if let Some(ref on_close_redact_popup) = self.on_close_redact_popup {
+                        shell.publish(on_close_redact_popup.clone());
                         return cosmic::iced_core::event::Status::Captured;
                     }
                 }
@@ -1477,6 +1569,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
         if let Some(ref mut selector) = self.shape_popup_element {
             children.push(selector);
+        }
+        if let Some(ref mut popup) = self.redact_popup_element {
+            children.push(popup);
         }
 
         let layout_children = layout.children().collect::<Vec<_>>();
@@ -1687,6 +1782,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let Some(ref selector) = self.shape_popup_element {
             children.push(selector);
         }
+        if let Some(ref popup) = self.redact_popup_element {
+            children.push(popup);
+        }
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
             .into_iter()
@@ -1720,6 +1818,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
         if let Some(ref selector) = self.shape_popup_element {
             children.push(selector);
+        }
+        if let Some(ref popup) = self.redact_popup_element {
+            children.push(popup);
         }
         for (i, (layout, child)) in layout
             .into_iter()
@@ -1916,6 +2017,62 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             };
             selector_node = selector_node.move_to(selector_pos);
             nodes.push(selector_node);
+        }
+
+        // Layout redact popup if present
+        if let Some(ref popup) = self.redact_popup_element {
+            let mut child_idx = 4;
+            if self.settings_drawer_element.is_some() { child_idx += 1; }
+            if self.shape_popup_element.is_some() { child_idx += 1; }
+            let mut popup_node = popup
+                .as_widget()
+                .layout(&mut children[child_idx], renderer, limits);
+            let popup_bounds = popup_node.bounds();
+            let popup_margin = 4.0_f32;
+
+            // The redact button is roughly 52% from the start of the toolbar (after shapes button)
+            let redact_btn_fraction = 0.52_f32;
+
+            let popup_pos = match self.toolbar_position {
+                ToolbarPosition::Bottom => {
+                    let redact_btn_x = menu_pos.x + menu_bounds.width * redact_btn_fraction;
+                    Point {
+                        x: (redact_btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y - popup_bounds.height - popup_margin,
+                    }
+                }
+                ToolbarPosition::Top => {
+                    let redact_btn_x = menu_pos.x + menu_bounds.width * redact_btn_fraction;
+                    Point {
+                        x: (redact_btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y + menu_bounds.height + popup_margin,
+                    }
+                }
+                ToolbarPosition::Left => {
+                    let redact_btn_y = menu_pos.y + menu_bounds.height * redact_btn_fraction;
+                    Point {
+                        x: menu_pos.x + menu_bounds.width + popup_margin,
+                        y: (redact_btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+                ToolbarPosition::Right => {
+                    let redact_btn_y = menu_pos.y + menu_bounds.height * redact_btn_fraction;
+                    Point {
+                        x: menu_pos.x - popup_bounds.width - popup_margin,
+                        y: (redact_btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+            };
+            popup_node = popup_node.move_to(popup_pos);
+            nodes.push(popup_node);
         }
 
         layout::Node::with_children(
@@ -2918,6 +3075,29 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 });
             }
         }
+
+        // Draw redact popup if present
+        if let Some(ref popup) = self.redact_popup_element {
+            let layout_children: Vec<_> = layout.children().collect();
+            let mut popup_idx = 4;
+            if self.settings_drawer_element.is_some() { popup_idx += 1; }
+            if self.shape_popup_element.is_some() { popup_idx += 1; }
+            if layout_children.len() > popup_idx {
+                let popup_layout = layout_children[popup_idx];
+                renderer.with_layer(popup_layout.bounds(), |renderer| {
+                    let popup_tree = &tree.children[popup_idx];
+                    popup.as_widget().draw(
+                        popup_tree,
+                        renderer,
+                        theme,
+                        style,
+                        popup_layout,
+                        cursor,
+                        viewport,
+                    );
+                });
+            }
+        }
     }
 
     fn drag_destinations(
@@ -2934,6 +3114,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
         if let Some(ref selector) = self.shape_popup_element {
             children.push(selector);
+        }
+        if let Some(ref popup) = self.redact_popup_element {
+            children.push(popup);
         }
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {
             let state = &state.children[i];
