@@ -38,6 +38,11 @@ pub struct ScreenshotImage {
 impl ScreenshotImage {
     fn new<T: AsFd>(img: ShmImage<T>) -> anyhow::Result<Self> {
         let rgba = img.image_transformed()?;
+        log::debug!(
+            "ScreenshotImage captured: {}x{} pixels",
+            rgba.width(),
+            rgba.height()
+        );
         let handle = cosmic::widget::image::Handle::from_rgba(
             rgba.width(),
             rgba.height(),
@@ -528,6 +533,13 @@ impl Screenshot {
                 log::warn!("Output {:?} has no size", output);
                 continue;
             };
+            log::debug!(
+                "Output {}: logical_size={}x{}, scale_factor={}",
+                name,
+                logical_size.0,
+                logical_size.1,
+                info.scale_factor
+            );
             outputs.push(Output {
                 output,
                 logical_position,
@@ -547,10 +559,34 @@ impl Screenshot {
             .interactive_output_images(&outputs, app_id)
             .await
             .unwrap_or_default();
+        
+        // Log output image sizes for debugging HiDPI
+        for (name, img) in &output_images {
+            log::debug!(
+                "Output image {}: {}x{} pixels",
+                name,
+                img.rgba.width(),
+                img.rgba.height()
+            );
+        }
+        
         let toplevel_images = self
             .interactive_toplevel_images(&outputs)
             .await
             .unwrap_or_default();
+        
+        // Log toplevel image sizes for debugging HiDPI
+        for (output_name, imgs) in &toplevel_images {
+            for (i, img) in imgs.iter().enumerate() {
+                log::debug!(
+                    "Toplevel {} on output {}: {}x{} pixels",
+                    i,
+                    output_name,
+                    img.rgba.width(),
+                    img.rgba.height()
+                );
+            }
+        }
 
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
 

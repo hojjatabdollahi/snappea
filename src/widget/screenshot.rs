@@ -50,16 +50,45 @@ impl SelectedImageWidget {
         output_name: String,
         window_index: Option<usize>,
         toplevel_images: &HashMap<String, Vec<ScreenshotImage>>,
+        screen_size: (u32, u32),
     ) -> Self {
         let (image_handle, image_size) = if let Some(window_index) = window_index {
             toplevel_images
                 .get(&output_name)
                 .and_then(|imgs| imgs.get(window_index))
                 .map(|img| {
-                    (
-                        Some(img.handle.clone()),
-                        (img.rgba.width(), img.rgba.height()),
-                    )
+                    let orig_width = img.rgba.width();
+                    let orig_height = img.rgba.height();
+
+                    // Use 85% of screen size as the maximum preview size
+                    let max_width = (screen_size.0 as f32 * 0.85) as u32;
+                    let max_height = (screen_size.1 as f32 * 0.85) as u32;
+
+                    // If the image is larger than the screen, create a scaled thumbnail
+                    // using high-quality Lanczos3 filtering for better downscaling
+                    if orig_width > max_width || orig_height > max_height {
+                        let scale = (max_width as f32 / orig_width as f32)
+                            .min(max_height as f32 / orig_height as f32);
+                        let new_width = (orig_width as f32 * scale) as u32;
+                        let new_height = (orig_height as f32 * scale) as u32;
+
+                        let scaled = ::image::imageops::resize(
+                            &img.rgba,
+                            new_width,
+                            new_height,
+                            ::image::imageops::FilterType::Lanczos3,
+                        );
+
+                        let handle = cosmic::widget::image::Handle::from_rgba(
+                            new_width,
+                            new_height,
+                            scaled.into_vec(),
+                        );
+                        (Some(handle), (new_width, new_height))
+                    } else {
+                        // Image fits on screen - use original at 1:1
+                        (Some(img.handle.clone()), (orig_width, orig_height))
+                    }
                 })
                 .unwrap_or((None, (0, 0)))
         } else {
@@ -138,7 +167,82 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
         let layout_bounds = layout.bounds();
         let image_bounds = self.image_bounds(layout_bounds);
 
-        // Draw the image
+        // Draw dark overlay outside the selected window (60% opacity, matching region selection)
+        let overlay_color = Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6));
+
+        // Top strip
+        if image_bounds.y > layout_bounds.y {
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: cosmic::iced_core::Rectangle {
+                        x: layout_bounds.x,
+                        y: layout_bounds.y,
+                        width: layout_bounds.width,
+                        height: image_bounds.y - layout_bounds.y,
+                    },
+                    border: Border::default(),
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                overlay_color,
+            );
+        }
+
+        // Bottom strip
+        let image_bottom = image_bounds.y + image_bounds.height;
+        let layout_bottom = layout_bounds.y + layout_bounds.height;
+        if image_bottom < layout_bottom {
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: cosmic::iced_core::Rectangle {
+                        x: layout_bounds.x,
+                        y: image_bottom,
+                        width: layout_bounds.width,
+                        height: layout_bottom - image_bottom,
+                    },
+                    border: Border::default(),
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                overlay_color,
+            );
+        }
+
+        // Left strip (between top and bottom)
+        if image_bounds.x > layout_bounds.x {
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: cosmic::iced_core::Rectangle {
+                        x: layout_bounds.x,
+                        y: image_bounds.y,
+                        width: image_bounds.x - layout_bounds.x,
+                        height: image_bounds.height,
+                    },
+                    border: Border::default(),
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                overlay_color,
+            );
+        }
+
+        // Right strip (between top and bottom)
+        let image_right = image_bounds.x + image_bounds.width;
+        let layout_right = layout_bounds.x + layout_bounds.width;
+        if image_right < layout_right {
+            renderer.fill_quad(
+                cosmic::iced_core::renderer::Quad {
+                    bounds: cosmic::iced_core::Rectangle {
+                        x: image_right,
+                        y: image_bounds.y,
+                        width: layout_right - image_right,
+                        height: image_bounds.height,
+                    },
+                    border: Border::default(),
+                    shadow: cosmic::iced_core::Shadow::default(),
+                },
+                overlay_color,
+            );
+        }
+
+        // Draw the image with linear filtering for better quality when scaling down
         if let Some(ref handle) = self.image_handle {
             cosmic::iced_core::image::Renderer::draw_image(
                 renderer,
@@ -436,7 +540,8 @@ where
             }
             Choice::Window(ref win_output, Some(win_index)) if win_output == &output.name => {
                 // Selected window mode - show the window image with border (only on matching output)
-                SelectedImageWidget::new(win_output.clone(), Some(win_index), toplevel_images)
+                let screen_size = (output.logical_size.0 as u32, output.logical_size.1 as u32);
+                SelectedImageWidget::new(win_output.clone(), Some(win_index), toplevel_images, screen_size)
                     .into()
             }
             Choice::Window(_, Some(_)) => {

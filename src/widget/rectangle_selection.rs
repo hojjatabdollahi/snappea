@@ -535,7 +535,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 mesh::{Indexed, SolidVertex2D},
             };
             let mut overlay = Color::BLACK;
-            overlay.a = 0.3;
+            overlay.a = 0.6;
 
             // Use output-relative coordinates for the mesh
             // Outer rectangle corners (0,0) to (width, height)
