@@ -8,17 +8,17 @@ use cosmic::iced_core::{
 #[allow(missing_debug_implementations)]
 pub struct KeyboardWrapper<'a, Message> {
     content: Element<'a, Message, cosmic::Theme, cosmic::Renderer>,
-    handler: fn(keyboard::Key) -> Option<Message>,
+    handler: Box<dyn Fn(keyboard::Key, keyboard::Modifiers) -> Option<Message> + 'a>,
 }
 
 impl<'a, Message> KeyboardWrapper<'a, Message> {
     pub fn new(
         content: impl Into<Element<'a, Message, cosmic::Theme, cosmic::Renderer>>,
-        handler: fn(keyboard::Key) -> Option<Message>,
+        handler: impl Fn(keyboard::Key, keyboard::Modifiers) -> Option<Message> + 'a,
     ) -> Self {
         KeyboardWrapper {
             content: content.into(),
-            handler,
+            handler: Box::new(handler),
         }
     }
 }
@@ -87,8 +87,8 @@ where
         }
 
         match event {
-            Event::Keyboard(keyboard::Event::KeyPressed { key, .. }) => {
-                if let Some(message) = (self.handler)(key) {
+            Event::Keyboard(keyboard::Event::KeyPressed { key, modifiers, .. }) => {
+                if let Some(message) = (self.handler)(key, modifiers) {
                     shell.publish(message.clone());
                     event::Status::Captured
                 } else {

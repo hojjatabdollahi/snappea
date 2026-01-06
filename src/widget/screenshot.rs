@@ -353,6 +353,7 @@ where
         on_save_location_documents: Msg,
         copy_to_clipboard_on_save: bool,
         on_copy_on_save_toggle: Msg,
+        output_count: usize,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -629,6 +630,7 @@ where
                     &on_toolbar_position,
                     on_settings_toggle.clone(),
                     settings_drawer_open,
+                    output_count,
                 )
             },
             choice,

@@ -410,6 +410,9 @@ pub enum Msg {
     SetSaveLocationPictures,                // set save location to Pictures
     SetSaveLocationDocuments,               // set save location to Documents
     ToggleCopyOnSave,                       // toggle copy to clipboard on save
+    SelectRegionMode,                       // switch to rectangle selection mode (R)
+    SelectWindowMode,                       // switch to window selection mode (W)
+    SelectScreenMode,                       // select current screen/output (S)
 }
 
 #[derive(Debug, Clone)]
@@ -671,11 +674,43 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::SetSaveLocationDocuments,
             args.copy_to_clipboard_on_save,
             Msg::ToggleCopyOnSave,
+            app.outputs.len(),
         ),
-        |key| match key {
-            Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
-            Key::Named(Named::Escape) => Some(Msg::Cancel),
-            _ => None,
+        {
+            // Determine if we have a complete selection for action shortcuts
+            let has_selection = match &args.choice {
+                Choice::Rectangle(r, _) => r.dimensions().is_some(),
+                Choice::Window(_, Some(_)) => true,
+                Choice::Output(_) => true,
+                _ => false,
+            };
+            let arrow_mode = args.arrow_mode;
+            let redact_mode = args.redact_mode;
+
+            move |key, modifiers| match key {
+                // Save/copy shortcuts (always available - empty selection captures all screens)
+                Key::Named(Named::Enter) if modifiers.control() => Some(Msg::SaveToPictures),
+                Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
+                Key::Named(Named::Escape) => Some(Msg::Cancel),
+                // Mode toggle shortcuts (require selection)
+                Key::Character(c) if c.as_str() == "a" && has_selection => {
+                    Some(Msg::ArrowModeToggle)
+                }
+                Key::Character(c) if c.as_str() == "d" && has_selection => {
+                    Some(Msg::RedactModeToggle)
+                }
+                // Selection mode shortcuts (always available, but not when in draw mode)
+                Key::Character(c) if c.as_str() == "r" && !arrow_mode && !redact_mode => {
+                    Some(Msg::SelectRegionMode)
+                }
+                Key::Character(c) if c.as_str() == "w" && !arrow_mode && !redact_mode => {
+                    Some(Msg::SelectWindowMode)
+                }
+                Key::Character(c) if c.as_str() == "s" && !arrow_mode && !redact_mode => {
+                    Some(Msg::SelectScreenMode)
+                }
+                _ => None,
+            }
         },
     )
     .into()
@@ -873,7 +908,101 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             };
                         }
                     } else {
-                        success = false;
+                        // Empty selection - capture all screens combined
+                        // Calculate bounds that encompass all outputs
+                        let mut all_bounds: Option<Rect> = None;
+                        for output in &outputs {
+                            let output_rect = Rect {
+                                left: output.logical_pos.0,
+                                top: output.logical_pos.1,
+                                right: output.logical_pos.0 + output.logical_size.0 as i32,
+                                bottom: output.logical_pos.1 + output.logical_size.1 as i32,
+                            };
+                            all_bounds = Some(match all_bounds.take() {
+                                Some(bounds) => Rect {
+                                    left: bounds.left.min(output_rect.left),
+                                    top: bounds.top.min(output_rect.top),
+                                    right: bounds.right.max(output_rect.right),
+                                    bottom: bounds.bottom.max(output_rect.bottom),
+                                },
+                                None => output_rect,
+                            });
+                        }
+
+                        if let Some(logical_bounds) = all_bounds {
+                            // Get scale from first output
+                            let target_scale = images
+                                .values()
+                                .next()
+                                .and_then(|img| {
+                                    outputs
+                                        .first()
+                                        .map(|o| img.rgba.width() as f32 / o.logical_size.0 as f32)
+                                })
+                                .unwrap_or(1.0);
+
+                            let physical_bounds = Rect {
+                                left: (logical_bounds.left as f32 * target_scale) as i32,
+                                top: (logical_bounds.top as f32 * target_scale) as i32,
+                                right: (logical_bounds.right as f32 * target_scale) as i32,
+                                bottom: (logical_bounds.bottom as f32 * target_scale) as i32,
+                            };
+
+                            let frames = images
+                                .into_iter()
+                                .filter_map(|(name, raw_img)| {
+                                    let output = outputs.iter().find(|o| o.name == name)?;
+                                    let pos = output.logical_pos;
+
+                                    // Physical rect for this output
+                                    let physical_rect = Rect {
+                                        left: (pos.0 as f32 * target_scale) as i32,
+                                        top: (pos.1 as f32 * target_scale) as i32,
+                                        right: ((pos.0 + output.logical_size.0 as i32) as f32
+                                            * target_scale)
+                                            as i32,
+                                        bottom: ((pos.1 + output.logical_size.1 as i32) as f32
+                                            * target_scale)
+                                            as i32,
+                                    };
+
+                                    Some((raw_img.rgba, physical_rect))
+                                })
+                                .collect::<Vec<_>>();
+
+                            let img = combined_image(physical_bounds, frames);
+
+                            if let Some(ref image_path) = image_path {
+                                if let Err(err) = Screenshot::save_rgba(&img, image_path) {
+                                    log::error!("Failed to capture screenshot: {:?}", err);
+                                    success = false;
+                                }
+                                // Also copy to clipboard if enabled
+                                if also_copy_to_clipboard {
+                                    let mut buffer = Vec::new();
+                                    if let Err(e) =
+                                        Screenshot::save_rgba_to_buffer(&img, &mut buffer)
+                                    {
+                                        log::error!("Failed to save screenshot to buffer: {:?}", e);
+                                    } else {
+                                        cmds.push(clipboard::write_data(ScreenshotBytes::new(
+                                            buffer,
+                                        )));
+                                    }
+                                }
+                            } else {
+                                let mut buffer = Vec::new();
+                                if let Err(e) = Screenshot::save_rgba_to_buffer(&img, &mut buffer) {
+                                    log::error!("Failed to save screenshot to buffer: {:?}", e);
+                                    success = false;
+                                } else {
+                                    cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)))
+                                };
+                            }
+                        } else {
+                            log::error!("No outputs available for all-screens capture");
+                            success = false;
+                        }
                     }
                 }
                 Choice::Window(output_name, Some(window_i)) => {
@@ -1815,6 +1944,67 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
                 };
                 config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::SelectRegionMode => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Switch to rectangle selection with a fresh/default rect
+                args.choice = Choice::Rectangle(Rect::default(), DragState::default());
+                // Clear any previous state
+                args.ocr_overlays.clear();
+                args.ocr_status = OcrStatus::Idle;
+                args.ocr_text = None;
+                args.qr_codes.clear();
+                args.qr_scanning = false;
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
+                args.redactions.clear();
+                args.redact_mode = false;
+                args.redact_drawing = None;
+            }
+            cosmic::Task::none()
+        }
+        Msg::SelectWindowMode => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Get the first output name to use for window mode
+                if let Some(output) = app.outputs.first() {
+                    args.choice = Choice::Window(output.name.clone(), None);
+                    // Clear any previous state
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+                    args.qr_scanning = false;
+                    args.arrows.clear();
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.redactions.clear();
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::SelectScreenMode => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Select the first output as screen
+                if let Some(output) = app.outputs.first() {
+                    args.choice = Choice::Output(output.name.clone());
+                    // Clear any previous state
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+                    args.qr_scanning = false;
+                    args.arrows.clear();
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.redactions.clear();
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                }
             }
             cosmic::Task::none()
         }

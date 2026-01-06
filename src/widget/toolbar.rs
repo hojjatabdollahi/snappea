@@ -220,6 +220,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_toolbar_position: &(impl Fn(ToolbarPosition) -> Msg + 'a),
     on_settings_toggle: Msg,
     settings_drawer_open: bool,
+    output_count: usize,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
 
@@ -262,7 +263,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             DragState::None,
         )))
         .padding(space_xs),
-        "Select Region",
+        "Select Region (R)",
         tooltip::Position::Bottom,
     );
 
@@ -281,7 +282,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
         .padding(space_xs),
-        "Select Window",
+        "Select Window (W)",
         tooltip::Position::Bottom,
     );
 
@@ -300,11 +301,29 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_choice_change(Choice::Output(output_name.clone())))
         .padding(space_xs),
-        "Select Screen",
+        "Select Screen (S)",
         tooltip::Position::Bottom,
     );
 
-    // Copy to clipboard button
+    // Context-sensitive copy tooltip
+    let copy_tooltip = match &choice {
+        Choice::Rectangle(r, _) if r.dimensions().is_some() => "Copy Selected Region (Enter)",
+        Choice::Window(_, Some(_)) => "Copy Selected Window (Enter)",
+        Choice::Output(_) => "Copy Selected Screen (Enter)",
+        _ if output_count > 1 => "Copy All Screens (Enter)",
+        _ => "Copy Screen (Enter)",
+    };
+
+    // Context-sensitive save tooltip
+    let save_tooltip = match &choice {
+        Choice::Rectangle(r, _) if r.dimensions().is_some() => "Save Selected Region (Ctrl+Enter)",
+        Choice::Window(_, Some(_)) => "Save Selected Window (Ctrl+Enter)",
+        Choice::Output(_) => "Save Selected Screen (Ctrl+Enter)",
+        _ if output_count > 1 => "Save All Screens (Ctrl+Enter)",
+        _ => "Save Screen (Ctrl+Enter)",
+    };
+
+    // Copy to clipboard button - always enabled
     let btn_copy = tooltip(
         button::custom(
             icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
@@ -312,13 +331,13 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .height(Length::Fixed(40.0)),
         )
         .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_selection.then_some(on_copy_to_clipboard))
+        .on_press(on_copy_to_clipboard)
         .padding(space_xs),
-        "Copy to Clipboard",
+        copy_tooltip,
         tooltip::Position::Bottom,
     );
 
-    // Save to pictures button
+    // Save to pictures button - always enabled
     let btn_save = tooltip(
         button::custom(
             icon::Icon::from(icon::from_name("document-save-symbolic").size(64))
@@ -326,9 +345,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .height(Length::Fixed(40.0)),
         )
         .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_selection.then_some(on_save_to_pictures))
+        .on_press(on_save_to_pictures)
         .padding(space_xs),
-        "Save to Pictures",
+        save_tooltip,
         tooltip::Position::Bottom,
     );
 
@@ -346,7 +365,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press_maybe(has_selection.then_some(on_arrow_toggle.clone()))
         .padding(space_xs),
-        "Draw Arrow",
+        "Draw Arrow (A)",
         tooltip::Position::Bottom,
     );
 
@@ -364,7 +383,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press_maybe(has_selection.then_some(on_redact_toggle.clone()))
         .padding(space_xs),
-        "Redact",
+        "Redact (D)",
         tooltip::Position::Bottom,
     );
 
@@ -497,6 +516,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_copy, btn_save]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+                horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_settings, btn_close]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
@@ -537,6 +560,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 position_selector,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_copy, btn_save]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
