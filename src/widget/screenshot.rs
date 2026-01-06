@@ -493,8 +493,11 @@ where
                 magnifier_enabled,
             )
             .into(),
-            Choice::Output(_) => {
-                OutputSelection::new(on_output_change(output.output.clone())).into()
+            Choice::Output(ref selected_output) => {
+                let is_selected = selected_output == &output.name;
+                OutputSelection::new(on_output_change(output.output.clone()))
+                    .selected(is_selected)
+                    .into()
             }
             Choice::Window(_, None) => {
                 // Window picker mode - show all windows as buttons for THIS output

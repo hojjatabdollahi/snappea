@@ -15,11 +15,22 @@ use cosmic::{
 
 pub struct OutputSelection<Msg> {
     on_enter: Msg,
+    /// Whether this output is currently selected (via keyboard)
+    selected: bool,
 }
 
 impl<Msg> OutputSelection<Msg> {
     pub fn new(on_enter: Msg) -> Self {
-        Self { on_enter }
+        Self {
+            on_enter,
+            selected: false,
+        }
+    }
+
+    /// Mark this output as selected (will always draw the selection frame)
+    pub fn selected(mut self, selected: bool) -> Self {
+        self.selected = selected;
+        self
     }
 }
 
@@ -56,7 +67,7 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         let mut accent = Color::from(cosmic_theme.accent_color());
         let should_draw = {
             let my_state = tree.state.downcast_ref::<MyState>();
-            my_state.hovered || my_state.focused
+            my_state.hovered || my_state.focused || self.selected
         };
 
         let bounds = layout.bounds();
