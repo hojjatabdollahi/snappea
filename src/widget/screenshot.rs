@@ -21,6 +21,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::{
     app::OutputState,
+    config::ShapeTool,
     screenshot::{
         ArrowAnnotation, Choice, CircleOutlineAnnotation, DetectedQrCode, OcrStatus, OcrTextOverlay,
         Rect, RectOutlineAnnotation, RedactAnnotation, ScreenshotImage, ToolbarPosition,
@@ -31,6 +32,7 @@ use super::{
     output_selection::OutputSelection,
     rectangle_selection::{DragState, RectangleSelection},
     settings_drawer::build_settings_drawer,
+    tool_button::build_shape_popup,
 };
 
 use super::toolbar::build_toolbar;
@@ -54,6 +56,9 @@ struct ShapesOverlay<'a, Message: Clone + 'static> {
     on_circle_end: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_rect_start: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
     on_rect_end: Option<Box<dyn Fn(f32, f32) -> Message + 'a>>,
+    // Shape styling
+    shape_color: crate::config::ShapeColor,
+    shape_shadow: bool,
 }
 
 #[derive(Debug, Default)]
@@ -186,9 +191,15 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
 
         let mut frame = Frame::new(renderer, bounds.size());
 
+        let shape_color: Color = self.shape_color.into();
         let stroke = Stroke {
-            style: Color::from_rgb(0.9, 0.1, 0.1).into(),
+            style: shape_color.into(),
             width: 3.0,
+            ..Stroke::default()
+        };
+        let shadow_stroke = Stroke {
+            style: Color::from_rgba(0.0, 0.0, 0.0, 0.9).into(),
+            width: 5.0,
             ..Stroke::default()
         };
 
@@ -204,6 +215,9 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 Point::new(min_x, min_y),
                 Size::new((max_x - min_x).max(1.0), (max_y - min_y).max(1.0)),
             );
+            if self.shape_shadow {
+                frame.stroke(&path, shadow_stroke);
+            }
             frame.stroke(&path, stroke);
         }
 
@@ -230,11 +244,29 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     b.line_to(Point::new(cx + rx * t.cos(), cy + ry * t.sin()));
                 }
             });
+            if self.shape_shadow {
+                frame.stroke(&path, shadow_stroke);
+            }
             frame.stroke(&path, stroke);
         }
 
         // Live previews (during drag)
         let constrain = state.ctrl_down || state.ctrl_latched;
+        let preview_color = Color {
+            a: 0.7,
+            ..shape_color
+        };
+        let preview_stroke = Stroke {
+            style: preview_color.into(),
+            width: 3.0,
+            ..Stroke::default()
+        };
+        let preview_shadow_stroke = Stroke {
+            style: Color::from_rgba(0.0, 0.0, 0.0, 0.6).into(),
+            width: 5.0,
+            ..Stroke::default()
+        };
+
         if let Some((sx_g, sy_g)) = self.rect_outline_drawing {
             if let Some(pos) = cursor.position_in(bounds) {
                 let sx = sx_g - self.output_rect.left as f32;
@@ -250,9 +282,10 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     Point::new(min_x, min_y),
                     Size::new((max_x - min_x).max(1.0), (max_y - min_y).max(1.0)),
                 );
-                let mut preview = stroke;
-                preview.style = Color::from_rgba(0.9, 0.1, 0.1, 0.7).into();
-                frame.stroke(&path, preview);
+                if self.shape_shadow {
+                    frame.stroke(&path, preview_shadow_stroke);
+                }
+                frame.stroke(&path, preview_stroke);
             }
         }
 
@@ -281,9 +314,10 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                         b.line_to(Point::new(cx + rx * t.cos(), cy + ry * t.sin()));
                     }
                 });
-                let mut preview = stroke;
-                preview.style = Color::from_rgba(0.9, 0.1, 0.1, 0.7).into();
-                frame.stroke(&path, preview);
+                if self.shape_shadow {
+                    frame.stroke(&path, preview_shadow_stroke);
+                }
+                frame.stroke(&path, preview_stroke);
             }
         }
 
@@ -678,8 +712,34 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_copy_on_save_toggle: Option<Msg>,
     /// Settings drawer element (only present when drawer is open)
     pub settings_drawer_element: Option<Element<'a, Msg>>,
+    /// Shape settings popup element (only present when popup is open)
+    pub shape_popup_element: Option<Element<'a, Msg>>,
     /// Canvas overlay for circle/rectangle outline rendering and input
     pub shapes_element: Element<'a, Msg>,
+    /// Primary shape tool shown in button
+    pub primary_shape_tool: ShapeTool,
+    /// Whether shape settings popup is open
+    pub shape_popup_open: bool,
+    /// Current shape color
+    pub shape_color: crate::config::ShapeColor,
+    /// Whether shape shadow is enabled
+    pub shape_shadow: bool,
+    /// Callback for toggling shape mode
+    pub on_shape_toggle: Option<Msg>,
+    /// Callback for toggling shape mode (normal click)
+    pub on_shape_popup_toggle: Option<Msg>,
+    /// Callback for opening shape popup (right-click or long-press)
+    pub on_open_shape_popup: Option<Msg>,
+    /// Callback for closing shape popup without deactivating shape mode (for click-outside)
+    pub on_close_shape_popup: Option<Msg>,
+    /// Callback for setting the primary shape tool
+    pub on_set_shape_tool: Option<Box<dyn Fn(ShapeTool) -> Msg + 'a>>,
+    /// Callback for setting shape color
+    pub on_set_shape_color: Option<Box<dyn Fn(crate::config::ShapeColor) -> Msg + 'a>>,
+    /// Callback for toggling shape shadow
+    pub on_toggle_shape_shadow: Option<Msg>,
+    /// Whether there are any annotations (for clear button in popup)
+    pub has_any_annotations: bool,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -751,6 +811,18 @@ where
         highlighted_window_index: usize,
         focused_output_index: usize,
         current_output_index: usize,
+        primary_shape_tool: ShapeTool,
+        shape_popup_open: bool,
+        shape_color: crate::config::ShapeColor,
+        shape_shadow: bool,
+        on_shape_toggle: Msg,
+        on_shape_popup_toggle: Msg,
+        on_open_shape_popup: Msg,
+        on_close_shape_popup: Msg,
+        on_set_shape_tool: impl Fn(ShapeTool) -> Msg + 'a + Clone,
+        on_set_shape_color: impl Fn(crate::config::ShapeColor) -> Msg + 'a,
+        on_toggle_shape_shadow: Msg,
+        has_any_annotations: bool,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -1017,10 +1089,12 @@ where
                     _ => false,
                 };
 
-                let has_any_annotations = !arrows.is_empty()
-                    || !redactions.is_empty()
-                    || !circles.is_empty()
-                    || !rect_outlines.is_empty();
+                // Determine if shape mode is active (any of the shape modes)
+                let shape_mode_active = match primary_shape_tool {
+                    ShapeTool::Arrow => arrow_mode,
+                    ShapeTool::Circle => circle_mode,
+                    ShapeTool::Rectangle => rect_outline_mode,
+                };
 
                 build_toolbar(
                     choice.clone(),
@@ -1029,30 +1103,28 @@ where
                     has_selection,
                     has_ocr_text,
                     qr_codes,
-                    arrow_mode,
-                    circle_mode,
-                    rect_outline_mode,
+                    primary_shape_tool,
+                    shape_mode_active,
+                    shape_popup_open,
                     redact_mode,
-                    has_any_annotations,
                     space_s,
                     space_xs,
                     space_xxs,
                     on_choice_change,
                     on_copy_to_clipboard,
                     on_save_to_pictures,
-                    on_arrow_toggle.clone(),
-                    on_circle_toggle.clone(),
-                    on_rect_outline_toggle.clone(),
+                    on_shape_popup_toggle.clone(),
+                    on_open_shape_popup.clone(),
                     on_redact_toggle.clone(),
                     on_ocr.clone(),
                     on_ocr_copy.clone(),
                     on_qr.clone(),
                     on_qr_copy.clone(),
                     on_cancel,
-                    on_clear_annotations.clone(),
                     &on_toolbar_position,
                     on_settings_toggle.clone(),
                     settings_drawer_open,
+                    settings_drawer_open || shape_popup_open, // Keep toolbar opaque when either popup is open
                     output_count,
                 )
             },
@@ -1079,7 +1151,7 @@ where
             on_redact_toggle: Some(on_redact_toggle),
             on_redact_start: Some(Box::new(on_redact_start)),
             on_redact_end: Some(Box::new(on_redact_end)),
-            on_clear_annotations: Some(on_clear_annotations),
+            on_clear_annotations: Some(on_clear_annotations.clone()),
             toolbar_position,
             on_toolbar_position: Some(Box::new(on_toolbar_position)),
             on_open_url: Some(Box::new(on_open_url)),
@@ -1108,6 +1180,24 @@ where
             } else {
                 None
             },
+            shape_popup_element: if shape_popup_open {
+                Some(build_shape_popup(
+                    primary_shape_tool,
+                    shape_color,
+                    shape_shadow,
+                    has_any_annotations,
+                    on_set_shape_tool(ShapeTool::Arrow),
+                    on_set_shape_tool(ShapeTool::Circle),
+                    on_set_shape_tool(ShapeTool::Rectangle),
+                    &on_set_shape_color,
+                    on_toggle_shape_shadow.clone(),
+                    on_clear_annotations.clone(),
+                    space_s,
+                    space_xs,
+                ))
+            } else {
+                None
+            },
             shapes_element: {
                 // Canvas overlay handles preview rendering + input for circle/rect outline
                 let program = ShapesOverlay {
@@ -1123,6 +1213,8 @@ where
                     on_circle_end: Some(Box::new(on_circle_end)),
                     on_rect_start: Some(Box::new(on_rect_outline_start)),
                     on_rect_end: Some(Box::new(on_rect_outline_end)),
+                    shape_color,
+                    shape_shadow,
                 };
 
                 canvas::Canvas::new(program)
@@ -1130,6 +1222,18 @@ where
                     .height(Length::Fill)
                     .into()
             },
+            primary_shape_tool,
+            shape_popup_open,
+            shape_color,
+            shape_shadow,
+            on_shape_toggle: Some(on_shape_toggle),
+            on_shape_popup_toggle: Some(on_shape_popup_toggle),
+            on_open_shape_popup: Some(on_open_shape_popup),
+            on_close_shape_popup: Some(on_close_shape_popup),
+            on_set_shape_tool: Some(Box::new(on_set_shape_tool)),
+            on_set_shape_color: Some(Box::new(on_set_shape_color)),
+            on_toggle_shape_shadow: Some(on_toggle_shape_shadow),
+            has_any_annotations,
         }
     }
 }
@@ -1147,6 +1251,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(Tree::new(drawer));
         }
+        if let Some(ref selector) = self.shape_popup_element {
+            children.push(Tree::new(selector));
+        }
         children
     }
 
@@ -1159,6 +1266,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         ];
         if let Some(ref mut drawer) = self.settings_drawer_element {
             elements.push(drawer);
+        }
+        if let Some(ref mut selector) = self.shape_popup_element {
+            elements.push(selector);
         }
         tree.diff_children(&mut elements);
     }
@@ -1178,6 +1288,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         ];
         if let Some(ref mut drawer) = self.settings_drawer_element {
             elements.push(drawer);
+        }
+        if let Some(ref mut selector) = self.shape_popup_element {
+            elements.push(selector);
         }
 
         let children = elements
@@ -1207,27 +1320,65 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
     ) -> cosmic::iced_core::event::Status {
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
-        // FIRST: Handle click-outside-to-close for settings drawer
+        // FIRST: Handle click-outside-to-close for settings drawer and shape selector
         // This must run before child widgets process the event
-        if self.settings_drawer_open
-            && let cosmic::iced_core::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) = &event
+        if let cosmic::iced_core::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) = &event
             && let Some(pos) = cursor.position()
         {
-            // Get the layout children to find drawer bounds
+            // Get the layout children to find popup bounds
             let layout_children: Vec<_> = layout.children().collect();
 
-            // Check if click is inside the drawer (if it exists, it's the 4th child)
-            let inside_drawer = if layout_children.len() > 3 {
-                let drawer_bounds = layout_children[3].bounds();
-                drawer_bounds.contains(pos)
-            } else {
-                false
-            };
+            // Handle shape selector popup click-outside (check first since it's on top)
+            if self.shape_popup_open {
+                // Shape selector is at index 4 if no settings drawer, or 5 if settings drawer exists
+                let selector_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
+                let inside_selector = if layout_children.len() > selector_idx {
+                    let selector_bounds = layout_children[selector_idx].bounds();
+                    selector_bounds.contains(pos)
+                } else {
+                    false
+                };
 
-            // If clicked outside the drawer, close it
-            if !inside_drawer && let Some(ref on_settings_toggle) = self.on_settings_toggle {
-                shell.publish(on_settings_toggle.clone());
-                return cosmic::iced_core::event::Status::Captured;
+                // Also check if click is inside the toolbar (on the shape button itself)
+                let inside_toolbar = if layout_children.len() > 3 {
+                    layout_children[3].bounds().contains(pos)
+                } else {
+                    false
+                };
+
+                // If clicked outside the selector and toolbar, just close popup (keep shape mode active)
+                if !inside_selector && !inside_toolbar {
+                    if let Some(ref on_close_shape_popup) = self.on_close_shape_popup {
+                        shell.publish(on_close_shape_popup.clone());
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+            }
+
+            // Handle settings drawer click-outside
+            if self.settings_drawer_open {
+                // Drawer is at index 4 (after bg, fg, shapes, menu)
+                let inside_drawer = if layout_children.len() > 4 {
+                    let drawer_bounds = layout_children[4].bounds();
+                    drawer_bounds.contains(pos)
+                } else {
+                    false
+                };
+
+                // Also check if click is inside the toolbar (index 3)
+                let inside_toolbar = if layout_children.len() > 3 {
+                    layout_children[3].bounds().contains(pos)
+                } else {
+                    false
+                };
+
+                // If clicked outside the drawer and toolbar, close it
+                if !inside_drawer && !inside_toolbar {
+                    if let Some(ref on_settings_toggle) = self.on_settings_toggle {
+                        shell.publish(on_settings_toggle.clone());
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
             }
         }
 
@@ -1291,6 +1442,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         ];
         if let Some(ref mut drawer) = self.settings_drawer_element {
             children.push(drawer);
+        }
+        if let Some(ref mut selector) = self.shape_popup_element {
+            children.push(selector);
         }
 
         let layout_children = layout.children().collect::<Vec<_>>();
@@ -1462,6 +1616,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
         }
+        if let Some(ref selector) = self.shape_popup_element {
+            children.push(selector);
+        }
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
             .into_iter()
@@ -1492,6 +1649,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             vec![&self.bg_element, &self.fg_element, &self.shapes_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
+        }
+        if let Some(ref selector) = self.shape_popup_element {
+            children.push(selector);
         }
         for (i, (layout, child)) in layout
             .into_iter()
@@ -1627,6 +1787,67 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             };
             drawer_node = drawer_node.move_to(drawer_pos);
             nodes.push(drawer_node);
+        }
+
+        // Layout shape selector popup if present
+        if let Some(ref selector) = self.shape_popup_element {
+            let child_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
+            let mut selector_node = selector
+                .as_widget()
+                .layout(&mut children[child_idx], renderer, limits);
+            let selector_bounds = selector_node.bounds();
+            let selector_margin = 4.0_f32;
+
+            // Calculate shapes button position as a fraction of toolbar size
+            // The shapes button is roughly 42% from the start of the toolbar (after position selector,
+            // divider, and 3 selection buttons, at the start of the tool buttons section)
+            // This approach is more robust than fixed pixel offsets
+            let shapes_btn_fraction = 0.42_f32;
+
+            let selector_pos = match self.toolbar_position {
+                ToolbarPosition::Bottom => {
+                    // Selector opens above the toolbar, aligned with shapes button
+                    let shapes_btn_x = menu_pos.x + menu_bounds.width * shapes_btn_fraction;
+                    Point {
+                        x: (shapes_btn_x - selector_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - selector_bounds.width - margin),
+                        y: menu_pos.y - selector_bounds.height - selector_margin,
+                    }
+                }
+                ToolbarPosition::Top => {
+                    // Selector opens below the toolbar
+                    let shapes_btn_x = menu_pos.x + menu_bounds.width * shapes_btn_fraction;
+                    Point {
+                        x: (shapes_btn_x - selector_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - selector_bounds.width - margin),
+                        y: menu_pos.y + menu_bounds.height + selector_margin,
+                    }
+                }
+                ToolbarPosition::Left => {
+                    // Selector opens to the right of the toolbar
+                    let shapes_btn_y = menu_pos.y + menu_bounds.height * shapes_btn_fraction;
+                    Point {
+                        x: menu_pos.x + menu_bounds.width + selector_margin,
+                        y: (shapes_btn_y - selector_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - selector_bounds.height - margin),
+                    }
+                }
+                ToolbarPosition::Right => {
+                    // Selector opens to the left of the toolbar
+                    let shapes_btn_y = menu_pos.y + menu_bounds.height * shapes_btn_fraction;
+                    Point {
+                        x: menu_pos.x - selector_bounds.width - selector_margin,
+                        y: (shapes_btn_y - selector_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - selector_bounds.height - margin),
+                    }
+                }
+            };
+            selector_node = selector_node.move_to(selector_pos);
+            nodes.push(selector_node);
         }
 
         layout::Node::with_children(
@@ -1966,8 +2187,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         }
 
         // Draw arrows on top of the selection using meshes
-        let arrow_color = cosmic::iced::Color::from_rgb(0.9, 0.1, 0.1); // Red
-        let arrow_border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.9); // Black
+        let shape_color: cosmic::iced::Color = self.shape_color.into();
+        let border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.9);
         let arrow_thickness = 4.0_f32;
         let head_size = 16.0_f32;
         let outline_px = 1.0_f32;
@@ -1979,23 +2200,25 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let end_x = arrow.end_x - self.output_rect.left as f32;
             let end_y = arrow.end_y - self.output_rect.top as f32;
 
-            // Border first, then main arrow
-            if let Some((vertices, indices)) = build_arrow_mesh(
-                start_x,
-                start_y,
-                end_x,
-                end_y,
-                arrow_border_color,
-                arrow_thickness + 2.0 * outline_px,
-                head_size + outline_px,
-            ) {
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.draw_mesh(Mesh::Solid {
-                        buffers: Indexed { vertices, indices },
-                        transformation: cosmic::iced_core::Transformation::IDENTITY,
-                        clip_bounds: *viewport,
+            // Border/shadow first, then main arrow
+            if self.shape_shadow {
+                if let Some((vertices, indices)) = build_arrow_mesh(
+                    start_x,
+                    start_y,
+                    end_x,
+                    end_y,
+                    border_color,
+                    arrow_thickness + 2.0 * outline_px,
+                    head_size + outline_px,
+                ) {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
                     });
-                });
+                }
             }
 
             if let Some((vertices, indices)) = build_arrow_mesh(
@@ -2003,7 +2226,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 start_y,
                 end_x,
                 end_y,
-                arrow_color,
+                shape_color,
                 arrow_thickness,
                 head_size,
             ) {
@@ -2026,25 +2249,28 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let end_x = cursor_pos.x;
             let end_y = cursor_pos.y;
 
-            let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+            let mut preview_color = shape_color;
+            preview_color.a = 0.7;
             let preview_border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6);
 
-            if let Some((vertices, indices)) = build_arrow_mesh(
-                local_start_x,
-                local_start_y,
-                end_x,
-                end_y,
-                preview_border_color,
-                arrow_thickness + 2.0 * outline_px,
-                head_size + outline_px,
-            ) {
-                renderer.with_layer(*viewport, |renderer| {
-                    renderer.draw_mesh(Mesh::Solid {
-                        buffers: Indexed { vertices, indices },
-                        transformation: cosmic::iced_core::Transformation::IDENTITY,
-                        clip_bounds: *viewport,
+            if self.shape_shadow {
+                if let Some((vertices, indices)) = build_arrow_mesh(
+                    local_start_x,
+                    local_start_y,
+                    end_x,
+                    end_y,
+                    preview_border_color,
+                    arrow_thickness + 2.0 * outline_px,
+                    head_size + outline_px,
+                ) {
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.draw_mesh(Mesh::Solid {
+                            buffers: Indexed { vertices, indices },
+                            transformation: cosmic::iced_core::Transformation::IDENTITY,
+                            clip_bounds: *viewport,
+                        });
                     });
-                });
+                }
             }
 
             if let Some((vertices, indices)) = build_arrow_mesh(
@@ -2402,16 +2628,37 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let Some(ref drawer) = self.settings_drawer_element {
             // Get the drawer layout (4th child)
             let layout_children: Vec<_> = layout.children().collect();
-            if layout_children.len() > 3 {
-                let drawer_layout = layout_children[3];
+            if layout_children.len() > 4 {
+                let drawer_layout = layout_children[4];
                 renderer.with_layer(drawer_layout.bounds(), |renderer| {
-                    let drawer_tree = &tree.children[3];
+                    let drawer_tree = &tree.children[4];
                     drawer.as_widget().draw(
                         drawer_tree,
                         renderer,
                         theme,
                         style,
                         drawer_layout,
+                        cursor,
+                        viewport,
+                    );
+                });
+            }
+        }
+
+        // Draw shape selector popup if present
+        if let Some(ref selector) = self.shape_popup_element {
+            let layout_children: Vec<_> = layout.children().collect();
+            let selector_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
+            if layout_children.len() > selector_idx {
+                let selector_layout = layout_children[selector_idx];
+                renderer.with_layer(selector_layout.bounds(), |renderer| {
+                    let selector_tree = &tree.children[selector_idx];
+                    selector.as_widget().draw(
+                        selector_tree,
+                        renderer,
+                        theme,
+                        style,
+                        selector_layout,
                         cursor,
                         viewport,
                     );
@@ -2431,6 +2678,9 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             vec![&self.bg_element, &self.fg_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
+        }
+        if let Some(ref selector) = self.shape_popup_element {
+            children.push(selector);
         }
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {
             let state = &state.children[i];

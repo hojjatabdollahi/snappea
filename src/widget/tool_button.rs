@@ -1,0 +1,585 @@
+//! Generic tool button widget with indicator dots and context popup support
+//!
+//! This module provides a reusable button widget that:
+//! - Displays an icon with indicator dots below showing which option is selected
+//! - Normal click (left button) triggers primary action (e.g., toggle mode)
+//! - Right-click or long-press triggers secondary action (e.g., open settings popup)
+//!
+//! Used for shape tools, and can be reused for other multi-option tool buttons.
+
+use cosmic::iced::Size;
+use cosmic::iced_core::{
+    layout, mouse, widget::Tree, Background, Border, Layout, Length, Rectangle,
+};
+use cosmic::iced_widget::{column, row};
+use cosmic::widget::{button, container, icon, text, toggler, tooltip};
+use cosmic::Element;
+
+use crate::config::{ShapeColor, ShapeTool};
+
+/// A wrapper widget that detects right-click and long-press events
+pub struct RightClickWrapper<'a, Msg> {
+    content: Element<'a, Msg>,
+    on_right_click: Option<Msg>,
+    press_start: std::cell::Cell<Option<std::time::Instant>>,
+}
+
+impl<'a, Msg: Clone + 'static> RightClickWrapper<'a, Msg> {
+    pub fn new(content: impl Into<Element<'a, Msg>>, on_right_click: Option<Msg>) -> Self {
+        Self {
+            content: content.into(),
+            on_right_click,
+            press_start: std::cell::Cell::new(None),
+        }
+    }
+}
+
+impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
+    for RightClickWrapper<'a, Msg>
+{
+    fn size(&self) -> Size<Length> {
+        self.content.as_widget().size()
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.content)]
+    }
+
+    fn diff(&mut self, tree: &mut Tree) {
+        tree.diff_children(std::slice::from_mut(&mut self.content));
+    }
+
+    fn layout(
+        &self,
+        tree: &mut Tree,
+        renderer: &cosmic::Renderer,
+        limits: &cosmic::iced::Limits,
+    ) -> layout::Node {
+        self.content
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits)
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &cosmic::iced_core::renderer::Style,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &Rectangle,
+    ) {
+        self.content.as_widget().draw(
+            &tree.children[0],
+            renderer,
+            theme,
+            style,
+            layout,
+            cursor,
+            viewport,
+        );
+    }
+
+    fn on_event(
+        &mut self,
+        tree: &mut Tree,
+        event: cosmic::iced_core::Event,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        renderer: &cosmic::Renderer,
+        clipboard: &mut dyn cosmic::iced_core::Clipboard,
+        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
+        viewport: &Rectangle,
+    ) -> cosmic::iced_core::event::Status {
+        // Check for right-click
+        if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) =
+            &event
+        {
+            if let Some(pos) = cursor.position() {
+                if layout.bounds().contains(pos) {
+                    if let Some(ref msg) = self.on_right_click {
+                        shell.publish(msg.clone());
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+            }
+        }
+
+        // Track press start for long-press detection
+        if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) =
+            &event
+        {
+            if let Some(pos) = cursor.position() {
+                if layout.bounds().contains(pos) {
+                    self.press_start.set(Some(std::time::Instant::now()));
+                }
+            }
+        }
+
+        // Check for long-press on release (500ms threshold)
+        if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) =
+            &event
+        {
+            if let Some(start) = self.press_start.take() {
+                if start.elapsed() >= std::time::Duration::from_millis(500) {
+                    if let Some(pos) = cursor.position() {
+                        if layout.bounds().contains(pos) {
+                            if let Some(ref msg) = self.on_right_click {
+                                shell.publish(msg.clone());
+                                return cosmic::iced_core::event::Status::Captured;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Pass event to content
+        self.content.as_widget_mut().on_event(
+            &mut tree.children[0],
+            event,
+            layout,
+            cursor,
+            renderer,
+            clipboard,
+            shell,
+            viewport,
+        )
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &Rectangle,
+        renderer: &cosmic::Renderer,
+    ) -> cosmic::iced_core::mouse::Interaction {
+        self.content.as_widget().mouse_interaction(
+            &tree.children[0],
+            layout,
+            cursor,
+            viewport,
+            renderer,
+        )
+    }
+
+    fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+    ) {
+        self.content
+            .as_widget()
+            .operate(&mut tree.children[0], layout, renderer, operation);
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        translation: cosmic::iced::Vector,
+    ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
+        self.content.as_widget_mut().overlay(
+            &mut tree.children[0],
+            layout,
+            renderer,
+            translation,
+        )
+    }
+}
+
+impl<'a, Msg: Clone + 'static> From<RightClickWrapper<'a, Msg>> for Element<'a, Msg> {
+    fn from(wrapper: RightClickWrapper<'a, Msg>) -> Self {
+        Element::new(wrapper)
+    }
+}
+
+/// Preset colors for the color picker
+pub const COLOR_PRESETS: &[(ShapeColor, &str)] = &[
+    (ShapeColor { r: 0.9, g: 0.1, b: 0.1 }, "Red"),
+    (ShapeColor { r: 0.1, g: 0.7, b: 0.1 }, "Green"),
+    (ShapeColor { r: 0.1, g: 0.4, b: 0.9 }, "Blue"),
+    (ShapeColor { r: 0.9, g: 0.7, b: 0.1 }, "Yellow"),
+    (ShapeColor { r: 0.9, g: 0.5, b: 0.1 }, "Orange"),
+    (ShapeColor { r: 0.7, g: 0.1, b: 0.7 }, "Purple"),
+    (ShapeColor { r: 1.0, g: 1.0, b: 1.0 }, "White"),
+    (ShapeColor { r: 0.0, g: 0.0, b: 0.0 }, "Black"),
+];
+
+/// Build a generic tool button with indicator dots.
+///
+/// This is a reusable button widget that can be used for any multi-option tool.
+/// - Normal click (left button): triggers `on_press`
+/// - Right click or long press: triggers `on_right_click`
+///
+/// # Arguments
+/// * `icon_name` - The icon to display on the button
+/// * `tooltip_text` - Tooltip text shown on hover
+/// * `num_options` - Number of indicator dots to show
+/// * `current_option_index` - Which dot should be highlighted (0-based)
+/// * `is_active` - Whether the tool is currently active
+/// * `is_popup_open` - Whether the settings popup is open
+/// * `is_enabled` - Whether the button is enabled
+/// * `on_press` - Callback for normal click
+/// * `on_right_click` - Callback for right-click/long-press
+/// * `padding` - Button padding
+pub fn build_tool_button<'a, Msg: Clone + 'static>(
+    icon_name: &'a str,
+    tooltip_text: &'a str,
+    num_options: usize,
+    current_option_index: usize,
+    is_active: bool,
+    is_popup_open: bool,
+    is_enabled: bool,
+    on_press: Option<Msg>,
+    on_right_click: Option<Msg>,
+    padding: u16,
+) -> Element<'a, Msg> {
+    let main_size = 40.0;
+    let dot_size = 6.0_f32;
+    let dot_spacing = 4.0_f32;
+
+    let button_class = if is_active || is_popup_open {
+        cosmic::theme::Button::Suggested
+    } else {
+        cosmic::theme::Button::Icon
+    };
+
+    // Standard button like all other toolbar buttons
+    let main_button = if is_enabled {
+        button::custom(
+            icon::Icon::from(icon::from_name(icon_name).size(64))
+                .width(Length::Fixed(main_size))
+                .height(Length::Fixed(main_size)),
+        )
+        .class(button_class)
+        .on_press_maybe(on_press.clone())
+        .padding(padding)
+    } else {
+        button::custom(
+            icon::Icon::from(icon::from_name(icon_name).size(64))
+                .width(Length::Fixed(main_size))
+                .height(Length::Fixed(main_size)),
+        )
+        .class(button_class)
+        .padding(padding)
+    };
+
+    // Wrap button in a right-click handler
+    let main_button_with_events = RightClickWrapper::new(main_button, on_right_click);
+
+    // Create indicator dots using theme accent color
+    let dot_inactive_color = cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5);
+
+    let make_dot = move |index: usize| {
+        let is_active_dot = index == current_option_index;
+        container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+            .width(Length::Fixed(dot_size))
+            .height(Length::Fixed(dot_size))
+            .class(cosmic::theme::Container::Custom(Box::new(
+                move |theme| {
+                    let cosmic_theme = theme.cosmic();
+                    let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+                    cosmic::iced::widget::container::Style {
+                        background: Some(Background::Color(if is_active_dot {
+                            accent_color
+                        } else {
+                            dot_inactive_color
+                        })),
+                        border: Border {
+                            radius: (dot_size / 2.0).into(),
+                            ..Default::default()
+                        },
+                        ..Default::default()
+                    }
+                },
+            )))
+    };
+
+    // Build dots row dynamically based on num_options
+    let mut dots: Vec<Element<'_, Msg>> = Vec::with_capacity(num_options);
+    for i in 0..num_options {
+        dots.push(make_dot(i).into());
+    }
+    let dots_row = row(dots)
+        .spacing(dot_spacing as u16)
+        .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Wrap dots in a container for centering
+    let dots_container = container(dots_row)
+        .width(Length::Fixed(main_size + (padding as f32 * 2.0)))
+        .height(Length::Fixed(dot_size))
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    // Stack button (with right-click wrapper) and dots vertically
+    let combined = column![
+        Element::from(main_button_with_events),
+        dots_container
+    ]
+    .spacing(2)
+    .align_x(cosmic::iced_core::Alignment::Center);
+
+    // Wrap in a container that aligns the top of the button with other buttons
+    let aligned_container = container(combined)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center)
+        .align_y(cosmic::iced_core::alignment::Vertical::Top);
+
+    tooltip(aligned_container, tooltip_text, tooltip::Position::Bottom).into()
+}
+
+/// Build the shape tool button (convenience wrapper around `build_tool_button`).
+pub fn build_shape_button<'a, Msg: Clone + 'static>(
+    current_tool: ShapeTool,
+    is_active: bool,
+    is_popup_open: bool,
+    is_enabled: bool,
+    on_press: Option<Msg>,
+    on_right_click: Option<Msg>,
+    padding: u16,
+    _space_xxs: u16,
+) -> Element<'a, Msg> {
+    let option_index = match current_tool {
+        ShapeTool::Arrow => 0,
+        ShapeTool::Circle => 1,
+        ShapeTool::Rectangle => 2,
+    };
+
+    build_tool_button(
+        current_tool.icon_name(),
+        current_tool.tooltip(),
+        3, // 3 shape options
+        option_index,
+        is_active,
+        is_popup_open,
+        is_enabled,
+        on_press,
+        on_right_click,
+        padding,
+    )
+}
+
+/// Build the shape settings popup element
+pub fn build_shape_popup<'a, Msg: Clone + 'static>(
+    current_tool: ShapeTool,
+    current_color: ShapeColor,
+    shadow_enabled: bool,
+    has_annotations: bool,
+    on_select_arrow: Msg,
+    on_select_circle: Msg,
+    on_select_rectangle: Msg,
+    on_color_change: &(impl Fn(ShapeColor) -> Msg + 'a),
+    on_shadow_toggle: Msg,
+    on_clear: Msg,
+    space_s: u16,
+    space_xs: u16,
+) -> Element<'a, Msg> {
+    let icon_size = 32.0;
+
+    // Shape selection buttons in a row
+    let btn_arrow = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("arrow-symbolic").size(48))
+                .width(Length::Fixed(icon_size))
+                .height(Length::Fixed(icon_size)),
+        )
+        .class(if current_tool == ShapeTool::Arrow {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_select_arrow)
+        .padding(space_xs),
+        "Arrow",
+        tooltip::Position::Bottom,
+    );
+
+    let btn_circle = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("circle-symbolic").size(48))
+                .width(Length::Fixed(icon_size))
+                .height(Length::Fixed(icon_size)),
+        )
+        .class(if current_tool == ShapeTool::Circle {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_select_circle)
+        .padding(space_xs),
+        "Oval or Circle",
+        tooltip::Position::Bottom,
+    );
+
+    let btn_rectangle = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("square-symbolic").size(48))
+                .width(Length::Fixed(icon_size))
+                .height(Length::Fixed(icon_size)),
+        )
+        .class(if current_tool == ShapeTool::Rectangle {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_select_rectangle)
+        .padding(space_xs),
+        "Rectangle or Square",
+        tooltip::Position::Bottom,
+    );
+
+    // Center the shape buttons in the popup
+    let shape_buttons = container(
+        row![btn_arrow, btn_circle, btn_rectangle]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    // Subtitle with keyboard shortcuts
+    let shape_subtitle = container(
+        text::caption("Shift+A to cycle shapes, A to toggle")
+            .class(cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0))),
+    )
+    .width(Length::Fill)
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    // Color picker - 2 rows of 4 color swatches each to avoid clipping
+    let make_color_swatch = |color: &ShapeColor, name: &'static str| {
+        let is_selected = (color.r - current_color.r).abs() < 0.05
+            && (color.g - current_color.g).abs() < 0.05
+            && (color.b - current_color.b).abs() < 0.05;
+        let color_val = *color;
+        let iced_color: cosmic::iced::Color = color_val.into();
+
+        tooltip(
+            button::custom(
+                container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .class(cosmic::theme::Container::Custom(Box::new(
+                        move |_theme| cosmic::iced::widget::container::Style {
+                            background: Some(Background::Color(iced_color)),
+                            border: Border {
+                                radius: 4.0.into(),
+                                width: if is_selected { 2.0 } else { 1.0 },
+                                color: if is_selected {
+                                    cosmic::iced::Color::WHITE
+                                } else {
+                                    cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5)
+                                },
+                            },
+                            ..Default::default()
+                        },
+                    ))),
+            )
+            .class(cosmic::theme::Button::Text)
+            .on_press(on_color_change(color_val))
+            .padding(2),
+            name,
+            tooltip::Position::Bottom,
+        )
+    };
+
+    // First row: Red, Green, Blue, Yellow
+    let color_row1 = row![
+        make_color_swatch(&COLOR_PRESETS[0].0, COLOR_PRESETS[0].1),
+        make_color_swatch(&COLOR_PRESETS[1].0, COLOR_PRESETS[1].1),
+        make_color_swatch(&COLOR_PRESETS[2].0, COLOR_PRESETS[2].1),
+        make_color_swatch(&COLOR_PRESETS[3].0, COLOR_PRESETS[3].1),
+    ]
+    .spacing(space_xs)
+    .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Second row: Orange, Purple, White, Black
+    let color_row2 = row![
+        make_color_swatch(&COLOR_PRESETS[4].0, COLOR_PRESETS[4].1),
+        make_color_swatch(&COLOR_PRESETS[5].0, COLOR_PRESETS[5].1),
+        make_color_swatch(&COLOR_PRESETS[6].0, COLOR_PRESETS[6].1),
+        make_color_swatch(&COLOR_PRESETS[7].0, COLOR_PRESETS[7].1),
+    ]
+    .spacing(space_xs)
+    .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Center the color rows
+    let color_row1_centered = container(color_row1)
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    let color_row2_centered = container(color_row2)
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    let color_section = column![text::body("Color"), color_row1_centered, color_row2_centered]
+        .spacing(space_xs)
+        .align_x(cosmic::iced_core::Alignment::Start);
+
+    // Shadow toggle
+    let shadow_row = row![
+        text::body("Shadow"),
+        cosmic::widget::horizontal_space(),
+        toggler(shadow_enabled)
+            .on_toggle(move |_| on_shadow_toggle.clone())
+            .size(20.0),
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
+    // Clear button (bottom right)
+    let clear_button = button::custom(
+        row![
+            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                .width(Length::Fixed(16.0))
+                .height(Length::Fixed(16.0)),
+            text::body("Clear"),
+        ]
+        .spacing(space_xs)
+        .align_y(cosmic::iced_core::Alignment::Center),
+    )
+    .class(cosmic::theme::Button::Destructive)
+    .on_press_maybe(has_annotations.then_some(on_clear))
+    .padding([space_xs, space_s]);
+
+    let clear_row = row![cosmic::widget::horizontal_space(), clear_button]
+        .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Assemble popup content
+    // Width needs to fit: 4 color swatches per row * (24px + 2*2 padding + spacing) + popup padding
+    let popup_content = column![
+        shape_buttons,
+        shape_subtitle,
+        cosmic::widget::divider::horizontal::light(),
+        color_section,
+        cosmic::widget::divider::horizontal::light(),
+        shadow_row,
+        cosmic::widget::divider::horizontal::light(),
+        clear_row,
+    ]
+    .spacing(space_s)
+    .padding(space_s)
+    .width(Length::Fixed(230.0));
+
+    container(popup_content)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(
+                    cosmic_theme.background.component.base.into(),
+                )),
+                text_color: Some(cosmic_theme.background.component.on.into()),
+                border: Border {
+                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                    width: 1.0,
+                    color: cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
+                },
+                ..Default::default()
+            }
+        })))
+        .into()
+}

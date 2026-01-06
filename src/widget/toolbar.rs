@@ -9,7 +9,9 @@ use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, icon, tooltip};
 
 use super::rectangle_selection::DragState;
+use super::tool_button::build_shape_button;
 use super::toolbar_position_selector::ToolbarPositionSelector;
+use crate::config::ShapeTool;
 use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
 
 /// A wrapper widget that reduces opacity when not hovered
@@ -202,33 +204,36 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     has_selection: bool,
     has_ocr_text: bool,
     qr_codes: &[DetectedQrCode],
-    arrow_mode: bool,
-    circle_mode: bool,
-    rect_outline_mode: bool,
+    primary_shape_tool: ShapeTool,
+    shape_mode_active: bool,
+    shape_popup_open: bool,
     redact_mode: bool,
-    has_any_annotations: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
     on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
-    on_arrow_toggle: Msg,
-    on_circle_toggle: Msg,
-    on_rect_outline_toggle: Msg,
+    on_shape_popup_toggle: Msg,
+    on_open_shape_popup: Msg,
     on_redact_toggle: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
     on_qr_copy: Msg,
     on_cancel: Msg,
-    on_clear_annotations: Msg,
     on_toolbar_position: &(impl Fn(ToolbarPosition) -> Msg + 'a),
     on_settings_toggle: Msg,
     settings_drawer_open: bool,
+    force_toolbar_opaque: bool,
     output_count: usize,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
+
+    let is_vertical = matches!(
+        toolbar_position,
+        ToolbarPosition::Left | ToolbarPosition::Right
+    );
 
     let active_icon =
         cosmic::theme::Svg::Custom(Rc::new(|theme| cosmic::iced_widget::svg::Style {
@@ -357,58 +362,18 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
-    // Arrow drawing button
-    let btn_arrow = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("arrow-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if arrow_mode {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press_maybe(has_selection.then_some(on_arrow_toggle.clone()))
-        .padding(space_xs),
-        "Draw Arrow (A)",
-        tooltip::Position::Bottom,
-    );
-
-    // Circle/ellipse outline button
-    let btn_circle = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("circle-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if circle_mode {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press_maybe(has_selection.then_some(on_circle_toggle.clone()))
-        .padding(space_xs),
-        "Draw Circle (hold Ctrl for perfect circle)",
-        tooltip::Position::Bottom,
-    );
-
-    // Rectangle outline button
-    let btn_rect_outline = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("square-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if rect_outline_mode {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press_maybe(has_selection.then_some(on_rect_outline_toggle.clone()))
-        .padding(space_xs),
-        "Draw Rectangle (hold Ctrl for square)",
-        tooltip::Position::Bottom,
+    // Shape drawing button with indicator dots
+    // - Normal click: toggles shape mode on/off
+    // - Right-click or long-press: opens shape settings popup
+    let btn_shapes: Element<'_, Msg> = build_shape_button(
+        primary_shape_tool,
+        shape_mode_active,
+        shape_popup_open,
+        has_selection,
+        has_selection.then_some(on_shape_popup_toggle.clone()),
+        has_selection.then_some(on_open_shape_popup.clone()),
+        space_xs,
+        space_xxs,
     );
 
     // Redact drawing button
@@ -426,19 +391,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .on_press_maybe(has_selection.then_some(on_redact_toggle.clone()))
         .padding(space_xs),
         "Redact (D)",
-        tooltip::Position::Bottom,
-    );
-
-    let btn_clear = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("edit-delete-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_any_annotations.then_some(on_clear_annotations.clone()))
-        .padding(space_xs),
-        "Clear Annotations",
         tooltip::Position::Bottom,
     );
 
@@ -531,15 +483,14 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
-    let is_vertical = matches!(
-        toolbar_position,
-        ToolbarPosition::Left | ToolbarPosition::Right
-    );
-
     let toolbar_content: Element<'_, Msg> = if is_vertical {
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
         if has_selection {
+            let tool_buttons = column![btn_shapes, btn_redact, btn_ocr, btn_qr]
+                .spacing(space_s)
+                .align_x(cosmic::iced_core::Alignment::Center);
+
             column![
                 position_selector,
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -547,9 +498,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_arrow, btn_circle, btn_rect_outline, btn_redact, btn_clear, btn_ocr, btn_qr]
-                    .spacing(space_s)
-                    .align_x(cosmic::iced_core::Alignment::Center),
+                tool_buttons,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_copy, btn_save]
                     .spacing(space_s)
@@ -587,6 +536,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     } else {
         // Horizontal layout for top/bottom positions
         if has_selection {
+            let tool_buttons = row![btn_shapes, btn_redact, btn_ocr, btn_qr]
+                .spacing(space_s)
+                .align_y(cosmic::iced_core::Alignment::Center);
+
             row![
                 position_selector,
                 vertical::light().height(Length::Fixed(64.0)),
@@ -594,9 +547,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_arrow, btn_circle, btn_rect_outline, btn_redact, btn_clear, btn_ocr, btn_qr]
-                    .spacing(space_s)
-                    .align_y(cosmic::iced_core::Alignment::Center),
+                tool_buttons,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_copy, btn_save]
                     .spacing(space_s)
@@ -647,6 +598,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     );
 
     HoverOpacity::new(toolbar)
-        .force_opaque(settings_drawer_open)
+        .force_opaque(force_toolbar_opaque)
         .into()
 }

@@ -24,7 +24,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 use zbus::zvariant;
 
 use crate::app::{App, OutputState};
-use crate::config::{BlazingshotConfig, SaveLocation};
+use crate::config::{BlazingshotConfig, SaveLocation, ShapeColor};
 use crate::wayland::{CaptureSource, ShmImage, WaylandHelper};
 use crate::widget::{keyboard_wrapper::KeyboardWrapper, rectangle_selection::DragState};
 use crate::{PortalResponse, fl};
@@ -388,6 +388,9 @@ pub enum ToolbarPosition {
     Right,
 }
 
+// Re-export ShapeTool from config module
+pub use crate::config::ShapeTool;
+
 #[derive(Debug, Clone)]
 pub enum Msg {
     Capture,
@@ -420,6 +423,14 @@ pub enum Msg {
     RectOutlineEnd(f32, f32),               // finish drawing rectangle outline at position
     RectOutlineCancel,                      // cancel current rectangle outline drawing
     ClearAnnotations,                       // clear all annotations (arrows, redactions, circles, rectangles)
+    ShapeModeToggle,                         // toggle shape drawing mode (uses primary_shape_tool)
+    SetPrimaryShapeTool(ShapeTool),          // set the primary shape tool (arrow/circle/rectangle)
+    CycleShapeTool,                          // cycle to next shape tool and activate it
+    ToggleShapePopup,                        // toggle shape mode on/off (normal click)
+    OpenShapePopup,                          // open shape popup (right-click or long-press)
+    CloseShapePopup,                         // close shape popup without deactivating shape mode (for click-outside)
+    SetShapeColor(ShapeColor),               // set shape annotation color
+    ToggleShapeShadow,                       // toggle shadow on shapes
     ToolbarPositionChange(ToolbarPosition), // change toolbar position
     CopyToClipboard,                        // capture and copy to clipboard
     SaveToPictures,                         // capture and save to Pictures folder
@@ -503,6 +514,14 @@ pub struct Args {
     pub toolbar_position: ToolbarPosition,
     /// Whether settings drawer is open
     pub settings_drawer_open: bool,
+    /// Primary shape tool shown in the button
+    pub primary_shape_tool: ShapeTool,
+    /// Whether shape settings popup is open
+    pub shape_popup_open: bool,
+    /// Current color for shape annotations
+    pub shape_color: ShapeColor,
+    /// Whether to add shadow/border to shapes
+    pub shape_shadow: bool,
     /// Whether magnifier is enabled (persisted setting)
     pub magnifier_enabled: bool,
     /// Save location setting (Pictures or Documents)
@@ -656,6 +675,10 @@ impl Screenshot {
                 rect_outline_drawing: None,
                 toolbar_position: ToolbarPosition::default(),
                 settings_drawer_open: false,
+                primary_shape_tool: config.primary_shape_tool,
+                shape_popup_open: false,
+                shape_color: config.shape_color,
+                shape_shadow: config.shape_shadow,
                 magnifier_enabled: config.magnifier_enabled,
                 save_location_setting: config.save_location,
                 copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
@@ -770,6 +793,22 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.highlighted_window_index,
             args.focused_output_index,
             i,
+            args.primary_shape_tool,
+            args.shape_popup_open,
+            args.shape_color,
+            args.shape_shadow,
+            Msg::ShapeModeToggle,
+            Msg::ToggleShapePopup,
+            Msg::OpenShapePopup,
+            Msg::CloseShapePopup,
+            Msg::SetPrimaryShapeTool,
+            Msg::SetShapeColor,
+            Msg::ToggleShapeShadow,
+            // has_any_annotations for clear button in popup
+            !args.arrows.is_empty()
+                || !args.circles.is_empty()
+                || !args.rect_outlines.is_empty()
+                || !args.redactions.is_empty(),
         ),
         {
             // Determine if we have a complete selection for action shortcuts
@@ -849,8 +888,17 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 Key::Named(Named::ArrowLeft) if in_screen_picker => Some(Msg::NavigateLeft),
                 Key::Named(Named::ArrowRight) if in_screen_picker => Some(Msg::NavigateRight),
                 // Mode toggle shortcuts (require selection)
+                // Shift+A: cycle shape tool (arrow -> circle -> rectangle -> arrow)
+                Key::Character(c)
+                    if c.as_str().eq_ignore_ascii_case("a")
+                        && modifiers.shift()
+                        && has_selection =>
+                {
+                    Some(Msg::CycleShapeTool)
+                }
+                // A: toggle current shape tool
                 Key::Character(c) if c.as_str() == "a" && has_selection => {
-                    Some(Msg::ArrowModeToggle)
+                    Some(Msg::ShapeModeToggle)
                 }
                 Key::Character(c) if c.as_str() == "d" && has_selection => {
                     Some(Msg::RedactModeToggle)
@@ -909,6 +957,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 circles,
                 rect_outlines,
                 also_copy_to_clipboard,
+                shape_color,
+                shape_shadow,
                 ..
             } = args;
 
@@ -943,18 +993,29 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &output_rect,
                                     scale,
                                 );
-                                draw_arrows_on_image(&mut final_img, &arrows, &output_rect, scale);
+                                draw_arrows_on_image(
+                                    &mut final_img,
+                                    &arrows,
+                                    &output_rect,
+                                    scale,
+                                    shape_color,
+                                    shape_shadow,
+                                );
                                 draw_rect_outlines_on_image(
                                     &mut final_img,
                                     &rect_outlines,
                                     &output_rect,
                                     scale,
+                                    shape_color,
+                                    shape_shadow,
                                 );
                                 draw_circle_outlines_on_image(
                                     &mut final_img,
                                     &circles,
                                     &output_rect,
                                     scale,
+                                    shape_color,
+                                    shape_shadow,
                                 );
                             }
                         }
@@ -1070,13 +1131,34 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             draw_redactions_on_image(&mut img, &redactions, &r, target_scale);
                         }
                         if !arrows.is_empty() {
-                            draw_arrows_on_image(&mut img, &arrows, &r, target_scale);
+                            draw_arrows_on_image(
+                                &mut img,
+                                &arrows,
+                                &r,
+                                target_scale,
+                                shape_color,
+                                shape_shadow,
+                            );
                         }
                         if !rect_outlines.is_empty() {
-                            draw_rect_outlines_on_image(&mut img, &rect_outlines, &r, target_scale);
+                            draw_rect_outlines_on_image(
+                                &mut img,
+                                &rect_outlines,
+                                &r,
+                                target_scale,
+                                shape_color,
+                                shape_shadow,
+                            );
                         }
                         if !circles.is_empty() {
-                            draw_circle_outlines_on_image(&mut img, &circles, &r, target_scale);
+                            draw_circle_outlines_on_image(
+                                &mut img,
+                                &circles,
+                                &r,
+                                target_scale,
+                                shape_color,
+                                shape_shadow,
+                            );
                         }
 
                         if let Some(ref image_path) = image_path {
@@ -1252,18 +1334,24 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     &arrows,
                                     &window_rect,
                                     image_scale,
+                                    shape_color,
+                                    shape_shadow,
                                 );
                                 draw_rect_outlines_on_image(
                                     &mut final_img,
                                     &rect_outlines,
                                     &window_rect,
                                     image_scale,
+                                    shape_color,
+                                    shape_shadow,
                                 );
                                 draw_circle_outlines_on_image(
                                     &mut final_img,
                                     &circles,
                                     &window_rect,
                                     image_scale,
+                                    shape_color,
+                                    shape_shadow,
                                 );
                             }
                         }
@@ -2243,6 +2331,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         Msg::ToggleSettingsDrawer => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.settings_drawer_open = !args.settings_drawer_open;
+                // Close shape popup if opening settings drawer
+                if args.settings_drawer_open {
+                    args.shape_popup_open = false;
+                }
             }
             cosmic::Task::none()
         }
@@ -2254,6 +2346,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     magnifier_enabled: args.magnifier_enabled,
                     save_location: args.save_location_setting,
                     copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
                 };
                 config.save();
             }
@@ -2267,6 +2362,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     magnifier_enabled: args.magnifier_enabled,
                     save_location: args.save_location_setting,
                     copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
                 };
                 config.save();
             }
@@ -2280,6 +2378,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     magnifier_enabled: args.magnifier_enabled,
                     save_location: args.save_location_setting,
                     copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
                 };
                 config.save();
             }
@@ -2293,6 +2394,274 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     magnifier_enabled: args.magnifier_enabled,
                     save_location: args.save_location_setting,
                     copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::ShapeModeToggle => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Toggle the current shape mode based on primary_shape_tool
+                match args.primary_shape_tool {
+                    ShapeTool::Arrow => {
+                        args.arrow_mode = !args.arrow_mode;
+                        if !args.arrow_mode {
+                            args.arrow_drawing = None;
+                        } else {
+                            // Disable other modes
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                            args.redact_mode = false;
+                            args.redact_drawing = None;
+                            // Clear OCR/QR
+                            args.ocr_overlays.clear();
+                            args.ocr_status = OcrStatus::Idle;
+                            args.ocr_text = None;
+                            args.qr_codes.clear();
+                        }
+                    }
+                    ShapeTool::Circle => {
+                        args.circle_mode = !args.circle_mode;
+                        if !args.circle_mode {
+                            args.circle_drawing = None;
+                        } else {
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                            args.redact_mode = false;
+                            args.redact_drawing = None;
+                            args.ocr_overlays.clear();
+                            args.ocr_status = OcrStatus::Idle;
+                            args.ocr_text = None;
+                            args.qr_codes.clear();
+                        }
+                    }
+                    ShapeTool::Rectangle => {
+                        args.rect_outline_mode = !args.rect_outline_mode;
+                        if !args.rect_outline_mode {
+                            args.rect_outline_drawing = None;
+                        } else {
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                            args.redact_mode = false;
+                            args.redact_drawing = None;
+                            args.ocr_overlays.clear();
+                            args.ocr_status = OcrStatus::Idle;
+                            args.ocr_text = None;
+                            args.qr_codes.clear();
+                        }
+                    }
+                }
+                // Close shape popup if open
+                args.shape_popup_open = false;
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetPrimaryShapeTool(tool) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.primary_shape_tool = tool;
+
+                // Also activate the selected shape mode
+                match tool {
+                    ShapeTool::Arrow => {
+                        args.arrow_mode = true;
+                        args.circle_mode = false;
+                        args.circle_drawing = None;
+                        args.rect_outline_mode = false;
+                        args.rect_outline_drawing = None;
+                    }
+                    ShapeTool::Circle => {
+                        args.circle_mode = true;
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
+                        args.rect_outline_mode = false;
+                        args.rect_outline_drawing = None;
+                    }
+                    ShapeTool::Rectangle => {
+                        args.rect_outline_mode = true;
+                        args.arrow_mode = false;
+                        args.arrow_drawing = None;
+                        args.circle_mode = false;
+                        args.circle_drawing = None;
+                    }
+                }
+
+                // Keep popup open to allow changing other settings
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::CycleShapeTool => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Cycle to next shape tool and activate it
+                args.primary_shape_tool = args.primary_shape_tool.next();
+                args.shape_popup_open = false;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                };
+                config.save();
+            }
+            // Also toggle the shape mode on
+            update_msg(app, Msg::ShapeModeToggle)
+        }
+        Msg::ToggleShapePopup => {
+            // Normal click: just toggle shape mode on/off (no popup)
+            if let Some(args) = app.screenshot_args.as_mut() {
+                let is_shape_active =
+                    args.arrow_mode || args.circle_mode || args.rect_outline_mode;
+
+                if is_shape_active {
+                    // Shape mode is active -> deactivate it, close popup
+                    args.arrow_mode = false;
+                    args.arrow_drawing = None;
+                    args.circle_mode = false;
+                    args.circle_drawing = None;
+                    args.rect_outline_mode = false;
+                    args.rect_outline_drawing = None;
+                    args.shape_popup_open = false;
+                } else {
+                    // Shape mode is inactive -> activate it (no popup)
+                    args.settings_drawer_open = false;
+                    args.shape_popup_open = false; // Close popup if open
+
+                    // Disable other modes first
+                    args.redact_mode = false;
+                    args.redact_drawing = None;
+                    args.ocr_overlays.clear();
+                    args.ocr_status = OcrStatus::Idle;
+                    args.ocr_text = None;
+                    args.qr_codes.clear();
+
+                    // Enable the current shape tool
+                    match args.primary_shape_tool {
+                        ShapeTool::Arrow => {
+                            args.arrow_mode = true;
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                        }
+                        ShapeTool::Circle => {
+                            args.circle_mode = true;
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                        }
+                        ShapeTool::Rectangle => {
+                            args.rect_outline_mode = true;
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::OpenShapePopup => {
+            // Right-click or long-press: open popup and activate shape mode
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.shape_popup_open = true;
+                args.settings_drawer_open = false;
+
+                // Disable other modes first
+                args.redact_mode = false;
+                args.redact_drawing = None;
+                args.ocr_overlays.clear();
+                args.ocr_status = OcrStatus::Idle;
+                args.ocr_text = None;
+                args.qr_codes.clear();
+
+                // Enable the current shape tool if not already active
+                let is_shape_active =
+                    args.arrow_mode || args.circle_mode || args.rect_outline_mode;
+                if !is_shape_active {
+                    match args.primary_shape_tool {
+                        ShapeTool::Arrow => {
+                            args.arrow_mode = true;
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                        }
+                        ShapeTool::Circle => {
+                            args.circle_mode = true;
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.rect_outline_mode = false;
+                            args.rect_outline_drawing = None;
+                        }
+                        ShapeTool::Rectangle => {
+                            args.rect_outline_mode = true;
+                            args.arrow_mode = false;
+                            args.arrow_drawing = None;
+                            args.circle_mode = false;
+                            args.circle_drawing = None;
+                        }
+                    }
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::CloseShapePopup => {
+            // Just close the popup without deactivating shape mode (used for click-outside)
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.shape_popup_open = false;
+            }
+            cosmic::Task::none()
+        }
+        Msg::SetShapeColor(color) => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.shape_color = color;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
+                };
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        Msg::ToggleShapeShadow => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.shape_shadow = !args.shape_shadow;
+                // Persist the setting
+                let config = BlazingshotConfig {
+                    magnifier_enabled: args.magnifier_enabled,
+                    save_location: args.save_location_setting,
+                    copy_to_clipboard_on_save: args.copy_to_clipboard_on_save,
+                    primary_shape_tool: args.primary_shape_tool,
+                    shape_color: args.shape_color,
+                    shape_shadow: args.shape_shadow,
                 };
                 config.save();
             }
@@ -2516,6 +2885,10 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         rect_outlines: _,
         rect_outline_mode: _,
         rect_outline_drawing: _,
+        primary_shape_tool: _,
+        shape_popup_open: _,
+        shape_color: _,
+        shape_shadow: _,
     } = &args;
 
     if app.outputs.len() != images.len() {

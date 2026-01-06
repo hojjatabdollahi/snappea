@@ -1,7 +1,55 @@
 //! Configuration persistence for blazingshot settings
 
 use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
+use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
+
+/// Serializable color representation for config storage
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub struct ShapeColor {
+    pub r: f32,
+    pub g: f32,
+    pub b: f32,
+}
+
+impl Default for ShapeColor {
+    fn default() -> Self {
+        // Default red color matching current arrow color
+        Self {
+            r: 0.9,
+            g: 0.1,
+            b: 0.1,
+        }
+    }
+}
+
+impl From<ShapeColor> for Color {
+    fn from(c: ShapeColor) -> Self {
+        Color::from_rgb(c.r, c.g, c.b)
+    }
+}
+
+impl From<Color> for ShapeColor {
+    fn from(c: Color) -> Self {
+        Self {
+            r: c.r,
+            g: c.g,
+            b: c.b,
+        }
+    }
+}
+
+impl ShapeColor {
+    /// Convert to image crate RGBA format (0-255)
+    pub fn to_rgba_u8(self) -> [u8; 4] {
+        [
+            (self.r * 255.0).round() as u8,
+            (self.g * 255.0).round() as u8,
+            (self.b * 255.0).round() as u8,
+            255,
+        ]
+    }
+}
 
 /// Save location for screenshots (Pictures or Documents)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -11,9 +59,47 @@ pub enum SaveLocation {
     Documents,
 }
 
+/// Shape annotation tool type (for split button selection)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum ShapeTool {
+    #[default]
+    Arrow,
+    Circle,
+    Rectangle,
+}
+
+impl ShapeTool {
+    /// Get the next shape tool in the cycle
+    pub fn next(self) -> Self {
+        match self {
+            ShapeTool::Arrow => ShapeTool::Circle,
+            ShapeTool::Circle => ShapeTool::Rectangle,
+            ShapeTool::Rectangle => ShapeTool::Arrow,
+        }
+    }
+
+    /// Get the icon name for this shape tool
+    pub fn icon_name(self) -> &'static str {
+        match self {
+            ShapeTool::Arrow => "arrow-symbolic",
+            ShapeTool::Circle => "circle-symbolic",
+            ShapeTool::Rectangle => "square-symbolic",
+        }
+    }
+
+    /// Get the tooltip text for this shape tool
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            ShapeTool::Arrow => "Draw Arrow (A, right-click for settings)",
+            ShapeTool::Circle => "Draw Circle (A, Ctrl for perfect, right-click for settings)",
+            ShapeTool::Rectangle => "Draw Rectangle (A, Ctrl for square, right-click for settings)",
+        }
+    }
+}
+
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
-#[version = 1]
+#[version = 3]
 pub struct BlazingshotConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
@@ -21,6 +107,12 @@ pub struct BlazingshotConfig {
     pub save_location: SaveLocation,
     /// Whether to also copy to clipboard when saving to file
     pub copy_to_clipboard_on_save: bool,
+    /// Primary shape tool shown in the button
+    pub primary_shape_tool: ShapeTool,
+    /// Color for shape annotations
+    pub shape_color: ShapeColor,
+    /// Whether to add shadow/border to shapes
+    pub shape_shadow: bool,
 }
 
 impl BlazingshotConfig {
@@ -68,6 +160,12 @@ impl Default for BlazingshotConfig {
             save_location: SaveLocation::Pictures,
             // Don't copy to clipboard by default when saving
             copy_to_clipboard_on_save: false,
+            // Default to Arrow as primary shape tool
+            primary_shape_tool: ShapeTool::Arrow,
+            // Default red color for shapes
+            shape_color: ShapeColor::default(),
+            // Shadow enabled by default (matches current arrow behavior)
+            shape_shadow: true,
         }
     }
 }

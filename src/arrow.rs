@@ -2,6 +2,7 @@
 
 use image::RgbaImage;
 
+use crate::config::ShapeColor;
 use crate::screenshot::Rect;
 
 /// Arrow annotation for drawing on screenshots
@@ -56,8 +57,11 @@ pub fn draw_arrows_on_image(
     arrows: &[ArrowAnnotation],
     selection_rect: &Rect,
     scale: f32,
+    shape_color: ShapeColor,
+    shape_shadow: bool,
 ) {
-    let arrow_color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let [r, g, b, a] = shape_color.to_rgba_u8();
+    let arrow_color = image::Rgba([r, g, b, a]);
     let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]); // Black
     let thickness = 4.0 * scale;
     let head_size = 16.0 * scale;
@@ -72,17 +76,19 @@ pub fn draw_arrows_on_image(
         let start_y = (arrow.start_y - selection_rect.top as f32) * scale;
         let end_x = (arrow.end_x - selection_rect.left as f32) * scale;
         let end_y = (arrow.end_y - selection_rect.top as f32) * scale;
-        // Border first, then main arrow
-        draw_single_arrow(
-            img,
-            start_x,
-            start_y,
-            end_x,
-            end_y,
-            border_color,
-            border_thickness,
-            border_head_size,
-        );
+        // Border/shadow first, then main arrow
+        if shape_shadow {
+            draw_single_arrow(
+                img,
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                border_color,
+                border_thickness,
+                border_head_size,
+            );
+        }
         draw_single_arrow(
             img,
             start_x,
@@ -202,25 +208,38 @@ pub fn draw_redactions_on_image(
     }
 }
 
-/// Draw rectangle outlines onto an image (red stroke, no fill)
+/// Draw rectangle outlines onto an image (colored stroke, no fill)
 pub fn draw_rect_outlines_on_image(
     img: &mut RgbaImage,
     rects: &[RectOutlineAnnotation],
     selection_rect: &Rect,
     scale: f32,
+    shape_color: ShapeColor,
+    shape_shadow: bool,
 ) {
-    let color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let [r, g, b, a] = shape_color.to_rgba_u8();
+    let color = image::Rgba([r, g, b, a]);
+    let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]);
     let thickness = (3.0 * scale).max(1.0);
+    let border_thickness = (5.0 * scale).max(2.0);
 
-    for r in rects {
+    for rect in rects {
         // Convert to pixel coords
-        let x1 = (r.start_x - selection_rect.left as f32) * scale;
-        let y1 = (r.start_y - selection_rect.top as f32) * scale;
-        let x2 = (r.end_x - selection_rect.left as f32) * scale;
-        let y2 = (r.end_y - selection_rect.top as f32) * scale;
+        let x1 = (rect.start_x - selection_rect.left as f32) * scale;
+        let y1 = (rect.start_y - selection_rect.top as f32) * scale;
+        let x2 = (rect.end_x - selection_rect.left as f32) * scale;
+        let y2 = (rect.end_y - selection_rect.top as f32) * scale;
 
         let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
         let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+
+        // Shadow/border first
+        if shape_shadow {
+            draw_thick_line_aa(img, min_x, min_y, max_x, min_y, border_thickness, border_color);
+            draw_thick_line_aa(img, max_x, min_y, max_x, max_y, border_thickness, border_color);
+            draw_thick_line_aa(img, max_x, max_y, min_x, max_y, border_thickness, border_color);
+            draw_thick_line_aa(img, min_x, max_y, min_x, min_y, border_thickness, border_color);
+        }
 
         // 4 sides
         draw_thick_line_aa(img, min_x, min_y, max_x, min_y, thickness, color);
@@ -230,15 +249,20 @@ pub fn draw_rect_outlines_on_image(
     }
 }
 
-/// Draw circle/ellipse outlines onto an image (red stroke, no fill)
+/// Draw circle/ellipse outlines onto an image (colored stroke, no fill)
 pub fn draw_circle_outlines_on_image(
     img: &mut RgbaImage,
     circles: &[CircleOutlineAnnotation],
     selection_rect: &Rect,
     scale: f32,
+    shape_color: ShapeColor,
+    shape_shadow: bool,
 ) {
-    let color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let [r, g, b, a] = shape_color.to_rgba_u8();
+    let color = image::Rgba([r, g, b, a]);
+    let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]);
     let thickness = (3.0 * scale).max(1.0);
+    let border_thickness = (5.0 * scale).max(2.0);
 
     for c in circles {
         let x1 = (c.start_x - selection_rect.left as f32) * scale;
@@ -259,6 +283,21 @@ pub fn draw_circle_outlines_on_image(
         let segments = ((approx_r * 0.35).clamp(24.0, 96.0)) as usize;
         let step = std::f32::consts::TAU / segments as f32;
 
+        // Draw shadow/border first
+        if shape_shadow {
+            let mut prev_x = cx + rx;
+            let mut prev_y = cy;
+            for i in 1..=segments {
+                let t = i as f32 * step;
+                let x = cx + rx * t.cos();
+                let y = cy + ry * t.sin();
+                draw_thick_line_aa(img, prev_x, prev_y, x, y, border_thickness, border_color);
+                prev_x = x;
+                prev_y = y;
+            }
+        }
+
+        // Draw main color
         let mut prev_x = cx + rx;
         let mut prev_y = cy;
         for i in 1..=segments {
