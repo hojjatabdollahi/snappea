@@ -14,6 +14,10 @@ pub struct ArrowAnnotation {
     /// End point in global logical coordinates
     pub end_x: f32,
     pub end_y: f32,
+    /// Color of this arrow
+    pub color: ShapeColor,
+    /// Whether to draw shadow/border
+    pub shadow: bool,
 }
 
 /// Redaction annotation (black rectangle) for hiding sensitive content
@@ -36,10 +40,10 @@ pub struct PixelateAnnotation {
     /// Bottom-right point in global logical coordinates
     pub x2: f32,
     pub y2: f32,
+    /// Block size for this pixelation
+    pub block_size: u32,
 }
 
-/// Default pixelation block size (in pixels)
-pub const DEFAULT_PIXELATE_BLOCK_SIZE: u32 = 16;
 
 /// Outline rectangle annotation (no fill)
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +54,10 @@ pub struct RectOutlineAnnotation {
     /// End point in global logical coordinates
     pub end_x: f32,
     pub end_y: f32,
+    /// Color of this rectangle
+    pub color: ShapeColor,
+    /// Whether to draw shadow/border
+    pub shadow: bool,
 }
 
 /// Outline circle/ellipse annotation (no fill)
@@ -61,6 +69,20 @@ pub struct CircleOutlineAnnotation {
     /// End point in global logical coordinates
     pub end_x: f32,
     pub end_y: f32,
+    /// Color of this circle
+    pub color: ShapeColor,
+    /// Whether to draw shadow/border
+    pub shadow: bool,
+}
+
+/// Unified annotation type for ordered drawing and undo/redo
+#[derive(Clone, Debug, PartialEq)]
+pub enum Annotation {
+    Arrow(ArrowAnnotation),
+    Circle(CircleOutlineAnnotation),
+    Rectangle(RectOutlineAnnotation),
+    Redact(RedactAnnotation),
+    Pixelate(PixelateAnnotation),
 }
 
 /// Draw arrows onto an image using the same geometry as the screen rendering
@@ -71,28 +93,27 @@ pub fn draw_arrows_on_image(
     arrows: &[ArrowAnnotation],
     selection_rect: &Rect,
     scale: f32,
-    shape_color: ShapeColor,
-    shape_shadow: bool,
 ) {
-    let [r, g, b, a] = shape_color.to_rgba_u8();
-    let arrow_color = image::Rgba([r, g, b, a]);
-    let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]); // Black
-    let thickness = 4.0 * scale;
-    let head_size = 16.0 * scale;
-    // "Very thin" outline: ~1 physical pixel on 1x, ~2 on 2x, etc.
-    let outline_px = (1.0 * scale).max(1.0);
-    let border_thickness = thickness + 2.0 * outline_px;
-    let border_head_size = head_size + outline_px;
-
     for arrow in arrows {
+        let [r, g, b, a] = arrow.color.to_rgba_u8();
+        let arrow_color = image::Rgba([r, g, b, a]);
+        let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]); // Black
+        let thickness = 4.0 * scale;
+        let head_size = 16.0 * scale;
+        // "Very thin" outline: ~1 physical pixel on 1x, ~2 on 2x, etc.
+        let outline_px = (1.0 * scale).max(1.0);
+        let border_thickness = thickness + 2.0 * outline_px;
+        let border_head_size = head_size + outline_px;
+
         // Convert from global logical to image pixel coordinates (float for precision)
         let start_x = (arrow.start_x - selection_rect.left as f32) * scale;
         let start_y = (arrow.start_y - selection_rect.top as f32) * scale;
         let end_x = (arrow.end_x - selection_rect.left as f32) * scale;
         let end_y = (arrow.end_y - selection_rect.top as f32) * scale;
+
         // Border/shadow first, then main arrow
-        if shape_shadow {
-            draw_single_arrow(
+        if arrow.shadow {
+            draw_single_arrow_lines(
                 img,
                 start_x,
                 start_y,
@@ -103,7 +124,7 @@ pub fn draw_arrows_on_image(
                 border_head_size,
             );
         }
-        draw_single_arrow(
+        draw_single_arrow_lines(
             img,
             start_x,
             start_y,
@@ -116,8 +137,9 @@ pub fn draw_arrows_on_image(
     }
 }
 
+/// Draw a single arrow using lines with rounded caps (not filled triangles)
 #[allow(clippy::too_many_arguments)]
-fn draw_single_arrow(
+fn draw_single_arrow_lines(
     img: &mut RgbaImage,
     start_x: f32,
     start_y: f32,
@@ -138,51 +160,102 @@ fn draw_single_arrow(
     let nx = dx / length;
     let ny = dy / length;
 
-    // Perpendicular vector for thickness
-    let px = -ny * thickness / 2.0;
-    let py = nx * thickness / 2.0;
+    // Draw the shaft line from start to end
+    draw_rounded_line(img, start_x, start_y, end_x, end_y, thickness, color);
 
-    // Shaft end (before arrowhead)
-    let shaft_end_x = end_x - nx * head_size;
-    let shaft_end_y = end_y - ny * head_size;
+    // Arrowhead: two angled lines at the tip
+    let angle = 35.0_f32.to_radians(); // Angle of the arrowhead lines
+    let cos_a = angle.cos();
+    let sin_a = angle.sin();
 
-    // Draw shaft as filled quadrilateral (rotated rectangle) - split into 2 triangles
-    fill_triangle(
-        img,
-        start_x + px,
-        start_y + py,
-        start_x - px,
-        start_y - py,
-        shaft_end_x - px,
-        shaft_end_y - py,
-        color,
-    );
-    fill_triangle(
-        img,
-        start_x + px,
-        start_y + py,
-        shaft_end_x - px,
-        shaft_end_y - py,
-        shaft_end_x + px,
-        shaft_end_y + py,
-        color,
-    );
+    // First head line (rotated clockwise from the arrow direction)
+    let head1_dx = -nx * cos_a - (-ny) * sin_a;
+    let head1_dy = -nx * sin_a + (-ny) * cos_a;
+    let head1_end_x = end_x + head1_dx * head_size;
+    let head1_end_y = end_y + head1_dy * head_size;
+    draw_rounded_line(img, end_x, end_y, head1_end_x, head1_end_y, thickness, color);
 
-    // Draw arrowhead as filled triangle
-    let head_width = head_size * 0.5;
-    let hpx = -ny * head_width;
-    let hpy = nx * head_width;
+    // Second head line (rotated counter-clockwise)
+    let head2_dx = -nx * cos_a + (-ny) * sin_a;
+    let head2_dy = -nx * (-sin_a) + (-ny) * cos_a;
+    let head2_end_x = end_x + head2_dx * head_size;
+    let head2_end_y = end_y + head2_dy * head_size;
+    draw_rounded_line(img, end_x, end_y, head2_end_x, head2_end_y, thickness, color);
+}
 
-    fill_triangle(
-        img,
-        shaft_end_x + hpx,
-        shaft_end_y + hpy,
-        shaft_end_x - hpx,
-        shaft_end_y - hpy,
-        end_x,
-        end_y,
-        color,
-    );
+/// Draw a line with rounded end caps
+fn draw_rounded_line(
+    img: &mut RgbaImage,
+    x0: f32,
+    y0: f32,
+    x1: f32,
+    y1: f32,
+    thickness: f32,
+    color: image::Rgba<u8>,
+) {
+    // Draw the main line body
+    draw_thick_line_aa(img, x0, y0, x1, y1, thickness, color);
+    // Draw rounded caps at both ends
+    let radius = thickness / 2.0;
+    fill_circle_aa(img, x0, y0, radius, color);
+    fill_circle_aa(img, x1, y1, radius, color);
+}
+
+/// Fill a circle with anti-aliasing (for rounded line caps)
+fn fill_circle_aa(
+    img: &mut RgbaImage,
+    cx: f32,
+    cy: f32,
+    radius: f32,
+    color: image::Rgba<u8>,
+) {
+    let (w, h) = (img.width() as i32, img.height() as i32);
+    let r = radius.ceil() as i32 + 1;
+    let min_x = (cx as i32 - r).max(0);
+    let max_x = (cx as i32 + r).min(w - 1);
+    let min_y = (cy as i32 - r).max(0);
+    let max_y = (cy as i32 + r).min(h - 1);
+
+    let r2 = radius * radius;
+
+    for py in min_y..=max_y {
+        for px in min_x..=max_x {
+            // Supersampling for AA
+            const N: i32 = 4;
+            let mut covered = 0;
+
+            for sy in 0..N {
+                for sx in 0..N {
+                    let x = px as f32 + (sx as f32 + 0.5) / N as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / N as f32;
+                    let dx = x - cx;
+                    let dy = y - cy;
+                    if dx * dx + dy * dy <= r2 {
+                        covered += 1;
+                    }
+                }
+            }
+
+            if covered == 0 {
+                continue;
+            }
+
+            let coverage = covered as f32 / (N * N) as f32;
+            let src_a = (color.0[3] as f32) / 255.0;
+            let alpha = (coverage * src_a).clamp(0.0, 1.0);
+
+            if alpha >= 0.999 {
+                img.put_pixel(px as u32, py as u32, color);
+            } else {
+                let dst = img.get_pixel(px as u32, py as u32);
+                let inv = 1.0 - alpha;
+                let r = (color.0[0] as f32 * alpha + dst.0[0] as f32 * inv).round() as u8;
+                let g = (color.0[1] as f32 * alpha + dst.0[1] as f32 * inv).round() as u8;
+                let b = (color.0[2] as f32 * alpha + dst.0[2] as f32 * inv).round() as u8;
+                img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, 255]));
+            }
+        }
+    }
 }
 
 /// Draw redaction rectangles onto an image
@@ -225,17 +298,14 @@ pub fn draw_redactions_on_image(
 /// Draw pixelation rectangles onto an image
 /// selection_rect: the selection rectangle in logical coordinates (used as origin)
 /// scale: pixels per logical unit
-/// block_size: size of each pixelation block in pixels
 pub fn draw_pixelations_on_image(
     img: &mut RgbaImage,
     pixelations: &[PixelateAnnotation],
     selection_rect: &Rect,
     scale: f32,
-    block_size: u32,
 ) {
-    let block_size = block_size.max(1); // Ensure at least 1 pixel blocks
-
     for pixelate in pixelations {
+        let block_size = pixelate.block_size.max(1); // Ensure at least 1 pixel blocks
         // Convert from global logical to image pixel coordinates
         let x1 = ((pixelate.x - selection_rect.left as f32) * scale).round() as i32;
         let y1 = ((pixelate.y - selection_rect.top as f32) * scale).round() as i32;
@@ -308,16 +378,15 @@ pub fn draw_rect_outlines_on_image(
     rects: &[RectOutlineAnnotation],
     selection_rect: &Rect,
     scale: f32,
-    shape_color: ShapeColor,
-    shape_shadow: bool,
 ) {
-    let [r, g, b, a] = shape_color.to_rgba_u8();
-    let color = image::Rgba([r, g, b, a]);
     let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]);
     let thickness = (3.0 * scale).max(1.0);
     let border_thickness = (5.0 * scale).max(2.0);
 
     for rect in rects {
+        let [r, g, b, a] = rect.color.to_rgba_u8();
+        let color = image::Rgba([r, g, b, a]);
+
         // Convert to pixel coords
         let x1 = (rect.start_x - selection_rect.left as f32) * scale;
         let y1 = (rect.start_y - selection_rect.top as f32) * scale;
@@ -328,7 +397,7 @@ pub fn draw_rect_outlines_on_image(
         let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
         // Shadow/border first
-        if shape_shadow {
+        if rect.shadow {
             draw_thick_line_aa(img, min_x, min_y, max_x, min_y, border_thickness, border_color);
             draw_thick_line_aa(img, max_x, min_y, max_x, max_y, border_thickness, border_color);
             draw_thick_line_aa(img, max_x, max_y, min_x, max_y, border_thickness, border_color);
@@ -349,16 +418,15 @@ pub fn draw_circle_outlines_on_image(
     circles: &[CircleOutlineAnnotation],
     selection_rect: &Rect,
     scale: f32,
-    shape_color: ShapeColor,
-    shape_shadow: bool,
 ) {
-    let [r, g, b, a] = shape_color.to_rgba_u8();
-    let color = image::Rgba([r, g, b, a]);
     let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]);
     let thickness = (3.0 * scale).max(1.0);
     let border_thickness = (5.0 * scale).max(2.0);
 
     for c in circles {
+        let [r, g, b, a] = c.color.to_rgba_u8();
+        let color = image::Rgba([r, g, b, a]);
+
         let x1 = (c.start_x - selection_rect.left as f32) * scale;
         let y1 = (c.start_y - selection_rect.top as f32) * scale;
         let x2 = (c.end_x - selection_rect.left as f32) * scale;
@@ -378,7 +446,7 @@ pub fn draw_circle_outlines_on_image(
         let step = std::f32::consts::TAU / segments as f32;
 
         // Draw shadow/border first
-        if shape_shadow {
+        if c.shadow {
             let mut prev_x = cx + rx;
             let mut prev_y = cy;
             for i in 1..=segments {
@@ -505,6 +573,46 @@ fn fill_triangle(
                 // Screenshot images are expected to be fully opaque.
                 img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, 255]));
             }
+        }
+    }
+}
+
+/// Draw all annotations in order (for proper layering and undo/redo support)
+/// Redactions and pixelations are ALWAYS drawn first (in their relative order),
+/// then annotations (arrows, circles, rectangles) are drawn on top (in their relative order).
+/// This ensures annotations are never obscured by redactions.
+pub fn draw_annotations_in_order(
+    img: &mut RgbaImage,
+    annotations: &[Annotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    // First pass: draw all redactions and pixelations (in order)
+    for annotation in annotations {
+        match annotation {
+            Annotation::Redact(redact) => {
+                draw_redactions_on_image(img, &[redact.clone()], selection_rect, scale);
+            }
+            Annotation::Pixelate(pixelate) => {
+                draw_pixelations_on_image(img, &[pixelate.clone()], selection_rect, scale);
+            }
+            _ => {}
+        }
+    }
+    
+    // Second pass: draw all shape annotations on top (in order)
+    for annotation in annotations {
+        match annotation {
+            Annotation::Arrow(arrow) => {
+                draw_arrows_on_image(img, &[arrow.clone()], selection_rect, scale);
+            }
+            Annotation::Circle(circle) => {
+                draw_circle_outlines_on_image(img, &[circle.clone()], selection_rect, scale);
+            }
+            Annotation::Rectangle(rect) => {
+                draw_rect_outlines_on_image(img, &[rect.clone()], selection_rect, scale);
+            }
+            _ => {}
         }
     }
 }

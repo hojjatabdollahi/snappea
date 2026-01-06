@@ -68,15 +68,12 @@ pub use crate::qr::DetectedQrCode;
 
 // Re-export arrow/redact/shape types from the arrow module
 pub use crate::arrow::{
-    ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, RectOutlineAnnotation,
+    Annotation, ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, RectOutlineAnnotation,
     RedactAnnotation,
 };
 
 // Arrow/redact/shape functions are now in crate::arrow module
-use crate::arrow::{
-    draw_arrows_on_image, draw_circle_outlines_on_image, draw_pixelations_on_image,
-    draw_rect_outlines_on_image, draw_redactions_on_image,
-};
+use crate::arrow::draw_annotations_in_order;
 
 // OCR functions are now in crate::ocr module
 use crate::ocr::{models_need_download, run_ocr_on_image_with_status};
@@ -453,6 +450,8 @@ pub enum Msg {
     NavigateUp,                             // navigate up (prev window)
     NavigateDown,                           // navigate down (next window)
     ConfirmSelection,                       // confirm current highlight (Space/Enter)
+    Undo,                                   // undo last annotation (Ctrl+Z)
+    Redo,                                   // redo undone annotation (Ctrl+Y / Ctrl+Shift+Z)
 }
 
 #[derive(Debug, Clone)]
@@ -491,31 +490,35 @@ pub struct Args {
     pub ocr_overlays: Vec<OcrTextOverlay>,
     /// OCR text result for copying (stored separately from status)
     pub ocr_text: Option<String>,
-    /// Arrow annotations drawn on the screenshot
+    /// All annotations in order for undo/redo (unified history)
+    pub annotations: Vec<Annotation>,
+    /// Current position in the annotations array for undo/redo
+    pub annotation_index: usize,
+    /// Arrow annotations (derived from annotations array)
     pub arrows: Vec<ArrowAnnotation>,
     /// Whether arrow drawing mode is active
     pub arrow_mode: bool,
     /// Current arrow being drawn (start point set, waiting for end point)
     pub arrow_drawing: Option<(f32, f32)>,
-    /// Redaction annotations drawn on the screenshot
+    /// Redaction annotations (derived from annotations array)
     pub redactions: Vec<RedactAnnotation>,
     /// Whether redact drawing mode is active
     pub redact_mode: bool,
     /// Current redaction being drawn (start point set, waiting for end point)
     pub redact_drawing: Option<(f32, f32)>,
-    /// Pixelation annotations drawn on the screenshot
+    /// Pixelation annotations (derived from annotations array)
     pub pixelations: Vec<PixelateAnnotation>,
     /// Whether pixelate drawing mode is active
     pub pixelate_mode: bool,
     /// Current pixelation being drawn (start point set, waiting for end point)
     pub pixelate_drawing: Option<(f32, f32)>,
-    /// Circle/ellipse outline annotations (no fill)
+    /// Circle/ellipse outline annotations (derived from annotations array)
     pub circles: Vec<CircleOutlineAnnotation>,
     /// Whether circle/ellipse drawing mode is active
     pub circle_mode: bool,
     /// Current circle/ellipse being drawn (start point set, waiting for end point)
     pub circle_drawing: Option<(f32, f32)>,
-    /// Rectangle outline annotations (no fill)
+    /// Rectangle outline annotations (derived from annotations array)
     pub rect_outlines: Vec<RectOutlineAnnotation>,
     /// Whether rectangle outline drawing mode is active
     pub rect_outline_mode: bool,
@@ -678,6 +681,8 @@ impl Screenshot {
                 ocr_status: OcrStatus::Idle,
                 ocr_overlays: Vec::new(),
                 ocr_text: None,
+                annotations: Vec::new(),
+                annotation_index: 0,
                 arrows: Vec::new(),
                 arrow_mode: false,
                 arrow_drawing: None,
@@ -800,6 +805,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             Msg::RedactStart,
             Msg::RedactEnd,
             &args.pixelations,
+            &args.annotations[..args.annotation_index],
             args.pixelate_mode,
             args.pixelate_drawing,
             Msg::PixelateModeToggle,
@@ -893,6 +899,14 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 }
                 Key::Named(Named::ArrowRight) if modifiers.control() => {
                     Some(Msg::ToolbarPositionChange(ToolbarPosition::Right))
+                }
+                // Undo/redo shortcuts
+                Key::Character(c) if c.as_str() == "z" && modifiers.control() && !modifiers.shift() => {
+                    Some(Msg::Undo)
+                }
+                Key::Character(c) if (c.as_str() == "y" && modifiers.control()) 
+                    || (c.as_str() == "z" && modifiers.control() && modifiers.shift()) => {
+                    Some(Msg::Redo)
                 }
                 // Save/copy shortcuts (always available - empty selection captures all screens)
                 Key::Named(Named::Enter) if modifiers.control() => Some(Msg::SaveToPictures),
@@ -1001,17 +1015,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 choice,
                 output_images: mut images,
                 location,
-                arrows,
-                redactions,
-                pixelations,
-                circles,
-                rect_outlines,
+                annotations,
+                annotation_index,
                 also_copy_to_clipboard,
-                shape_color,
-                shape_shadow,
-                pixelation_block_size,
                 ..
             } = args;
+            // Only use annotations up to annotation_index (respects undo)
+            let annotations = &annotations[..annotation_index];
 
             let mut success = true;
             let image_path = Screenshot::get_img_path(location);
@@ -1022,11 +1032,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         let mut final_img = img.rgba.clone();
 
                         // Draw annotations (they are in global coords, output_rect is also global)
-                        if !arrows.is_empty()
-                            || !redactions.is_empty()
-                            || !circles.is_empty()
-                            || !rect_outlines.is_empty()
-                        {
+                        if !annotations.is_empty() {
                             // Find the output to get scale factor and position
                             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
                                 let scale = final_img.width() as f32 / output.logical_size.0 as f32;
@@ -1038,42 +1044,12 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     right: output.logical_pos.0 + output.logical_size.0 as i32,
                                     bottom: output.logical_pos.1 + output.logical_size.1 as i32,
                                 };
-                                draw_redactions_on_image(
+                                // Draw all annotations in order
+                                draw_annotations_in_order(
                                     &mut final_img,
-                                    &redactions,
+                                    &annotations,
                                     &output_rect,
                                     scale,
-                                );
-                                draw_pixelations_on_image(
-                                    &mut final_img,
-                                    &pixelations,
-                                    &output_rect,
-                                    scale,
-                                    pixelation_block_size,
-                                );
-                                draw_arrows_on_image(
-                                    &mut final_img,
-                                    &arrows,
-                                    &output_rect,
-                                    scale,
-                                    shape_color,
-                                    shape_shadow,
-                                );
-                                draw_rect_outlines_on_image(
-                                    &mut final_img,
-                                    &rect_outlines,
-                                    &output_rect,
-                                    scale,
-                                    shape_color,
-                                    shape_shadow,
-                                );
-                                draw_circle_outlines_on_image(
-                                    &mut final_img,
-                                    &circles,
-                                    &output_rect,
-                                    scale,
-                                    shape_color,
-                                    shape_shadow,
                                 );
                             }
                         }
@@ -1185,47 +1161,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         let mut img = combined_image(physical_bounds, frames);
 
                         // Draw annotations onto the final image
-                        if !redactions.is_empty() {
-                            draw_redactions_on_image(&mut img, &redactions, &r, target_scale);
-                        }
-                        if !pixelations.is_empty() {
-                            draw_pixelations_on_image(
-                                &mut img,
-                                &pixelations,
-                                &r,
-                                target_scale,
-                                pixelation_block_size,
-                            );
-                        }
-                        if !arrows.is_empty() {
-                            draw_arrows_on_image(
-                                &mut img,
-                                &arrows,
-                                &r,
-                                target_scale,
-                                shape_color,
-                                shape_shadow,
-                            );
-                        }
-                        if !rect_outlines.is_empty() {
-                            draw_rect_outlines_on_image(
-                                &mut img,
-                                &rect_outlines,
-                                &r,
-                                target_scale,
-                                shape_color,
-                                shape_shadow,
-                            );
-                        }
-                        if !circles.is_empty() {
-                            draw_circle_outlines_on_image(
-                                &mut img,
-                                &circles,
-                                &r,
-                                target_scale,
-                                shape_color,
-                                shape_shadow,
-                            );
+                        if !annotations.is_empty() {
+                            draw_annotations_in_order(&mut img, &annotations, &r, target_scale);
                         }
 
                         if let Some(ref image_path) = image_path {
@@ -1356,9 +1293,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     {
                         let mut final_img = img.rgba.clone();
 
-                        // Draw arrows/redactions if any
-                        // They are stored in output-relative coords where the window was displayed centered
-                        if !arrows.is_empty() || !redactions.is_empty() {
+                        // Draw annotations if any
+                        if !annotations.is_empty() {
                             // Find the output to calculate where the window was displayed
                             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
                                 let img_width = final_img.width() as f32;
@@ -1379,7 +1315,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 let sel_y = (output_height - display_height) / 2.0;
 
                                 // The selection_rect is where the window was displayed on screen (in global coords)
-                                // Arrow/redact coords are stored in global coordinates (output.left + pos.x)
+                                // Annotation coords are stored in global coordinates (output.left + pos.x)
                                 // Image scale factor is 1/display_scale (to go from display to original)
                                 let output_left = output.logical_pos.0 as f32;
                                 let output_top = output.logical_pos.1 as f32;
@@ -1390,42 +1326,11 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                     bottom: (output_top + sel_y + display_height) as i32,
                                 };
                                 let image_scale = 1.0 / display_scale;
-                                draw_redactions_on_image(
+                                draw_annotations_in_order(
                                     &mut final_img,
-                                    &redactions,
+                                    &annotations,
                                     &window_rect,
                                     image_scale,
-                                );
-                                draw_pixelations_on_image(
-                                    &mut final_img,
-                                    &pixelations,
-                                    &window_rect,
-                                    image_scale,
-                                    pixelation_block_size,
-                                );
-                                draw_arrows_on_image(
-                                    &mut final_img,
-                                    &arrows,
-                                    &window_rect,
-                                    image_scale,
-                                    shape_color,
-                                    shape_shadow,
-                                );
-                                draw_rect_outlines_on_image(
-                                    &mut final_img,
-                                    &rect_outlines,
-                                    &window_rect,
-                                    image_scale,
-                                    shape_color,
-                                    shape_shadow,
-                                );
-                                draw_circle_outlines_on_image(
-                                    &mut final_img,
-                                    &circles,
-                                    &window_rect,
-                                    image_scale,
-                                    shape_color,
-                                    shape_shadow,
                                 );
                             }
                         }
@@ -1693,9 +1598,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
 
             // Get the selection and run QR detection on that area
             if let Some(args) = app.screenshot_args.as_ref() {
-                let redactions = args.redactions.clone();
-                let pixelations = args.pixelations.clone();
-                let pixelation_block_size = args.pixelation_block_size;
+                // Only use annotations up to annotation_index (respects undo)
+                let annotations = args.annotations[..args.annotation_index].to_vec();
                 let outputs_clone = app.outputs.clone();
 
                 // Get image data and parameters based on choice type
@@ -1820,18 +1724,9 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 if let Some((mut cropped, output_name, scale, origin_x, origin_y, selection_rect)) =
                     qr_params
                 {
-                    // Apply redactions and pixelations to the image before QR scanning
-                    if !redactions.is_empty() {
-                        draw_redactions_on_image(&mut cropped, &redactions, &selection_rect, scale);
-                    }
-                    if !pixelations.is_empty() {
-                        draw_pixelations_on_image(
-                            &mut cropped,
-                            &pixelations,
-                            &selection_rect,
-                            scale,
-                            pixelation_block_size,
-                        );
+                    // Apply annotations to the image before QR scanning
+                    if !annotations.is_empty() {
+                        draw_annotations_in_order(&mut cropped, &annotations, &selection_rect, scale);
                     }
                     // Spawn progressive QR detection tasks (3 passes with increasing resolution)
                     let resolutions = [500u32, 1500, 0]; // 0 = full resolution
@@ -1914,9 +1809,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
 
             // Get the selection and run OCR on that area
             if let Some(args) = app.screenshot_args.as_ref() {
-                let redactions = args.redactions.clone();
-                let pixelations = args.pixelations.clone();
-                let pixelation_block_size = args.pixelation_block_size;
+                // Only use annotations up to annotation_index (respects undo)
+                let annotations = args.annotations[..args.annotation_index].to_vec();
                 let outputs_clone = app.outputs.clone();
 
                 // Returns: (image, mapping, selection_rect_for_redactions, scale_for_redactions)
@@ -2059,22 +1953,13 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                 };
 
                 if let Some((mut cropped_img, mapping, selection_rect, scale)) = region_data {
-                    // Apply redactions and pixelations to the image before OCR
-                    if !redactions.is_empty() {
-                        draw_redactions_on_image(
+                    // Apply annotations to the image before OCR
+                    if !annotations.is_empty() {
+                        draw_annotations_in_order(
                             &mut cropped_img,
-                            &redactions,
+                            &annotations,
                             &selection_rect,
                             scale,
-                        );
-                    }
-                    if !pixelations.is_empty() {
-                        draw_pixelations_on_image(
-                            &mut cropped_img,
-                            &pixelations,
-                            &selection_rect,
-                            scale,
-                            pixelation_block_size,
                         );
                     }
 
@@ -2221,12 +2106,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut()
                 && let Some((start_x, start_y)) = args.arrow_drawing.take()
             {
-                args.arrows.push(ArrowAnnotation {
+                let arrow = ArrowAnnotation {
                     start_x,
                     start_y,
                     end_x: x,
                     end_y: y,
-                });
+                    color: args.shape_color,
+                    shadow: args.shape_shadow,
+                };
+                args.arrows.push(arrow.clone());
+                // Add to unified annotations and truncate any redo history
+                args.annotations.truncate(args.annotation_index);
+                args.annotations.push(Annotation::Arrow(arrow));
+                args.annotation_index = args.annotations.len();
             }
             cosmic::Task::none()
         }
@@ -2267,12 +2159,17 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut()
                 && let Some((start_x, start_y)) = args.redact_drawing.take()
             {
-                args.redactions.push(RedactAnnotation {
+                let redact = RedactAnnotation {
                     x: start_x,
                     y: start_y,
                     x2: x,
                     y2: y,
-                });
+                };
+                args.redactions.push(redact.clone());
+                // Add to unified annotations and truncate any redo history
+                args.annotations.truncate(args.annotation_index);
+                args.annotations.push(Annotation::Redact(redact));
+                args.annotation_index = args.annotations.len();
             }
             cosmic::Task::none()
         }
@@ -2321,12 +2218,18 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut()
                 && let Some((start_x, start_y)) = args.pixelate_drawing.take()
             {
-                args.pixelations.push(PixelateAnnotation {
+                let pixelate = PixelateAnnotation {
                     x: start_x,
                     y: start_y,
                     x2: x,
                     y2: y,
-                });
+                    block_size: args.pixelation_block_size,
+                };
+                args.pixelations.push(pixelate.clone());
+                // Add to unified annotations and truncate any redo history
+                args.annotations.truncate(args.annotation_index);
+                args.annotations.push(Annotation::Pixelate(pixelate));
+                args.annotation_index = args.annotations.len();
             }
             cosmic::Task::none()
         }
@@ -2372,12 +2275,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut()
                 && let Some((start_x, start_y)) = args.circle_drawing.take()
             {
-                args.circles.push(CircleOutlineAnnotation {
+                let circle = CircleOutlineAnnotation {
                     start_x,
                     start_y,
                     end_x: x,
                     end_y: y,
-                });
+                    color: args.shape_color,
+                    shadow: args.shape_shadow,
+                };
+                args.circles.push(circle.clone());
+                // Add to unified annotations and truncate any redo history
+                args.annotations.truncate(args.annotation_index);
+                args.annotations.push(Annotation::Circle(circle));
+                args.annotation_index = args.annotations.len();
             }
             cosmic::Task::none()
         }
@@ -2423,12 +2333,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             if let Some(args) = app.screenshot_args.as_mut()
                 && let Some((start_x, start_y)) = args.rect_outline_drawing.take()
             {
-                args.rect_outlines.push(RectOutlineAnnotation {
+                let rect = RectOutlineAnnotation {
                     start_x,
                     start_y,
                     end_x: x,
                     end_y: y,
-                });
+                    color: args.shape_color,
+                    shadow: args.shape_shadow,
+                };
+                args.rect_outlines.push(rect.clone());
+                // Add to unified annotations and truncate any redo history
+                args.annotations.truncate(args.annotation_index);
+                args.annotations.push(Annotation::Rectangle(rect));
+                args.annotation_index = args.annotations.len();
             }
             cosmic::Task::none()
         }
@@ -3240,6 +3157,46 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             }
             cosmic::Task::none()
         }
+        Msg::Undo => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if args.annotation_index > 0 {
+                    args.annotation_index -= 1;
+                    // Rebuild the individual arrays from active annotations
+                    rebuild_annotation_arrays(args);
+                }
+            }
+            cosmic::Task::none()
+        }
+        Msg::Redo => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                if args.annotation_index < args.annotations.len() {
+                    args.annotation_index += 1;
+                    // Rebuild the individual arrays from active annotations
+                    rebuild_annotation_arrays(args);
+                }
+            }
+            cosmic::Task::none()
+        }
+    }
+}
+
+/// Rebuild the individual annotation arrays from the unified annotations array
+/// based on the current annotation_index (for undo/redo support)
+fn rebuild_annotation_arrays(args: &mut Args) {
+    args.arrows.clear();
+    args.circles.clear();
+    args.rect_outlines.clear();
+    args.redactions.clear();
+    args.pixelations.clear();
+
+    for annotation in args.annotations.iter().take(args.annotation_index) {
+        match annotation {
+            Annotation::Arrow(a) => args.arrows.push(a.clone()),
+            Annotation::Circle(c) => args.circles.push(c.clone()),
+            Annotation::Rectangle(r) => args.rect_outlines.push(r.clone()),
+            Annotation::Redact(r) => args.redactions.push(r.clone()),
+            Annotation::Pixelate(p) => args.pixelations.push(p.clone()),
+        }
     }
 }
 
@@ -3260,6 +3217,8 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::app::Msg> {
         ocr_status: _,
         ocr_overlays: _,
         ocr_text: _,
+        annotations: _,
+        annotation_index: _,
         arrows: _,
         arrow_mode: _,
         arrow_drawing: _,

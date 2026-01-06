@@ -11,7 +11,7 @@ use cosmic::{
     iced_widget::canvas,
     iced_widget::graphics::{
         Mesh,
-        color::pack,
+        color::{pack, Packed},
         mesh::{Indexed, Renderer as MeshRenderer, SolidVertex2D},
     },
     widget::{Row, button, horizontal_space, image, layer_container},
@@ -23,9 +23,9 @@ use crate::{
     app::OutputState,
     config::ShapeTool,
     screenshot::{
-        ArrowAnnotation, Choice, CircleOutlineAnnotation, DetectedQrCode, OcrStatus, OcrTextOverlay,
-        PixelateAnnotation, Rect, RectOutlineAnnotation, RedactAnnotation, ScreenshotImage,
-        ToolbarPosition,
+        Annotation, ArrowAnnotation, Choice, CircleOutlineAnnotation, DetectedQrCode, OcrStatus,
+        OcrTextOverlay, PixelateAnnotation, Rect, RectOutlineAnnotation, RedactAnnotation,
+        ScreenshotImage, ToolbarPosition,
     },
 };
 
@@ -192,20 +192,20 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
 
         let mut frame = Frame::new(renderer, bounds.size());
 
-        let shape_color: Color = self.shape_color.into();
-        let stroke = Stroke {
-            style: shape_color.into(),
-            width: 3.0,
-            ..Stroke::default()
-        };
         let shadow_stroke = Stroke {
             style: Color::from_rgba(0.0, 0.0, 0.0, 0.9).into(),
             width: 5.0,
             ..Stroke::default()
         };
 
-        // Draw rectangle outlines
+        // Draw rectangle outlines with per-annotation colors
         for r in &self.rect_outlines {
+            let rect_color: Color = r.color.into();
+            let stroke = Stroke {
+                style: rect_color.into(),
+                width: 3.0,
+                ..Stroke::default()
+            };
             let x1 = r.start_x - self.output_rect.left as f32;
             let y1 = r.start_y - self.output_rect.top as f32;
             let x2 = r.end_x - self.output_rect.left as f32;
@@ -216,14 +216,20 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 Point::new(min_x, min_y),
                 Size::new((max_x - min_x).max(1.0), (max_y - min_y).max(1.0)),
             );
-            if self.shape_shadow {
+            if r.shadow {
                 frame.stroke(&path, shadow_stroke);
             }
             frame.stroke(&path, stroke);
         }
 
-        // Draw circle/ellipse outlines as a single path each (polyline), so joins/caps are handled by stroke.
+        // Draw circle/ellipse outlines with per-annotation colors
         for c in &self.circles {
+            let circle_color: Color = c.color.into();
+            let stroke = Stroke {
+                style: circle_color.into(),
+                width: 3.0,
+                ..Stroke::default()
+            };
             let x1 = c.start_x - self.output_rect.left as f32;
             let y1 = c.start_y - self.output_rect.top as f32;
             let x2 = c.end_x - self.output_rect.left as f32;
@@ -245,7 +251,7 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     b.line_to(Point::new(cx + rx * t.cos(), cy + ry * t.sin()));
                 }
             });
-            if self.shape_shadow {
+            if c.shadow {
                 frame.stroke(&path, shadow_stroke);
             }
             frame.stroke(&path, stroke);
@@ -253,6 +259,7 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
 
         // Live previews (during drag)
         let constrain = state.ctrl_down || state.ctrl_latched;
+        let shape_color: Color = self.shape_color.into();
         let preview_color = Color {
             a: 0.7,
             ..shape_color
@@ -687,6 +694,8 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub on_redact_end: Option<Box<dyn Fn(f32, f32) -> Msg + 'a>>,
     /// Pixelation annotations
     pub pixelations: Vec<PixelateAnnotation>,
+    /// Unified annotations array (for proper draw order)
+    pub annotations: &'a [Annotation],
     /// Whether pixelate mode is active
     pub pixelate_mode: bool,
     /// Pixelation currently being drawn (start point)
@@ -830,6 +839,7 @@ where
         on_redact_start: impl Fn(f32, f32) -> Msg + 'a,
         on_redact_end: impl Fn(f32, f32) -> Msg + 'a,
         pixelations: &[PixelateAnnotation],
+        annotations: &'a [Annotation],
         pixelate_mode: bool,
         pixelate_drawing: Option<(f32, f32)>,
         on_pixelate_toggle: Msg,
@@ -1214,6 +1224,7 @@ where
             on_redact_start: Some(Box::new(on_redact_start)),
             on_redact_end: Some(Box::new(on_redact_end)),
             pixelations: pixelations.to_vec(),
+            annotations,
             pixelate_mode,
             pixelate_drawing,
             on_pixelate_toggle: Some(on_pixelate_toggle),
@@ -2125,7 +2136,238 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             });
         }
 
-        // Draw shapes canvas overlay (circle/rectangle outlines)
+        // ========== REDACTIONS AND PIXELATIONS (drawn BEFORE shapes, in correct order) ==========
+        // Draw redactions and pixelations in the order they appear in the annotations array
+        let redact_color = cosmic::iced::Color::BLACK;
+        for annotation in self.annotations {
+            match annotation {
+                Annotation::Redact(redact) => {
+                    let x1 = redact.x - self.output_rect.left as f32;
+                    let y1 = redact.y - self.output_rect.top as f32;
+                    let x2 = redact.x2 - self.output_rect.left as f32;
+                    let y2 = redact.y2 - self.output_rect.top as f32;
+                    let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+                    let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+                    let rect = cosmic::iced_core::Rectangle {
+                        x: min_x,
+                        y: min_y,
+                        width: max_x - min_x,
+                        height: max_y - min_y,
+                    };
+                    renderer.with_layer(*viewport, |renderer| {
+                        renderer.fill_quad(
+                            cosmic::iced_core::renderer::Quad {
+                                bounds: rect,
+                                border: Border::default(),
+                                shadow: cosmic::iced_core::Shadow::default(),
+                            },
+                            Background::Color(redact_color),
+                        );
+                    });
+                }
+                Annotation::Pixelate(pixelate) => {
+                    let x1 = pixelate.x - self.output_rect.left as f32;
+                    let y1 = pixelate.y - self.output_rect.top as f32;
+                    let x2 = pixelate.x2 - self.output_rect.left as f32;
+                    let y2 = pixelate.y2 - self.output_rect.top as f32;
+                    let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
+                    let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+                    let block_size_logical = pixelate.block_size as f32 / self.image_scale;
+
+                    renderer.with_layer(*viewport, |renderer| {
+                        let mut y = min_y;
+                        while y < max_y {
+                            let mut x = min_x;
+                            let block_h = block_size_logical.min(max_y - y);
+                            while x < max_x {
+                                let block_w = block_size_logical.min(max_x - x);
+                                let img_x = (x * self.image_scale).round() as u32;
+                                let img_y = (y * self.image_scale).round() as u32;
+                                let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                                let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+                                let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                                let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                                let img_x2 = img_x2.min(self.screenshot_image.width());
+                                let img_y2 = img_y2.min(self.screenshot_image.height());
+                                let mut total_r: u64 = 0;
+                                let mut total_g: u64 = 0;
+                                let mut total_b: u64 = 0;
+                                let mut pixel_count: u64 = 0;
+                                for py in img_y..img_y2 {
+                                    for px in img_x..img_x2 {
+                                        let pixel = self.screenshot_image.get_pixel(px, py);
+                                        total_r += pixel[0] as u64;
+                                        total_g += pixel[1] as u64;
+                                        total_b += pixel[2] as u64;
+                                        pixel_count += 1;
+                                    }
+                                }
+                                if pixel_count > 0 {
+                                    let color = cosmic::iced::Color::from_rgb8(
+                                        (total_r / pixel_count) as u8,
+                                        (total_g / pixel_count) as u8,
+                                        (total_b / pixel_count) as u8,
+                                    );
+                                    renderer.fill_quad(
+                                        cosmic::iced_core::renderer::Quad {
+                                            bounds: cosmic::iced_core::Rectangle {
+                                                x,
+                                                y,
+                                                width: block_w,
+                                                height: block_h,
+                                            },
+                                            border: Border::default(),
+                                            shadow: cosmic::iced_core::Shadow::default(),
+                                        },
+                                        Background::Color(color),
+                                    );
+                                }
+                                x += block_w;
+                            }
+                            y += block_h;
+                        }
+                    });
+                }
+                // Skip other annotation types - they're drawn later
+                _ => {}
+            }
+        }
+
+        // Draw pixelation preview (currently being drawn)
+        if let Some((start_x, start_y)) = self.pixelate_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let local_start_x = start_x - self.output_rect.left as f32;
+            let local_start_y = start_y - self.output_rect.top as f32;
+            let end_x = cursor_pos.x;
+            let end_y = cursor_pos.y;
+            let (min_x, max_x) = if local_start_x < end_x {
+                (local_start_x, end_x)
+            } else {
+                (end_x, local_start_x)
+            };
+            let (min_y, max_y) = if local_start_y < end_y {
+                (local_start_y, end_y)
+            } else {
+                (end_y, local_start_y)
+            };
+            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
+
+            renderer.with_layer(*viewport, |renderer| {
+                let mut y = min_y;
+                while y < max_y {
+                    let mut x = min_x;
+                    let block_h = block_size_logical.min(max_y - y);
+                    while x < max_x {
+                        let block_w = block_size_logical.min(max_x - x);
+                        let img_x = (x * self.image_scale).round() as u32;
+                        let img_y = (y * self.image_scale).round() as u32;
+                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                        let img_x2 = img_x2.min(self.screenshot_image.width());
+                        let img_y2 = img_y2.min(self.screenshot_image.height());
+                        let mut total_r: u64 = 0;
+                        let mut total_g: u64 = 0;
+                        let mut total_b: u64 = 0;
+                        let mut pixel_count: u64 = 0;
+                        for py in img_y..img_y2 {
+                            for px in img_x..img_x2 {
+                                let pixel = self.screenshot_image.get_pixel(px, py);
+                                total_r += pixel[0] as u64;
+                                total_g += pixel[1] as u64;
+                                total_b += pixel[2] as u64;
+                                pixel_count += 1;
+                            }
+                        }
+                        if pixel_count > 0 {
+                            let color = cosmic::iced::Color::from_rgb8(
+                                (total_r / pixel_count) as u8,
+                                (total_g / pixel_count) as u8,
+                                (total_b / pixel_count) as u8,
+                            );
+                            renderer.fill_quad(
+                                cosmic::iced_core::renderer::Quad {
+                                    bounds: cosmic::iced_core::Rectangle {
+                                        x,
+                                        y,
+                                        width: block_w,
+                                        height: block_h,
+                                    },
+                                    border: Border::default(),
+                                    shadow: cosmic::iced_core::Shadow::default(),
+                                },
+                                Background::Color(color),
+                            );
+                        }
+                        x += block_w;
+                    }
+                    y += block_h;
+                }
+
+                // Draw border
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: cosmic::iced_core::Rectangle {
+                            x: min_x,
+                            y: min_y,
+                            width: max_x - min_x,
+                            height: max_y - min_y,
+                        },
+                        border: Border {
+                            color: cosmic::iced::Color::WHITE,
+                            width: 1.0,
+                            radius: cosmic::iced_core::border::Radius::from(0.0),
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::TRANSPARENT),
+                );
+            });
+        }
+
+        // Draw redaction preview (currently being drawn)
+        if let Some((start_x, start_y)) = self.redact_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let local_start_x = start_x - self.output_rect.left as f32;
+            let local_start_y = start_y - self.output_rect.top as f32;
+            let end_x = cursor_pos.x;
+            let end_y = cursor_pos.y;
+            let (min_x, max_x) = if local_start_x < end_x {
+                (local_start_x, end_x)
+            } else {
+                (end_x, local_start_x)
+            };
+            let (min_y, max_y) = if local_start_y < end_y {
+                (local_start_y, end_y)
+            } else {
+                (end_y, local_start_y)
+            };
+            renderer.with_layer(*viewport, |renderer| {
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: cosmic::iced_core::Rectangle {
+                            x: min_x,
+                            y: min_y,
+                            width: max_x - min_x,
+                            height: max_y - min_y,
+                        },
+                        border: Border {
+                            color: cosmic::iced::Color::WHITE,
+                            width: 1.0,
+                            radius: cosmic::iced_core::border::Radius::from(0.0),
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7)),
+                );
+            });
+        }
+        // ========== END REDACTIONS AND PIXELATIONS ==========
+
+        // Draw shapes canvas overlay (circle/rectangle outlines) - AFTER redactions
         if let Some((i, (layout, child))) = children_iter.next() {
             renderer.with_layer(layout.bounds(), |renderer| {
                 let tree = &tree.children[i];
@@ -2135,8 +2377,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             });
         }
 
-        // Helper function to build arrow mesh vertices and indices
-        fn build_arrow_mesh(
+        /// Build an arrow mesh using lines with rounded caps (shaft line + 2 angled head lines)
+        fn build_arrow_lines_mesh(
             start_x: f32,
             start_y: f32,
             end_x: f32,
@@ -2156,462 +2398,200 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let nx = dx / length;
             let ny = dy / length;
 
-            // Shaft end (before arrowhead)
-            let shaft_end_x = end_x - nx * head_size;
-            let shaft_end_y = end_y - ny * head_size;
-
-            // Feather widths in logical pixels to soften edges (simulates AA even without MSAA).
-            // We use a 3-step alpha ramp (outer=0, mid≈0.35, inner=1) and also feather the caps
-            // by extending the mid/outer layers along the arrow direction.
-            let feather_outer = 3.0_f32;
-            let feather_mid = 1.5_f32;
-
-            // Perpendicular vectors for inner/mid/outer radii
-            let r_in = thickness / 2.0;
-            let r_mid = r_in + feather_mid;
-            let r_out = r_in + feather_outer;
-
-            let px_in = -ny * r_in;
-            let py_in = nx * r_in;
-            let px_mid = -ny * r_mid;
-            let py_mid = nx * r_mid;
-            let px_out = -ny * r_out;
-            let py_out = nx * r_out;
-
             let mut inner = color;
             inner.a = inner.a.clamp(0.0, 1.0);
             let packed_inner = pack(inner);
-
-            let mut mid = color;
-            mid.a = (inner.a * 0.35).clamp(0.12, 0.45);
-            let packed_mid = pack(mid);
 
             let mut outer = color;
             outer.a = 0.0;
             let packed_outer = pack(outer);
 
-            // Cap feathering: extend mid/outer a bit along the line direction to soften end caps.
-            let start_mid_x = start_x - nx * feather_mid;
-            let start_mid_y = start_y - ny * feather_mid;
-            let end_mid_x = shaft_end_x + nx * (feather_mid * 0.5);
-            let end_mid_y = shaft_end_y + ny * (feather_mid * 0.5);
+            let radius = thickness / 2.0;
+            let feather = 2.0_f32; // Anti-aliasing feather width
 
-            let start_out_x = start_x - nx * feather_outer;
-            let start_out_y = start_y - ny * feather_outer;
-            let end_out_x = shaft_end_x + nx * (feather_outer * 0.5);
-            let end_out_y = shaft_end_y + ny * (feather_outer * 0.5);
+            let mut vertices = Vec::new();
+            let mut indices = Vec::new();
 
-            // Vertex layout:
-            // Shaft: outer(0..3), mid(4..7), inner(8..11)
-            // Head:  outer(12..14), mid(15..17), inner(18..20)
-            let mut vertices = Vec::with_capacity(21);
+            // Helper to build a line segment
+            fn add_line_segment(
+                vertices: &mut Vec<SolidVertex2D>,
+                indices: &mut Vec<u32>,
+                x0: f32, y0: f32, x1: f32, y1: f32,
+                radius: f32, feather: f32,
+                packed_inner: Packed, packed_outer: Packed,
+            ) {
+                let ldx = x1 - x0;
+                let ldy = y1 - y0;
+                let llen = (ldx * ldx + ldy * ldy).sqrt();
+                if llen < 0.1 {
+                    return;
+                }
+                let lnx = ldx / llen;
+                let lny = ldy / llen;
 
-            // Shaft outer quad
-            vertices.push(SolidVertex2D {
-                position: [start_out_x + px_out, start_out_y + py_out],
-                color: packed_outer,
-            }); // 0
-            vertices.push(SolidVertex2D {
-                position: [start_out_x - px_out, start_out_y - py_out],
-                color: packed_outer,
-            }); // 1
-            vertices.push(SolidVertex2D {
-                position: [end_out_x - px_out, end_out_y - py_out],
-                color: packed_outer,
-            }); // 2
-            vertices.push(SolidVertex2D {
-                position: [end_out_x + px_out, end_out_y + py_out],
-                color: packed_outer,
-            }); // 3
+                // Perpendicular
+                let px = -lny;
+                let py = lnx;
 
-            // Shaft mid quad
-            vertices.push(SolidVertex2D {
-                position: [start_mid_x + px_mid, start_mid_y + py_mid],
-                color: packed_mid,
-            }); // 4
-            vertices.push(SolidVertex2D {
-                position: [start_mid_x - px_mid, start_mid_y - py_mid],
-                color: packed_mid,
-            }); // 5
-            vertices.push(SolidVertex2D {
-                position: [end_mid_x - px_mid, end_mid_y - py_mid],
-                color: packed_mid,
-            }); // 6
-            vertices.push(SolidVertex2D {
-                position: [end_mid_x + px_mid, end_mid_y + py_mid],
-                color: packed_mid,
-            }); // 7
+                let base_idx = vertices.len() as u32;
 
-            // Shaft inner quad (no cap extension; keep geometry accurate)
-            vertices.push(SolidVertex2D {
-                position: [start_x + px_in, start_y + py_in],
-                color: packed_inner,
-            }); // 8
-            vertices.push(SolidVertex2D {
-                position: [start_x - px_in, start_y - py_in],
-                color: packed_inner,
-            }); // 9
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - px_in, shaft_end_y - py_in],
-                color: packed_inner,
-            }); // 10
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + px_in, shaft_end_y + py_in],
-                color: packed_inner,
-            }); // 11
+                // Inner quad (solid core)
+                let inner_r = radius;
+                let outer_r = radius + feather;
 
-            // Arrowhead (wider than shaft)
-            let head_width = head_size * 0.5;
-            let h_in = head_width;
-            let h_mid = head_width + feather_mid;
-            let h_out = head_width + feather_outer;
+                // Add inner quad vertices
+                vertices.push(SolidVertex2D {
+                    position: [x0 + px * inner_r, y0 + py * inner_r],
+                    color: packed_inner,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x0 - px * inner_r, y0 - py * inner_r],
+                    color: packed_inner,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x1 - px * inner_r, y1 - py * inner_r],
+                    color: packed_inner,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x1 + px * inner_r, y1 + py * inner_r],
+                    color: packed_inner,
+                });
 
-            let hpx_in = -ny * h_in;
-            let hpy_in = nx * h_in;
-            let hpx_mid = -ny * h_mid;
-            let hpy_mid = nx * h_mid;
-            let hpx_out = -ny * h_out;
-            let hpy_out = nx * h_out;
+                // Add outer quad vertices (for feathering)
+                vertices.push(SolidVertex2D {
+                    position: [x0 + px * outer_r, y0 + py * outer_r],
+                    color: packed_outer,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x0 - px * outer_r, y0 - py * outer_r],
+                    color: packed_outer,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x1 - px * outer_r, y1 - py * outer_r],
+                    color: packed_outer,
+                });
+                vertices.push(SolidVertex2D {
+                    position: [x1 + px * outer_r, y1 + py * outer_r],
+                    color: packed_outer,
+                });
 
-            // Outer head triangle (alpha 0), extended forward
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + hpx_out, shaft_end_y + hpy_out],
-                color: packed_outer,
-            }); // 12
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - hpx_out, shaft_end_y - hpy_out],
-                color: packed_outer,
-            }); // 13
-            vertices.push(SolidVertex2D {
-                position: [end_x + nx * feather_outer, end_y + ny * feather_outer],
-                color: packed_outer,
-            }); // 14
+                // Inner quad triangles
+                indices.extend_from_slice(&[base_idx, base_idx + 1, base_idx + 2]);
+                indices.extend_from_slice(&[base_idx, base_idx + 2, base_idx + 3]);
 
-            // Mid head triangle (alpha ~0.35), extended forward
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + hpx_mid, shaft_end_y + hpy_mid],
-                color: packed_mid,
-            }); // 15
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - hpx_mid, shaft_end_y - hpy_mid],
-                color: packed_mid,
-            }); // 16
-            vertices.push(SolidVertex2D {
-                position: [end_x + nx * feather_mid, end_y + ny * feather_mid],
-                color: packed_mid,
-            }); // 17
+                // Feather band triangles (+ side)
+                indices.extend_from_slice(&[base_idx + 4, base_idx, base_idx + 3]);
+                indices.extend_from_slice(&[base_idx + 4, base_idx + 3, base_idx + 7]);
 
-            // Inner head triangle (alpha 1)
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + hpx_in, shaft_end_y + hpy_in],
-                color: packed_inner,
-            }); // 18
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - hpx_in, shaft_end_y - hpy_in],
-                color: packed_inner,
-            }); // 19
-            vertices.push(SolidVertex2D {
-                position: [end_x, end_y],
-                color: packed_inner,
-            }); // 20
+                // Feather band triangles (- side)
+                indices.extend_from_slice(&[base_idx + 5, base_idx + 6, base_idx + 2]);
+                indices.extend_from_slice(&[base_idx + 5, base_idx + 2, base_idx + 1]);
+            }
 
-            // Indices:
-            // - Inner shaft quad (solid)
-            // - Mid band around shaft (outer<->mid and mid<->inner, both sides)
-            // - Inner head triangle (solid)
-            // - Mid/outer bands around head (base edge + 2 side edges)
-            let indices: Vec<u32> = vec![
-                // Inner shaft
-                8, 9, 10, 8, 10, 11,
-                // Shaft band: mid <-> inner (+ side)
-                4, 8, 11, 4, 11, 7,
-                // Shaft band: mid <-> inner (- side)
-                5, 6, 10, 5, 10, 9,
-                // Shaft band: outer <-> mid (+ side)
-                0, 4, 7, 0, 7, 3,
-                // Shaft band: outer <-> mid (- side)
-                1, 2, 6, 1, 6, 5,
-                // Inner head
-                18, 19, 20,
-                // Head band: mid <-> inner base edge
-                15, 18, 19, 15, 19, 16,
-                // Head band: mid <-> inner + edge to tip
-                15, 18, 20, 15, 20, 17,
-                // Head band: mid <-> inner - edge to tip
-                16, 19, 20, 16, 20, 17,
-                // Head band: outer <-> mid base edge
-                12, 15, 16, 12, 16, 13,
-                // Head band: outer <-> mid + edge to tip
-                12, 15, 17, 12, 17, 14,
-                // Head band: outer <-> mid - edge to tip
-                13, 16, 17, 13, 17, 14,
-            ];
+            // Helper to add a circle (rounded cap)
+            fn add_circle(
+                vertices: &mut Vec<SolidVertex2D>,
+                indices: &mut Vec<u32>,
+                cx: f32, cy: f32,
+                radius: f32, feather: f32,
+                packed_inner: Packed, packed_outer: Packed,
+            ) {
+                let base_idx = vertices.len() as u32;
+                let segments = 12;
+
+                // Center vertex
+                vertices.push(SolidVertex2D {
+                    position: [cx, cy],
+                    color: packed_inner,
+                });
+
+                // Inner ring vertices
+                for i in 0..segments {
+                    let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                    vertices.push(SolidVertex2D {
+                        position: [cx + radius * angle.cos(), cy + radius * angle.sin()],
+                        color: packed_inner,
+                    });
+                }
+
+                // Outer ring vertices (for feathering)
+                let outer_r = radius + feather;
+                for i in 0..segments {
+                    let angle = (i as f32 / segments as f32) * std::f32::consts::TAU;
+                    vertices.push(SolidVertex2D {
+                        position: [cx + outer_r * angle.cos(), cy + outer_r * angle.sin()],
+                        color: packed_outer,
+                    });
+                }
+
+                // Inner circle triangles (center to inner ring)
+                for i in 0..segments {
+                    let next = (i + 1) % segments;
+                    indices.push(base_idx);
+                    indices.push(base_idx + 1 + i as u32);
+                    indices.push(base_idx + 1 + next as u32);
+                }
+
+                // Feather ring triangles (inner ring to outer ring)
+                for i in 0..segments {
+                    let next = (i + 1) % segments;
+                    let inner_i = base_idx + 1 + i as u32;
+                    let inner_next = base_idx + 1 + next as u32;
+                    let outer_i = base_idx + 1 + segments as u32 + i as u32;
+                    let outer_next = base_idx + 1 + segments as u32 + next as u32;
+
+                    indices.push(inner_i);
+                    indices.push(outer_i);
+                    indices.push(outer_next);
+                    indices.push(inner_i);
+                    indices.push(outer_next);
+                    indices.push(inner_next);
+                }
+            }
+
+            // Draw the shaft line from start to end
+            add_line_segment(&mut vertices, &mut indices, start_x, start_y, end_x, end_y, radius, feather, packed_inner, packed_outer);
+
+            // Add rounded caps at start and end
+            add_circle(&mut vertices, &mut indices, start_x, start_y, radius, feather, packed_inner, packed_outer);
+            add_circle(&mut vertices, &mut indices, end_x, end_y, radius, feather, packed_inner, packed_outer);
+
+            // Arrowhead: two angled lines at the tip
+            let angle = 35.0_f32.to_radians();
+            let cos_a = angle.cos();
+            let sin_a = angle.sin();
+
+            // First head line (rotated clockwise from arrow direction)
+            let head1_dx = -nx * cos_a - (-ny) * sin_a;
+            let head1_dy = -nx * sin_a + (-ny) * cos_a;
+            let head1_end_x = end_x + head1_dx * head_size;
+            let head1_end_y = end_y + head1_dy * head_size;
+            add_line_segment(&mut vertices, &mut indices, end_x, end_y, head1_end_x, head1_end_y, radius, feather, packed_inner, packed_outer);
+            add_circle(&mut vertices, &mut indices, head1_end_x, head1_end_y, radius, feather, packed_inner, packed_outer);
+
+            // Second head line (rotated counter-clockwise)
+            let head2_dx = -nx * cos_a + (-ny) * sin_a;
+            let head2_dy = -nx * (-sin_a) + (-ny) * cos_a;
+            let head2_end_x = end_x + head2_dx * head_size;
+            let head2_end_y = end_y + head2_dy * head_size;
+            add_line_segment(&mut vertices, &mut indices, end_x, end_y, head2_end_x, head2_end_y, radius, feather, packed_inner, packed_outer);
+            add_circle(&mut vertices, &mut indices, head2_end_x, head2_end_y, radius, feather, packed_inner, packed_outer);
 
             Some((vertices, indices))
         }
 
-        // Draw redactions (black rectangles)
-        let redact_color = cosmic::iced::Color::BLACK;
+        // NOTE: Redactions and pixelations are now drawn BEFORE shapes_element (above)
 
-        for redact in &self.redactions {
-            // Convert global coordinates to widget-local
-            let x1 = redact.x - self.output_rect.left as f32;
-            let y1 = redact.y - self.output_rect.top as f32;
-            let x2 = redact.x2 - self.output_rect.left as f32;
-            let y2 = redact.y2 - self.output_rect.top as f32;
-
-            // Normalize (ensure min < max)
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-
-            let rect = cosmic::iced_core::Rectangle {
-                x: min_x,
-                y: min_y,
-                width: max_x - min_x,
-                height: max_y - min_y,
-            };
-
-            renderer.with_layer(*viewport, |renderer| {
-                renderer.fill_quad(
-                    cosmic::iced_core::renderer::Quad {
-                        bounds: rect,
-                        border: Border::default(),
-                        shadow: cosmic::iced_core::Shadow::default(),
-                    },
-                    Background::Color(redact_color),
-                );
-            });
-        }
-
-        // Draw pixelation previews (actual pixelated content from screenshot)
-        for pixelate in &self.pixelations {
-            // Convert global coordinates to widget-local
-            let x1 = pixelate.x - self.output_rect.left as f32;
-            let y1 = pixelate.y - self.output_rect.top as f32;
-            let x2 = pixelate.x2 - self.output_rect.left as f32;
-            let y2 = pixelate.y2 - self.output_rect.top as f32;
-
-            // Normalize (ensure min < max)
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-
-            // Block size in logical pixels (will be scaled for image sampling)
-            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
-
-            renderer.with_layer(*viewport, |renderer| {
-                let mut y = min_y;
-                while y < max_y {
-                    let mut x = min_x;
-                    let block_h = block_size_logical.min(max_y - y);
-                    while x < max_x {
-                        let block_w = block_size_logical.min(max_x - x);
-
-                        // Sample the average color from the screenshot image
-                        // Convert logical coords to image pixel coords
-                        let img_x = (x * self.image_scale).round() as u32;
-                        let img_y = (y * self.image_scale).round() as u32;
-                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
-                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
-
-                        // Clamp to image bounds
-                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
-                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
-                        let img_x2 = img_x2.min(self.screenshot_image.width());
-                        let img_y2 = img_y2.min(self.screenshot_image.height());
-
-                        // Calculate average color
-                        let mut total_r: u64 = 0;
-                        let mut total_g: u64 = 0;
-                        let mut total_b: u64 = 0;
-                        let mut pixel_count: u64 = 0;
-
-                        for py in img_y..img_y2 {
-                            for px in img_x..img_x2 {
-                                let pixel = self.screenshot_image.get_pixel(px, py);
-                                total_r += pixel[0] as u64;
-                                total_g += pixel[1] as u64;
-                                total_b += pixel[2] as u64;
-                                pixel_count += 1;
-                            }
-                        }
-
-                        let color = if pixel_count > 0 {
-                            cosmic::iced::Color::from_rgb8(
-                                (total_r / pixel_count) as u8,
-                                (total_g / pixel_count) as u8,
-                                (total_b / pixel_count) as u8,
-                            )
-                        } else {
-                            cosmic::iced::Color::from_rgb(0.5, 0.5, 0.5)
-                        };
-
-                        renderer.fill_quad(
-                            cosmic::iced_core::renderer::Quad {
-                                bounds: cosmic::iced_core::Rectangle {
-                                    x,
-                                    y,
-                                    width: block_w,
-                                    height: block_h,
-                                },
-                                border: Border::default(),
-                                shadow: cosmic::iced_core::Shadow::default(),
-                            },
-                            Background::Color(color),
-                        );
-                        x += block_size_logical;
-                    }
-                    y += block_size_logical;
-                }
-            });
-        }
-
-        // Draw redaction preview (currently being drawn)
-        if let Some((start_x, start_y)) = self.redact_drawing
-            && let Some(cursor_pos) = cursor.position()
-        {
-            let x1 = start_x - self.output_rect.left as f32;
-            let y1 = start_y - self.output_rect.top as f32;
-            let x2 = cursor_pos.x;
-            let y2 = cursor_pos.y;
-
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-
-            let rect = cosmic::iced_core::Rectangle {
-                x: min_x,
-                y: min_y,
-                width: max_x - min_x,
-                height: max_y - min_y,
-            };
-
-            let preview_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7);
-
-            renderer.with_layer(*viewport, |renderer| {
-                renderer.fill_quad(
-                    cosmic::iced_core::renderer::Quad {
-                        bounds: rect,
-                        border: Border {
-                            radius: 0.0.into(),
-                            width: 2.0,
-                            color: cosmic::iced::Color::WHITE,
-                        },
-                        shadow: cosmic::iced_core::Shadow::default(),
-                    },
-                    Background::Color(preview_color),
-                );
-            });
-        }
-
-        // Draw pixelation preview (currently being drawn) - actual pixelated content
-        if let Some((start_x, start_y)) = self.pixelate_drawing
-            && let Some(cursor_pos) = cursor.position()
-        {
-            let x1 = start_x - self.output_rect.left as f32;
-            let y1 = start_y - self.output_rect.top as f32;
-            let x2 = cursor_pos.x;
-            let y2 = cursor_pos.y;
-
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-
-            // Block size in logical pixels
-            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
-
-            renderer.with_layer(*viewport, |renderer| {
-                // Draw pixelated blocks
-                let mut y = min_y;
-                while y < max_y {
-                    let mut x = min_x;
-                    let block_h = block_size_logical.min(max_y - y);
-                    while x < max_x {
-                        let block_w = block_size_logical.min(max_x - x);
-
-                        // Sample the average color from the screenshot image
-                        let img_x = (x * self.image_scale).round() as u32;
-                        let img_y = (y * self.image_scale).round() as u32;
-                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
-                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
-
-                        // Clamp to image bounds
-                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
-                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
-                        let img_x2 = img_x2.min(self.screenshot_image.width());
-                        let img_y2 = img_y2.min(self.screenshot_image.height());
-
-                        // Calculate average color
-                        let mut total_r: u64 = 0;
-                        let mut total_g: u64 = 0;
-                        let mut total_b: u64 = 0;
-                        let mut pixel_count: u64 = 0;
-
-                        for py in img_y..img_y2 {
-                            for px in img_x..img_x2 {
-                                let pixel = self.screenshot_image.get_pixel(px, py);
-                                total_r += pixel[0] as u64;
-                                total_g += pixel[1] as u64;
-                                total_b += pixel[2] as u64;
-                                pixel_count += 1;
-                            }
-                        }
-
-                        let color = if pixel_count > 0 {
-                            cosmic::iced::Color::from_rgb8(
-                                (total_r / pixel_count) as u8,
-                                (total_g / pixel_count) as u8,
-                                (total_b / pixel_count) as u8,
-                            )
-                        } else {
-                            cosmic::iced::Color::from_rgb(0.5, 0.5, 0.5)
-                        };
-
-                        renderer.fill_quad(
-                            cosmic::iced_core::renderer::Quad {
-                                bounds: cosmic::iced_core::Rectangle {
-                                    x,
-                                    y,
-                                    width: block_w,
-                                    height: block_h,
-                                },
-                                border: Border::default(),
-                                shadow: cosmic::iced_core::Shadow::default(),
-                            },
-                            Background::Color(color),
-                        );
-                        x += block_size_logical;
-                    }
-                    y += block_size_logical;
-                }
-
-                // Draw a border around the pixelation area
-                let rect = cosmic::iced_core::Rectangle {
-                    x: min_x,
-                    y: min_y,
-                    width: max_x - min_x,
-                    height: max_y - min_y,
-                };
-                renderer.fill_quad(
-                    cosmic::iced_core::renderer::Quad {
-                        bounds: rect,
-                        border: Border {
-                            radius: 0.0.into(),
-                            width: 2.0,
-                            color: cosmic::iced::Color::from_rgba(0.8, 0.8, 0.8, 1.0),
-                        },
-                        shadow: cosmic::iced_core::Shadow::default(),
-                    },
-                    Background::Color(cosmic::iced::Color::TRANSPARENT),
-                );
-            });
-        }
-
-        // Draw arrows on top of the selection using meshes
-        let shape_color: cosmic::iced::Color = self.shape_color.into();
+        // Draw arrows on top of shapes using meshes
         let border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.9);
         let arrow_thickness = 4.0_f32;
         let head_size = 16.0_f32;
         let outline_px = 1.0_f32;
 
         for arrow in &self.arrows {
+            // Use per-arrow color
+            let arrow_color: cosmic::iced::Color = arrow.color.into();
+            
             // Convert global coordinates to widget-local
             let start_x = arrow.start_x - self.output_rect.left as f32;
             let start_y = arrow.start_y - self.output_rect.top as f32;
@@ -2619,8 +2599,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let end_y = arrow.end_y - self.output_rect.top as f32;
 
             // Border/shadow first, then main arrow
-            if self.shape_shadow {
-                if let Some((vertices, indices)) = build_arrow_mesh(
+            if arrow.shadow {
+                if let Some((vertices, indices)) = build_arrow_lines_mesh(
                     start_x,
                     start_y,
                     end_x,
@@ -2639,12 +2619,12 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 }
             }
 
-            if let Some((vertices, indices)) = build_arrow_mesh(
+            if let Some((vertices, indices)) = build_arrow_lines_mesh(
                 start_x,
                 start_y,
                 end_x,
                 end_y,
-                shape_color,
+                arrow_color,
                 arrow_thickness,
                 head_size,
             ) {
@@ -2658,7 +2638,8 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
-        // Draw arrow currently being drawn (preview)
+        // Draw arrow currently being drawn (preview) - uses current shape_color
+        let current_shape_color: cosmic::iced::Color = self.shape_color.into();
         if let Some((start_x, start_y)) = self.arrow_drawing
             && let Some(cursor_pos) = cursor.position()
         {
@@ -2667,12 +2648,12 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let end_x = cursor_pos.x;
             let end_y = cursor_pos.y;
 
-            let mut preview_color = shape_color;
+            let mut preview_color = current_shape_color;
             preview_color.a = 0.7;
             let preview_border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6);
 
             if self.shape_shadow {
-                if let Some((vertices, indices)) = build_arrow_mesh(
+                if let Some((vertices, indices)) = build_arrow_lines_mesh(
                     local_start_x,
                     local_start_y,
                     end_x,
@@ -2691,7 +2672,7 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 }
             }
 
-            if let Some((vertices, indices)) = build_arrow_mesh(
+            if let Some((vertices, indices)) = build_arrow_lines_mesh(
                 local_start_x,
                 local_start_y,
                 end_x,
