@@ -13,7 +13,6 @@ use cosmic::{
         self, Border, Color, Length, Point, Rectangle, Shadow, Size, clipboard::DndSource,
         layout::Node, renderer::Quad,
     },
-    iced_widget::graphics::mesh::Renderer as MeshRenderer,
     widget::{self, Widget},
 };
 
@@ -527,88 +526,12 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         let Some(clipped_inner_rect) = inner_rect.intersection(&outer_rect) else {
             return;
         };
-        #[cfg(feature = "wgpu")]
-        {
-            use cosmic::iced_widget::graphics::{
-                Mesh,
-                color::pack,
-                mesh::{Indexed, SolidVertex2D},
-            };
-            let mut overlay = Color::BLACK;
-            overlay.a = 0.6;
+        // Draw dark overlay outside the selection (60% opacity).
+        // We do this as 4 rectangles (top/bottom/left/right strips) around the selection.
+        let mut overlay = Color::BLACK;
+        overlay.a = 0.6;
 
-            // Use output-relative coordinates for the mesh
-            // Outer rectangle corners (0,0) to (width, height)
-            let outer_tl = (0.0_f32, 0.0_f32);
-            let outer_tr = (outer_size.width, 0.0_f32);
-            let outer_br = (outer_size.width, outer_size.height);
-            let outer_bl = (0.0_f32, outer_size.height);
-
-            // Inner rectangle (selection) translated to output-relative coords
-            let inner_tl = (
-                clipped_inner_rect.x - outer_rect.x,
-                clipped_inner_rect.y - outer_rect.y,
-            );
-            let inner_tr = (
-                clipped_inner_rect.x + clipped_inner_rect.width - outer_rect.x,
-                clipped_inner_rect.y - outer_rect.y,
-            );
-            let inner_br = (
-                clipped_inner_rect.x + clipped_inner_rect.width - outer_rect.x,
-                clipped_inner_rect.y + clipped_inner_rect.height - outer_rect.y,
-            );
-            let inner_bl = (
-                clipped_inner_rect.x - outer_rect.x,
-                clipped_inner_rect.y + clipped_inner_rect.height - outer_rect.y,
-            );
-
-            // 8 vertices (0-based indices):
-            // Outer: 0=TL, 1=TR, 2=BR, 3=BL
-            // Inner: 4=TL, 5=TR, 6=BR, 7=BL
-            let vertices = vec![
-                outer_tl, // 0
-                outer_tr, // 1
-                outer_br, // 2
-                outer_bl, // 3
-                inner_tl, // 4
-                inner_tr, // 5
-                inner_br, // 6
-                inner_bl, // 7
-            ];
-
-            // 8 triangles forming the frame around selection (0-based indices)
-            #[rustfmt::skip]
-            let indices: Vec<u32> = vec![
-                // Top strip
-                0, 1, 5,
-                0, 5, 4,
-                // Right strip
-                1, 2, 6,
-                1, 6, 5,
-                // Bottom strip
-                2, 3, 7,
-                2, 7, 6,
-                // Left strip
-                3, 0, 4,
-                3, 4, 7,
-            ];
-
-            renderer.draw_mesh(Mesh::Solid {
-                buffers: Indexed {
-                    vertices: vertices
-                        .into_iter()
-                        .map(|v| SolidVertex2D {
-                            position: [v.0, v.1],
-                            color: pack(overlay),
-                        })
-                        .collect(),
-                    indices,
-                },
-                transformation: cosmic::iced_core::Transformation::IDENTITY,
-                clip_bounds: Rectangle::new(Point::ORIGIN, outer_size),
-            })
-        }
-
+        // Translate selection rect to output-relative coordinates (0,0 is top-left of this output).
         let translated_clipped_inner_rect = Rectangle::new(
             Point::new(
                 clipped_inner_rect.x - outer_rect.x,
@@ -616,6 +539,74 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             ),
             clipped_inner_rect.size(),
         );
+
+        let outer_rel = Rectangle::new(Point::ORIGIN, outer_size);
+        let sel = translated_clipped_inner_rect;
+
+        // Top strip
+        if sel.y > outer_rel.y {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(outer_rel.x, outer_rel.y),
+                        Size::new(outer_rel.width, sel.y - outer_rel.y),
+                    ),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                },
+                overlay,
+            );
+        }
+
+        // Bottom strip
+        let sel_bottom = sel.y + sel.height;
+        let outer_bottom = outer_rel.y + outer_rel.height;
+        if sel_bottom < outer_bottom {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(outer_rel.x, sel_bottom),
+                        Size::new(outer_rel.width, outer_bottom - sel_bottom),
+                    ),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                },
+                overlay,
+            );
+        }
+
+        // Left strip (between top and bottom)
+        if sel.x > outer_rel.x {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(outer_rel.x, sel.y),
+                        Size::new(sel.x - outer_rel.x, sel.height),
+                    ),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                },
+                overlay,
+            );
+        }
+
+        // Right strip (between top and bottom)
+        let sel_right = sel.x + sel.width;
+        let outer_right = outer_rel.x + outer_rel.width;
+        if sel_right < outer_right {
+            renderer.fill_quad(
+                Quad {
+                    bounds: Rectangle::new(
+                        Point::new(sel_right, sel.y),
+                        Size::new(outer_right - sel_right, sel.height),
+                    ),
+                    border: Border::default(),
+                    shadow: Shadow::default(),
+                },
+                overlay,
+            );
+        }
+
         let quad = Quad {
             bounds: translated_clipped_inner_rect,
             border: Border {

@@ -36,8 +36,13 @@ pub fn draw_arrows_on_image(
     scale: f32,
 ) {
     let arrow_color = image::Rgba([230u8, 25u8, 25u8, 255u8]); // Red
+    let border_color = image::Rgba([0u8, 0u8, 0u8, 255u8]); // Black
     let thickness = 4.0 * scale;
     let head_size = 16.0 * scale;
+    // "Very thin" outline: ~1 physical pixel on 1x, ~2 on 2x, etc.
+    let outline_px = (1.0 * scale).max(1.0);
+    let border_thickness = thickness + 2.0 * outline_px;
+    let border_head_size = head_size + outline_px;
 
     for arrow in arrows {
         // Convert from global logical to image pixel coordinates (float for precision)
@@ -45,64 +50,97 @@ pub fn draw_arrows_on_image(
         let start_y = (arrow.start_y - selection_rect.top as f32) * scale;
         let end_x = (arrow.end_x - selection_rect.left as f32) * scale;
         let end_y = (arrow.end_y - selection_rect.top as f32) * scale;
-
-        let dx = end_x - start_x;
-        let dy = end_y - start_y;
-        let length = (dx * dx + dy * dy).sqrt();
-        if length < 5.0 {
-            continue;
-        }
-
-        // Normalize direction
-        let nx = dx / length;
-        let ny = dy / length;
-
-        // Perpendicular vector for thickness
-        let px = -ny * thickness / 2.0;
-        let py = nx * thickness / 2.0;
-
-        // Shaft end (before arrowhead)
-        let shaft_end_x = end_x - nx * head_size;
-        let shaft_end_y = end_y - ny * head_size;
-
-        // Draw shaft as filled quadrilateral (rotated rectangle) - split into 2 triangles
-        fill_triangle(
+        // Border first, then main arrow
+        draw_single_arrow(
             img,
-            start_x + px,
-            start_y + py,
-            start_x - px,
-            start_y - py,
-            shaft_end_x - px,
-            shaft_end_y - py,
-            arrow_color,
+            start_x,
+            start_y,
+            end_x,
+            end_y,
+            border_color,
+            border_thickness,
+            border_head_size,
         );
-        fill_triangle(
+        draw_single_arrow(
             img,
-            start_x + px,
-            start_y + py,
-            shaft_end_x - px,
-            shaft_end_y - py,
-            shaft_end_x + px,
-            shaft_end_y + py,
-            arrow_color,
-        );
-
-        // Draw arrowhead as filled triangle
-        let head_width = head_size * 0.5;
-        let hpx = -ny * head_width;
-        let hpy = nx * head_width;
-
-        fill_triangle(
-            img,
-            shaft_end_x + hpx,
-            shaft_end_y + hpy,
-            shaft_end_x - hpx,
-            shaft_end_y - hpy,
+            start_x,
+            start_y,
             end_x,
             end_y,
             arrow_color,
+            thickness,
+            head_size,
         );
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_single_arrow(
+    img: &mut RgbaImage,
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    color: image::Rgba<u8>,
+    thickness: f32,
+    head_size: f32,
+) {
+    let dx = end_x - start_x;
+    let dy = end_y - start_y;
+    let length = (dx * dx + dy * dy).sqrt();
+    if length < 5.0 {
+        return;
+    }
+
+    // Normalize direction
+    let nx = dx / length;
+    let ny = dy / length;
+
+    // Perpendicular vector for thickness
+    let px = -ny * thickness / 2.0;
+    let py = nx * thickness / 2.0;
+
+    // Shaft end (before arrowhead)
+    let shaft_end_x = end_x - nx * head_size;
+    let shaft_end_y = end_y - ny * head_size;
+
+    // Draw shaft as filled quadrilateral (rotated rectangle) - split into 2 triangles
+    fill_triangle(
+        img,
+        start_x + px,
+        start_y + py,
+        start_x - px,
+        start_y - py,
+        shaft_end_x - px,
+        shaft_end_y - py,
+        color,
+    );
+    fill_triangle(
+        img,
+        start_x + px,
+        start_y + py,
+        shaft_end_x - px,
+        shaft_end_y - py,
+        shaft_end_x + px,
+        shaft_end_y + py,
+        color,
+    );
+
+    // Draw arrowhead as filled triangle
+    let head_width = head_size * 0.5;
+    let hpx = -ny * head_width;
+    let hpy = nx * head_width;
+
+    fill_triangle(
+        img,
+        shaft_end_x + hpx,
+        shaft_end_y + hpy,
+        shaft_end_x - hpx,
+        shaft_end_y - hpy,
+        end_x,
+        end_y,
+        color,
+    );
 }
 
 /// Draw redaction rectangles onto an image
@@ -170,25 +208,52 @@ fn fill_triangle(
 
     for py in min_y..=max_y {
         for px in min_x..=max_x {
-            // Sample at pixel center
-            let x = px as f32 + 0.5;
-            let y = py as f32 + 0.5;
+            // Simple MSAA (supersampling) to anti-alias triangle edges when burning into the final image.
+            // This is important because saved/copied images come from CPU rasterization.
+            const N: i32 = 4; // 4x4 = 16 samples per pixel
+            let mut covered = 0;
 
-            // Edge functions (same sign = inside)
-            let e0 = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
-            let e1 = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
-            let e2 = (x0 - x2) * (y - y2) - (y0 - y2) * (x - x2);
+            for sy in 0..N {
+                for sx in 0..N {
+                    // Subsample in pixel space
+                    let x = px as f32 + (sx as f32 + 0.5) / N as f32;
+                    let y = py as f32 + (sy as f32 + 0.5) / N as f32;
 
-            // Check if inside (all edge functions same sign)
-            let inside = if area > 0.0 {
-                e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0
-            } else {
-                e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0
-            };
+                    // Edge functions (same sign = inside)
+                    let e0 = (x1 - x0) * (y - y0) - (y1 - y0) * (x - x0);
+                    let e1 = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1);
+                    let e2 = (x0 - x2) * (y - y2) - (y0 - y2) * (x - x2);
 
-            if inside {
-                // Solid fill - no AA artifacts
+                    let inside = if area > 0.0 {
+                        e0 >= 0.0 && e1 >= 0.0 && e2 >= 0.0
+                    } else {
+                        e0 <= 0.0 && e1 <= 0.0 && e2 <= 0.0
+                    };
+
+                    if inside {
+                        covered += 1;
+                    }
+                }
+            }
+
+            if covered == 0 {
+                continue;
+            }
+
+            let coverage = covered as f32 / (N * N) as f32;
+            let src_a = (color.0[3] as f32) / 255.0;
+            let alpha = (coverage * src_a).clamp(0.0, 1.0);
+
+            if alpha >= 0.999 {
                 img.put_pixel(px as u32, py as u32, color);
+            } else {
+                let dst = img.get_pixel(px as u32, py as u32);
+                let inv = 1.0 - alpha;
+                let r = (color.0[0] as f32 * alpha + dst.0[0] as f32 * inv).round() as u8;
+                let g = (color.0[1] as f32 * alpha + dst.0[1] as f32 * inv).round() as u8;
+                let b = (color.0[2] as f32 * alpha + dst.0[2] as f32 * inv).round() as u8;
+                // Screenshot images are expected to be fully opaque.
+                img.put_pixel(px as u32, py as u32, image::Rgba([r, g, b, 255]));
             }
         }
     }

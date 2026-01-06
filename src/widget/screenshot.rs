@@ -1347,63 +1347,195 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let nx = dx / length;
             let ny = dy / length;
 
-            // Perpendicular vector for thickness
-            let px = -ny * thickness / 2.0;
-            let py = nx * thickness / 2.0;
-
             // Shaft end (before arrowhead)
             let shaft_end_x = end_x - nx * head_size;
             let shaft_end_y = end_y - ny * head_size;
 
-            // Pack color
-            let packed_color = pack(color);
+            // Feather widths in logical pixels to soften edges (simulates AA even without MSAA).
+            // We use a 3-step alpha ramp (outer=0, mid≈0.35, inner=1) and also feather the caps
+            // by extending the mid/outer layers along the arrow direction.
+            let feather_outer = 3.0_f32;
+            let feather_mid = 1.5_f32;
 
-            // Vertices for the shaft (4 corners of rotated rectangle)
-            // and arrowhead (3 points of triangle)
-            let mut vertices = Vec::with_capacity(7);
+            // Perpendicular vectors for inner/mid/outer radii
+            let r_in = thickness / 2.0;
+            let r_mid = r_in + feather_mid;
+            let r_out = r_in + feather_outer;
 
-            // Shaft vertices (0-3)
-            vertices.push(SolidVertex2D {
-                position: [start_x + px, start_y + py],
-                color: packed_color,
-            });
-            vertices.push(SolidVertex2D {
-                position: [start_x - px, start_y - py],
-                color: packed_color,
-            });
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - px, shaft_end_y - py],
-                color: packed_color,
-            });
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + px, shaft_end_y + py],
-                color: packed_color,
-            });
+            let px_in = -ny * r_in;
+            let py_in = nx * r_in;
+            let px_mid = -ny * r_mid;
+            let py_mid = nx * r_mid;
+            let px_out = -ny * r_out;
+            let py_out = nx * r_out;
 
-            // Arrowhead vertices (4-6)
-            // Base of arrowhead (wider than shaft)
+            let mut inner = color;
+            inner.a = inner.a.clamp(0.0, 1.0);
+            let packed_inner = pack(inner);
+
+            let mut mid = color;
+            mid.a = (inner.a * 0.35).clamp(0.12, 0.45);
+            let packed_mid = pack(mid);
+
+            let mut outer = color;
+            outer.a = 0.0;
+            let packed_outer = pack(outer);
+
+            // Cap feathering: extend mid/outer a bit along the line direction to soften end caps.
+            let start_mid_x = start_x - nx * feather_mid;
+            let start_mid_y = start_y - ny * feather_mid;
+            let end_mid_x = shaft_end_x + nx * (feather_mid * 0.5);
+            let end_mid_y = shaft_end_y + ny * (feather_mid * 0.5);
+
+            let start_out_x = start_x - nx * feather_outer;
+            let start_out_y = start_y - ny * feather_outer;
+            let end_out_x = shaft_end_x + nx * (feather_outer * 0.5);
+            let end_out_y = shaft_end_y + ny * (feather_outer * 0.5);
+
+            // Vertex layout:
+            // Shaft: outer(0..3), mid(4..7), inner(8..11)
+            // Head:  outer(12..14), mid(15..17), inner(18..20)
+            let mut vertices = Vec::with_capacity(21);
+
+            // Shaft outer quad
+            vertices.push(SolidVertex2D {
+                position: [start_out_x + px_out, start_out_y + py_out],
+                color: packed_outer,
+            }); // 0
+            vertices.push(SolidVertex2D {
+                position: [start_out_x - px_out, start_out_y - py_out],
+                color: packed_outer,
+            }); // 1
+            vertices.push(SolidVertex2D {
+                position: [end_out_x - px_out, end_out_y - py_out],
+                color: packed_outer,
+            }); // 2
+            vertices.push(SolidVertex2D {
+                position: [end_out_x + px_out, end_out_y + py_out],
+                color: packed_outer,
+            }); // 3
+
+            // Shaft mid quad
+            vertices.push(SolidVertex2D {
+                position: [start_mid_x + px_mid, start_mid_y + py_mid],
+                color: packed_mid,
+            }); // 4
+            vertices.push(SolidVertex2D {
+                position: [start_mid_x - px_mid, start_mid_y - py_mid],
+                color: packed_mid,
+            }); // 5
+            vertices.push(SolidVertex2D {
+                position: [end_mid_x - px_mid, end_mid_y - py_mid],
+                color: packed_mid,
+            }); // 6
+            vertices.push(SolidVertex2D {
+                position: [end_mid_x + px_mid, end_mid_y + py_mid],
+                color: packed_mid,
+            }); // 7
+
+            // Shaft inner quad (no cap extension; keep geometry accurate)
+            vertices.push(SolidVertex2D {
+                position: [start_x + px_in, start_y + py_in],
+                color: packed_inner,
+            }); // 8
+            vertices.push(SolidVertex2D {
+                position: [start_x - px_in, start_y - py_in],
+                color: packed_inner,
+            }); // 9
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - px_in, shaft_end_y - py_in],
+                color: packed_inner,
+            }); // 10
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + px_in, shaft_end_y + py_in],
+                color: packed_inner,
+            }); // 11
+
+            // Arrowhead (wider than shaft)
             let head_width = head_size * 0.5;
-            let hpx = -ny * head_width;
-            let hpy = nx * head_width;
+            let h_in = head_width;
+            let h_mid = head_width + feather_mid;
+            let h_out = head_width + feather_outer;
 
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x + hpx, shaft_end_y + hpy],
-                color: packed_color,
-            });
-            vertices.push(SolidVertex2D {
-                position: [shaft_end_x - hpx, shaft_end_y - hpy],
-                color: packed_color,
-            });
-            vertices.push(SolidVertex2D {
-                position: [end_x, end_y], // Tip of arrow
-                color: packed_color,
-            });
+            let hpx_in = -ny * h_in;
+            let hpy_in = nx * h_in;
+            let hpx_mid = -ny * h_mid;
+            let hpy_mid = nx * h_mid;
+            let hpx_out = -ny * h_out;
+            let hpy_out = nx * h_out;
 
-            // Indices: 2 triangles for shaft, 1 triangle for head
-            let indices = vec![
-                0, 1, 2, // First triangle of shaft
-                0, 2, 3, // Second triangle of shaft
-                4, 5, 6, // Arrowhead triangle
+            // Outer head triangle (alpha 0), extended forward
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + hpx_out, shaft_end_y + hpy_out],
+                color: packed_outer,
+            }); // 12
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - hpx_out, shaft_end_y - hpy_out],
+                color: packed_outer,
+            }); // 13
+            vertices.push(SolidVertex2D {
+                position: [end_x + nx * feather_outer, end_y + ny * feather_outer],
+                color: packed_outer,
+            }); // 14
+
+            // Mid head triangle (alpha ~0.35), extended forward
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + hpx_mid, shaft_end_y + hpy_mid],
+                color: packed_mid,
+            }); // 15
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - hpx_mid, shaft_end_y - hpy_mid],
+                color: packed_mid,
+            }); // 16
+            vertices.push(SolidVertex2D {
+                position: [end_x + nx * feather_mid, end_y + ny * feather_mid],
+                color: packed_mid,
+            }); // 17
+
+            // Inner head triangle (alpha 1)
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x + hpx_in, shaft_end_y + hpy_in],
+                color: packed_inner,
+            }); // 18
+            vertices.push(SolidVertex2D {
+                position: [shaft_end_x - hpx_in, shaft_end_y - hpy_in],
+                color: packed_inner,
+            }); // 19
+            vertices.push(SolidVertex2D {
+                position: [end_x, end_y],
+                color: packed_inner,
+            }); // 20
+
+            // Indices:
+            // - Inner shaft quad (solid)
+            // - Mid band around shaft (outer<->mid and mid<->inner, both sides)
+            // - Inner head triangle (solid)
+            // - Mid/outer bands around head (base edge + 2 side edges)
+            let indices: Vec<u32> = vec![
+                // Inner shaft
+                8, 9, 10, 8, 10, 11,
+                // Shaft band: mid <-> inner (+ side)
+                4, 8, 11, 4, 11, 7,
+                // Shaft band: mid <-> inner (- side)
+                5, 6, 10, 5, 10, 9,
+                // Shaft band: outer <-> mid (+ side)
+                0, 4, 7, 0, 7, 3,
+                // Shaft band: outer <-> mid (- side)
+                1, 2, 6, 1, 6, 5,
+                // Inner head
+                18, 19, 20,
+                // Head band: mid <-> inner base edge
+                15, 18, 19, 15, 19, 16,
+                // Head band: mid <-> inner + edge to tip
+                15, 18, 20, 15, 20, 17,
+                // Head band: mid <-> inner - edge to tip
+                16, 19, 20, 16, 20, 17,
+                // Head band: outer <-> mid base edge
+                12, 15, 16, 12, 16, 13,
+                // Head band: outer <-> mid + edge to tip
+                12, 15, 17, 12, 17, 14,
+                // Head band: outer <-> mid - edge to tip
+                13, 16, 17, 13, 17, 14,
             ];
 
             Some((vertices, indices))
@@ -1481,8 +1613,10 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
 
         // Draw arrows on top of the selection using meshes
         let arrow_color = cosmic::iced::Color::from_rgb(0.9, 0.1, 0.1); // Red
+        let arrow_border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.9); // Black
         let arrow_thickness = 4.0_f32;
         let head_size = 16.0_f32;
+        let outline_px = 1.0_f32;
 
         for arrow in &self.arrows {
             // Convert global coordinates to widget-local
@@ -1490,6 +1624,25 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let start_y = arrow.start_y - self.output_rect.top as f32;
             let end_x = arrow.end_x - self.output_rect.left as f32;
             let end_y = arrow.end_y - self.output_rect.top as f32;
+
+            // Border first, then main arrow
+            if let Some((vertices, indices)) = build_arrow_mesh(
+                start_x,
+                start_y,
+                end_x,
+                end_y,
+                arrow_border_color,
+                arrow_thickness + 2.0 * outline_px,
+                head_size + outline_px,
+            ) {
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_mesh(Mesh::Solid {
+                        buffers: Indexed { vertices, indices },
+                        transformation: cosmic::iced_core::Transformation::IDENTITY,
+                        clip_bounds: *viewport,
+                    });
+                });
+            }
 
             if let Some((vertices, indices)) = build_arrow_mesh(
                 start_x,
@@ -1520,6 +1673,25 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             let end_y = cursor_pos.y;
 
             let preview_color = cosmic::iced::Color::from_rgba(0.9, 0.1, 0.1, 0.7);
+            let preview_border_color = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.6);
+
+            if let Some((vertices, indices)) = build_arrow_mesh(
+                local_start_x,
+                local_start_y,
+                end_x,
+                end_y,
+                preview_border_color,
+                arrow_thickness + 2.0 * outline_px,
+                head_size + outline_px,
+            ) {
+                renderer.with_layer(*viewport, |renderer| {
+                    renderer.draw_mesh(Mesh::Solid {
+                        buffers: Indexed { vertices, indices },
+                        transformation: cosmic::iced_core::Transformation::IDENTITY,
+                        clip_bounds: *viewport,
+                    });
+                });
+            }
 
             if let Some((vertices, indices)) = build_arrow_mesh(
                 local_start_x,
