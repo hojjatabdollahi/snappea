@@ -1,9 +1,14 @@
-pub mod keyboard_wrapper;
+pub mod annotation_canvas;
+pub mod drawing;
 pub mod magnifier;
 pub mod output_selection;
+pub mod overlays;
 pub mod rectangle_selection;
 pub mod screenshot;
+pub mod screenshot_selection;
 pub mod settings_drawer;
 pub mod tool_button;
+pub mod tool_handlers;
+pub mod settings_handlers;
 pub mod toolbar;
 pub mod toolbar_position_selector;

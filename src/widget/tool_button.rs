@@ -7,13 +7,13 @@
 //!
 //! Used for shape tools, and can be reused for other multi-option tool buttons.
 
+use cosmic::Element;
 use cosmic::iced::Size;
 use cosmic::iced_core::{
-    layout, mouse, widget::Tree, Background, Border, Layout, Length, Rectangle,
+    Background, Border, Layout, Length, Rectangle, layout, mouse, widget::Tree,
 };
 use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, container, icon, text, toggler, tooltip};
-use cosmic::Element;
 
 use crate::config::{RedactTool, ShapeColor, ShapeTool};
 
@@ -95,44 +95,34 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         // Check for right-click
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) =
             &event
+            && let Some(pos) = cursor.position()
+            && layout.bounds().contains(pos)
+            && let Some(ref msg) = self.on_right_click
         {
-            if let Some(pos) = cursor.position() {
-                if layout.bounds().contains(pos) {
-                    if let Some(ref msg) = self.on_right_click {
-                        shell.publish(msg.clone());
-                        return cosmic::iced_core::event::Status::Captured;
-                    }
-                }
-            }
+            shell.publish(msg.clone());
+            return cosmic::iced_core::event::Status::Captured;
         }
 
         // Track press start for long-press detection
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) =
             &event
+            && let Some(pos) = cursor.position()
+            && layout.bounds().contains(pos)
         {
-            if let Some(pos) = cursor.position() {
-                if layout.bounds().contains(pos) {
-                    self.press_start.set(Some(std::time::Instant::now()));
-                }
-            }
+            self.press_start.set(Some(std::time::Instant::now()));
         }
 
         // Check for long-press on release (500ms threshold)
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) =
             &event
+            && let Some(start) = self.press_start.take()
+            && start.elapsed() >= std::time::Duration::from_millis(500)
+            && let Some(pos) = cursor.position()
+            && layout.bounds().contains(pos)
+            && let Some(ref msg) = self.on_right_click
         {
-            if let Some(start) = self.press_start.take() {
-                if start.elapsed() >= std::time::Duration::from_millis(500) {
-                    if let Some(pos) = cursor.position() {
-                        if layout.bounds().contains(pos) {
-                            if let Some(ref msg) = self.on_right_click {
-                                shell.publish(msg.clone());
-                                return cosmic::iced_core::event::Status::Captured;
-                            }
-                        }
-                    }
-                }
-            }
+            shell.publish(msg.clone());
+            return cosmic::iced_core::event::Status::Captured;
         }
 
         // Pass event to content
@@ -184,12 +174,9 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         renderer: &cosmic::Renderer,
         translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
-        self.content.as_widget_mut().overlay(
-            &mut tree.children[0],
-            layout,
-            renderer,
-            translation,
-        )
+        self.content
+            .as_widget_mut()
+            .overlay(&mut tree.children[0], layout, renderer, translation)
     }
 }
 
@@ -201,14 +188,70 @@ impl<'a, Msg: Clone + 'static> From<RightClickWrapper<'a, Msg>> for Element<'a, 
 
 /// Preset colors for the color picker
 pub const COLOR_PRESETS: &[(ShapeColor, &str)] = &[
-    (ShapeColor { r: 0.9, g: 0.1, b: 0.1 }, "Red"),
-    (ShapeColor { r: 0.1, g: 0.7, b: 0.1 }, "Green"),
-    (ShapeColor { r: 0.1, g: 0.4, b: 0.9 }, "Blue"),
-    (ShapeColor { r: 0.9, g: 0.7, b: 0.1 }, "Yellow"),
-    (ShapeColor { r: 0.9, g: 0.5, b: 0.1 }, "Orange"),
-    (ShapeColor { r: 0.7, g: 0.1, b: 0.7 }, "Purple"),
-    (ShapeColor { r: 1.0, g: 1.0, b: 1.0 }, "White"),
-    (ShapeColor { r: 0.0, g: 0.0, b: 0.0 }, "Black"),
+    (
+        ShapeColor {
+            r: 0.9,
+            g: 0.1,
+            b: 0.1,
+        },
+        "Red",
+    ),
+    (
+        ShapeColor {
+            r: 0.1,
+            g: 0.7,
+            b: 0.1,
+        },
+        "Green",
+    ),
+    (
+        ShapeColor {
+            r: 0.1,
+            g: 0.4,
+            b: 0.9,
+        },
+        "Blue",
+    ),
+    (
+        ShapeColor {
+            r: 0.9,
+            g: 0.7,
+            b: 0.1,
+        },
+        "Yellow",
+    ),
+    (
+        ShapeColor {
+            r: 0.9,
+            g: 0.5,
+            b: 0.1,
+        },
+        "Orange",
+    ),
+    (
+        ShapeColor {
+            r: 0.7,
+            g: 0.1,
+            b: 0.7,
+        },
+        "Purple",
+    ),
+    (
+        ShapeColor {
+            r: 1.0,
+            g: 1.0,
+            b: 1.0,
+        },
+        "White",
+    ),
+    (
+        ShapeColor {
+            r: 0.0,
+            g: 0.0,
+            b: 0.0,
+        },
+        "Black",
+    ),
 ];
 
 /// Build a generic tool button with indicator dots.
@@ -228,6 +271,7 @@ pub const COLOR_PRESETS: &[(ShapeColor, &str)] = &[
 /// * `on_press` - Callback for normal click
 /// * `on_right_click` - Callback for right-click/long-press
 /// * `padding` - Button padding
+#[allow(clippy::too_many_arguments)]
 pub fn build_tool_button<'a, Msg: Clone + 'static>(
     icon_name: &'a str,
     tooltip_text: &'a str,
@@ -281,24 +325,22 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
             .width(Length::Fixed(dot_size))
             .height(Length::Fixed(dot_size))
-            .class(cosmic::theme::Container::Custom(Box::new(
-                move |theme| {
-                    let cosmic_theme = theme.cosmic();
-                    let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
-                    cosmic::iced::widget::container::Style {
-                        background: Some(Background::Color(if is_active_dot {
-                            accent_color
-                        } else {
-                            dot_inactive_color
-                        })),
-                        border: Border {
-                            radius: (dot_size / 2.0).into(),
-                            ..Default::default()
-                        },
+            .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
+                let cosmic_theme = theme.cosmic();
+                let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+                cosmic::iced::widget::container::Style {
+                    background: Some(Background::Color(if is_active_dot {
+                        accent_color
+                    } else {
+                        dot_inactive_color
+                    })),
+                    border: Border {
+                        radius: (dot_size / 2.0).into(),
                         ..Default::default()
-                    }
-                },
-            )))
+                    },
+                    ..Default::default()
+                }
+            })))
     };
 
     // Build dots row dynamically based on num_options
@@ -317,12 +359,9 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Stack button (with right-click wrapper) and dots vertically
-    let combined = column![
-        Element::from(main_button_with_events),
-        dots_container
-    ]
-    .spacing(2)
-    .align_x(cosmic::iced_core::Alignment::Center);
+    let combined = column![Element::from(main_button_with_events), dots_container]
+        .spacing(2)
+        .align_x(cosmic::iced_core::Alignment::Center);
 
     // Wrap in a container that aligns the top of the button with other buttons
     let aligned_container = container(combined)
@@ -333,6 +372,7 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
 }
 
 /// Build the shape tool button (convenience wrapper around `build_tool_button`).
+#[allow(clippy::too_many_arguments)]
 pub fn build_shape_button<'a, Msg: Clone + 'static>(
     current_tool: ShapeTool,
     is_active: bool,
@@ -364,6 +404,7 @@ pub fn build_shape_button<'a, Msg: Clone + 'static>(
 }
 
 /// Build the shape settings popup element
+#[allow(clippy::too_many_arguments)]
 pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     current_tool: ShapeTool,
     current_color: ShapeColor,
@@ -442,10 +483,9 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Subtitle with keyboard shortcuts
-    let shape_subtitle = container(
-        text::caption("Shift+A to cycle shapes, A to toggle")
-            .class(cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0))),
-    )
+    let shape_subtitle = container(text::caption("Shift+A to cycle shapes, A to toggle").class(
+        cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0)),
+    ))
     .width(Length::Fill)
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
@@ -462,8 +502,8 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
                 container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
                     .width(Length::Fixed(24.0))
                     .height(Length::Fixed(24.0))
-                    .class(cosmic::theme::Container::Custom(Box::new(
-                        move |_theme| cosmic::iced::widget::container::Style {
+                    .class(cosmic::theme::Container::Custom(Box::new(move |_theme| {
+                        cosmic::iced::widget::container::Style {
                             background: Some(Background::Color(iced_color)),
                             border: Border {
                                 radius: 4.0.into(),
@@ -475,8 +515,8 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
                                 },
                             },
                             ..Default::default()
-                        },
-                    ))),
+                        }
+                    }))),
             )
             .class(cosmic::theme::Button::Text)
             .on_press(on_color_change(color_val))
@@ -515,9 +555,13 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
         .width(Length::Fill)
         .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
-    let color_section = column![text::body("Color"), color_row1_centered, color_row2_centered]
-        .spacing(space_xs)
-        .align_x(cosmic::iced_core::Alignment::Start);
+    let color_section = column![
+        text::body("Color"),
+        color_row1_centered,
+        color_row2_centered
+    ]
+    .spacing(space_xs)
+    .align_x(cosmic::iced_core::Alignment::Start);
 
     // Shadow toggle
     let shadow_row = row![
@@ -551,8 +595,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     .padding([space_xs, space_s])
     .width(Length::Fill);
 
-    let clear_row = container(clear_button)
-        .width(Length::Fill);
+    let clear_row = container(clear_button).width(Length::Fill);
 
     // Assemble popup content
     // Width needs to fit: 4 color swatches per row * (24px + 2*2 padding + spacing) + popup padding
@@ -590,6 +633,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
 }
 
 /// Build the redact/pixelate tool popup
+#[allow(clippy::too_many_arguments)]
 pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     current_tool: RedactTool,
     has_redactions: bool,
@@ -649,28 +693,25 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Subtitle with keyboard shortcuts
-    let redact_subtitle = container(
-        text::caption("Shift+D to cycle tools, D to toggle")
-            .class(cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0))),
-    )
+    let redact_subtitle = container(text::caption("Shift+D to cycle tools, D to toggle").class(
+        cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0)),
+    ))
     .width(Length::Fill)
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Pixelation size slider
     let pixelation_label = text::body(format!("Pixelation: {}px", pixelation_block_size));
-    let pixelation_slider = cosmic::widget::slider(4..=64, pixelation_block_size as i32, move |v| {
-        on_set_pixelation_size(v as u32)
-    })
-    .step(4i32)
-    .on_release(on_save_pixelation_size)
-    .width(Length::Fill);
+    let pixelation_slider =
+        cosmic::widget::slider(4..=64, pixelation_block_size as i32, move |v| {
+            on_set_pixelation_size(v as u32)
+        })
+        .step(4i32)
+        .on_release(on_save_pixelation_size)
+        .width(Length::Fill);
 
-    let pixelation_section = column![
-        pixelation_label,
-        pixelation_slider,
-    ]
-    .spacing(space_xs)
-    .width(Length::Fill);
+    let pixelation_section = column![pixelation_label, pixelation_slider,]
+        .spacing(space_xs)
+        .width(Length::Fill);
 
     // Clear button (full width)
     let clear_button = button::custom(
@@ -692,8 +733,7 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     .padding([space_xs, space_s])
     .width(Length::Fill);
 
-    let clear_row = container(clear_button)
-        .width(Length::Fill);
+    let clear_row = container(clear_button).width(Length::Fill);
 
     // Assemble popup content
     let popup_content = column![

@@ -1,94 +1,17 @@
-//! Arrow and redaction annotation module for drawing on screenshots
-//! Uses tiny-skia for high-quality anti-aliased rendering
+//! Image rendering for annotations using tiny-skia
+//!
+//! These functions draw annotations onto RgbaImage for saving to disk.
 
 use image::RgbaImage;
-use tiny_skia::{
-    Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform,
+use tiny_skia::{Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Transform};
+
+use super::geometry::{self, arrow, shape};
+use crate::domain::{
+    Annotation, ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, Rect,
+    RectOutlineAnnotation, RedactAnnotation,
 };
 
-use crate::config::ShapeColor;
-use crate::screenshot::Rect;
-
-/// Arrow annotation for drawing on screenshots
-#[derive(Clone, Debug, PartialEq)]
-pub struct ArrowAnnotation {
-    /// Start point in global logical coordinates
-    pub start_x: f32,
-    pub start_y: f32,
-    /// End point in global logical coordinates
-    pub end_x: f32,
-    pub end_y: f32,
-    /// Color of this arrow
-    pub color: ShapeColor,
-    /// Whether to draw shadow/border
-    pub shadow: bool,
-}
-
-/// Redaction annotation (black rectangle) for hiding sensitive content
-#[derive(Clone, Debug, PartialEq)]
-pub struct RedactAnnotation {
-    /// Top-left point in global logical coordinates
-    pub x: f32,
-    pub y: f32,
-    /// Bottom-right point in global logical coordinates
-    pub x2: f32,
-    pub y2: f32,
-}
-
-/// Pixelation annotation for obscuring sensitive content with pixelation effect
-#[derive(Clone, Debug, PartialEq)]
-pub struct PixelateAnnotation {
-    /// Top-left point in global logical coordinates
-    pub x: f32,
-    pub y: f32,
-    /// Bottom-right point in global logical coordinates
-    pub x2: f32,
-    pub y2: f32,
-    /// Block size for this pixelation
-    pub block_size: u32,
-}
-
-/// Outline rectangle annotation (no fill)
-#[derive(Clone, Debug, PartialEq)]
-pub struct RectOutlineAnnotation {
-    /// Start point in global logical coordinates
-    pub start_x: f32,
-    pub start_y: f32,
-    /// End point in global logical coordinates
-    pub end_x: f32,
-    pub end_y: f32,
-    /// Color of this rectangle
-    pub color: ShapeColor,
-    /// Whether to draw shadow/border
-    pub shadow: bool,
-}
-
-/// Outline circle/ellipse annotation (no fill)
-#[derive(Clone, Debug, PartialEq)]
-pub struct CircleOutlineAnnotation {
-    /// Start point in global logical coordinates
-    pub start_x: f32,
-    pub start_y: f32,
-    /// End point in global logical coordinates
-    pub end_x: f32,
-    pub end_y: f32,
-    /// Color of this circle
-    pub color: ShapeColor,
-    /// Whether to draw shadow/border
-    pub shadow: bool,
-}
-
-/// Unified annotation type for ordered drawing and undo/redo
-#[derive(Clone, Debug, PartialEq)]
-pub enum Annotation {
-    Arrow(ArrowAnnotation),
-    Circle(CircleOutlineAnnotation),
-    Rectangle(RectOutlineAnnotation),
-    Redact(RedactAnnotation),
-    Pixelate(PixelateAnnotation),
-}
-
-/// Convert RgbaImage to Pixmap and back
+/// Convert RgbaImage to Pixmap, apply drawing function, and copy back
 fn with_pixmap(img: &mut RgbaImage, f: impl FnOnce(&mut Pixmap)) {
     let (w, h) = (img.width(), img.height());
     let Some(mut pixmap) = Pixmap::from_vec(
@@ -105,7 +28,6 @@ fn with_pixmap(img: &mut RgbaImage, f: impl FnOnce(&mut Pixmap)) {
 }
 
 /// Build an arrow path as stroked lines (shaft + two angled head lines)
-/// This matches the preview rendering style
 fn build_arrow_path(
     start_x: f32,
     start_y: f32,
@@ -113,16 +35,8 @@ fn build_arrow_path(
     end_y: f32,
     head_size: f32,
 ) -> Option<tiny_skia::Path> {
-    let dx = end_x - start_x;
-    let dy = end_y - start_y;
-    let length = (dx * dx + dy * dy).sqrt();
-    if length < 5.0 {
-        return None;
-    }
-
-    // Unit direction vector (pointing from start to end)
-    let nx = dx / length;
-    let ny = dy / length;
+    let (head1_x, head1_y, head2_x, head2_y) =
+        arrow::head_points(start_x, start_y, end_x, end_y, head_size)?;
 
     let mut pb = PathBuilder::new();
 
@@ -130,27 +44,40 @@ fn build_arrow_path(
     pb.move_to(start_x, start_y);
     pb.line_to(end_x, end_y);
 
-    // Arrowhead: two angled lines at the tip (same as preview)
-    let angle = 35.0_f32.to_radians();
-    let cos_a = angle.cos();
-    let sin_a = angle.sin();
-
-    // First head line (rotated clockwise from arrow direction)
-    let head1_dx = -nx * cos_a - (-ny) * sin_a;
-    let head1_dy = -nx * sin_a + (-ny) * cos_a;
-    let head1_end_x = end_x + head1_dx * head_size;
-    let head1_end_y = end_y + head1_dy * head_size;
+    // First head line
     pb.move_to(end_x, end_y);
-    pb.line_to(head1_end_x, head1_end_y);
+    pb.line_to(head1_x, head1_y);
 
-    // Second head line (rotated counter-clockwise)
-    let head2_dx = -nx * cos_a + (-ny) * sin_a;
-    let head2_dy = -nx * (-sin_a) + (-ny) * cos_a;
-    let head2_end_x = end_x + head2_dx * head_size;
-    let head2_end_y = end_y + head2_dy * head_size;
+    // Second head line
     pb.move_to(end_x, end_y);
-    pb.line_to(head2_end_x, head2_end_y);
+    pb.line_to(head2_x, head2_y);
 
+    pb.finish()
+}
+
+/// Build an ellipse path using cubic bezier curves
+fn build_ellipse_path(cx: f32, cy: f32, rx: f32, ry: f32) -> Option<tiny_skia::Path> {
+    let kx = rx * shape::BEZIER_K;
+    let ky = ry * shape::BEZIER_K;
+
+    let mut pb = PathBuilder::new();
+
+    // Start at top
+    pb.move_to(cx, cy - ry);
+
+    // Top to right
+    pb.cubic_to(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy);
+
+    // Right to bottom
+    pb.cubic_to(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry);
+
+    // Bottom to left
+    pb.cubic_to(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy);
+
+    // Left to top
+    pb.cubic_to(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry);
+
+    pb.close();
     pb.finish()
 }
 
@@ -166,34 +93,35 @@ pub fn draw_arrows_on_image(
     }
 
     with_pixmap(img, |pixmap| {
-        for arrow in arrows {
-            let [r, g, b, a] = arrow.color.to_rgba_u8();
+        for arrow_ann in arrows {
+            let [r, g, b, a] = arrow_ann.color.to_rgba_u8();
 
             // Convert from global logical to image pixel coordinates
-            let start_x = (arrow.start_x - selection_rect.left as f32) * scale;
-            let start_y = (arrow.start_y - selection_rect.top as f32) * scale;
-            let end_x = (arrow.end_x - selection_rect.left as f32) * scale;
-            let end_y = (arrow.end_y - selection_rect.top as f32) * scale;
+            let start_x = (arrow_ann.start_x - selection_rect.left as f32) * scale;
+            let start_y = (arrow_ann.start_y - selection_rect.top as f32) * scale;
+            let end_x = (arrow_ann.end_x - selection_rect.left as f32) * scale;
+            let end_y = (arrow_ann.end_y - selection_rect.top as f32) * scale;
 
-            let thickness = 4.0 * scale;
-            let head_size = 16.0 * scale;
-            let outline = 2.0 * scale;
+            let thickness = arrow::THICKNESS * scale;
+            let head_size = arrow::HEAD_SIZE * scale;
+            let outline = arrow::OUTLINE * scale;
 
             // Draw shadow/border first (thicker stroke)
-            if arrow.shadow {
-                if let Some(path) = build_arrow_path(start_x, start_y, end_x, end_y, head_size + outline) {
-                    let mut paint = Paint::default();
-                    paint.set_color_rgba8(0, 0, 0, 220);
-                    paint.anti_alias = true;
+            if arrow_ann.shadow
+                && let Some(path) =
+                    build_arrow_path(start_x, start_y, end_x, end_y, head_size + outline)
+            {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(0, 0, 0, 220);
+                paint.anti_alias = true;
 
-                    let stroke = Stroke {
-                        width: thickness + outline * 2.0,
-                        line_cap: LineCap::Round,
-                        line_join: LineJoin::Round,
-                        ..Default::default()
-                    };
-                    pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
-                }
+                let stroke = Stroke {
+                    width: thickness + outline * 2.0,
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Default::default()
+                };
+                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
             }
 
             // Draw main arrow with rounded caps
@@ -235,8 +163,7 @@ pub fn draw_redactions_on_image(
             let x2 = (redact.x2 - selection_rect.left as f32) * scale;
             let y2 = (redact.y2 - selection_rect.top as f32) * scale;
 
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+            let (min_x, min_y, max_x, max_y) = geometry::normalize_rect(x1, y1, x2, y2);
 
             if let Some(rect) =
                 tiny_skia::Rect::from_xywh(min_x, min_y, max_x - min_x, max_y - min_y)
@@ -247,7 +174,7 @@ pub fn draw_redactions_on_image(
     });
 }
 
-/// Draw pixelation rectangles onto an image (still uses manual pixel manipulation)
+/// Draw pixelation rectangles onto an image
 pub fn draw_pixelations_on_image(
     img: &mut RgbaImage,
     pixelations: &[PixelateAnnotation],
@@ -330,8 +257,8 @@ pub fn draw_rect_outlines_on_image(
     }
 
     with_pixmap(img, |pixmap| {
-        let thickness = (3.0 * scale).max(1.0);
-        let border_thickness = (5.0 * scale).max(2.0);
+        let thickness = (shape::THICKNESS * scale).max(1.0);
+        let border_thickness = (shape::BORDER_THICKNESS * scale).max(2.0);
 
         for rect in rects {
             let [r, g, b, a] = rect.color.to_rgba_u8();
@@ -341,8 +268,7 @@ pub fn draw_rect_outlines_on_image(
             let x2 = (rect.end_x - selection_rect.left as f32) * scale;
             let y2 = (rect.end_y - selection_rect.top as f32) * scale;
 
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+            let (min_x, min_y, max_x, max_y) = geometry::normalize_rect(x1, y1, x2, y2);
 
             // Build rectangle path
             let mut pb = PathBuilder::new();
@@ -398,8 +324,8 @@ pub fn draw_circle_outlines_on_image(
     }
 
     with_pixmap(img, |pixmap| {
-        let thickness = (3.0 * scale).max(1.0);
-        let border_thickness = (5.0 * scale).max(2.0);
+        let thickness = (shape::THICKNESS * scale).max(1.0);
+        let border_thickness = (shape::BORDER_THICKNESS * scale).max(2.0);
 
         for c in circles {
             let [r, g, b, a] = c.color.to_rgba_u8();
@@ -409,15 +335,10 @@ pub fn draw_circle_outlines_on_image(
             let x2 = (c.end_x - selection_rect.left as f32) * scale;
             let y2 = (c.end_y - selection_rect.top as f32) * scale;
 
-            let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
-            let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
+            let (min_x, min_y, max_x, max_y) = geometry::normalize_rect(x1, y1, x2, y2);
+            let (cx, cy, rx, ry) = geometry::ellipse_from_bounds(min_x, min_y, max_x, max_y);
 
-            let cx = (min_x + max_x) * 0.5;
-            let cy = (min_y + max_y) * 0.5;
-            let rx = ((max_x - min_x) * 0.5).max(1.0);
-            let ry = ((max_y - min_y) * 0.5).max(1.0);
-
-            // Build ellipse path using bezier curves (4 arcs)
+            // Build ellipse path using bezier curves
             let Some(path) = build_ellipse_path(cx, cy, rx, ry) else {
                 continue;
             };
@@ -453,37 +374,8 @@ pub fn draw_circle_outlines_on_image(
     });
 }
 
-/// Build an ellipse path using cubic bezier curves
-fn build_ellipse_path(cx: f32, cy: f32, rx: f32, ry: f32) -> Option<tiny_skia::Path> {
-    // Magic number for approximating a circle with bezier curves
-    // k = 4/3 * (sqrt(2) - 1) ≈ 0.5522847498
-    const K: f32 = 0.5522847498;
-
-    let kx = rx * K;
-    let ky = ry * K;
-
-    let mut pb = PathBuilder::new();
-
-    // Start at top
-    pb.move_to(cx, cy - ry);
-
-    // Top to right
-    pb.cubic_to(cx + kx, cy - ry, cx + rx, cy - ky, cx + rx, cy);
-
-    // Right to bottom
-    pb.cubic_to(cx + rx, cy + ky, cx + kx, cy + ry, cx, cy + ry);
-
-    // Bottom to left
-    pb.cubic_to(cx - kx, cy + ry, cx - rx, cy + ky, cx - rx, cy);
-
-    // Left to top
-    pb.cubic_to(cx - rx, cy - ky, cx - kx, cy - ry, cx, cy - ry);
-
-    pb.close();
-    pb.finish()
-}
-
 /// Draw all annotations in order (for proper layering and undo/redo support)
+///
 /// Redactions and pixelations are ALWAYS drawn first (in their relative order),
 /// then annotations (arrows, circles, rectangles) are drawn on top (in their relative order).
 /// This ensures annotations are never obscured by redactions.
@@ -497,10 +389,15 @@ pub fn draw_annotations_in_order(
     for annotation in annotations {
         match annotation {
             Annotation::Redact(redact) => {
-                draw_redactions_on_image(img, &[redact.clone()], selection_rect, scale);
+                draw_redactions_on_image(img, std::slice::from_ref(redact), selection_rect, scale);
             }
             Annotation::Pixelate(pixelate) => {
-                draw_pixelations_on_image(img, &[pixelate.clone()], selection_rect, scale);
+                draw_pixelations_on_image(
+                    img,
+                    std::slice::from_ref(pixelate),
+                    selection_rect,
+                    scale,
+                );
             }
             _ => {}
         }
@@ -510,13 +407,18 @@ pub fn draw_annotations_in_order(
     for annotation in annotations {
         match annotation {
             Annotation::Arrow(arrow) => {
-                draw_arrows_on_image(img, &[arrow.clone()], selection_rect, scale);
+                draw_arrows_on_image(img, std::slice::from_ref(arrow), selection_rect, scale);
             }
             Annotation::Circle(circle) => {
-                draw_circle_outlines_on_image(img, &[circle.clone()], selection_rect, scale);
+                draw_circle_outlines_on_image(
+                    img,
+                    std::slice::from_ref(circle),
+                    selection_rect,
+                    scale,
+                );
             }
             Annotation::Rectangle(rect) => {
-                draw_rect_outlines_on_image(img, &[rect.clone()], selection_rect, scale);
+                draw_rect_outlines_on_image(img, std::slice::from_ref(rect), selection_rect, scale);
             }
             _ => {}
         }

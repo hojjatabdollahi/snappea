@@ -1,8 +1,7 @@
 use cosmic::{
     iced::Limits,
     iced_core::{
-        Background, Border, Color, Length, Renderer, Shadow, Size,
-        alignment,
+        Background, Border, Color, Length, Renderer, Shadow, Size, alignment,
         layout::Node,
         mouse,
         renderer::Quad,
@@ -242,16 +241,14 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         }
 
         // Handle click for confirming selection (in picker mode)
-        if self.picker_mode && hovered {
-            if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(
-                mouse::Button::Left,
-            )) = event
-            {
-                if let Some(on_click) = &self.on_click {
-                    shell.publish(on_click.clone());
-                    return cosmic::iced_core::event::Status::Captured;
-                }
-            }
+        if self.picker_mode
+            && hovered
+            && let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) =
+                event
+            && let Some(on_click) = &self.on_click
+        {
+            shell.publish(on_click.clone());
+            return cosmic::iced_core::event::Status::Captured;
         }
 
         cosmic::iced_core::event::Status::Ignored

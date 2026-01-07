@@ -27,7 +27,7 @@ pub fn draw_magnifier(
     image_scale: f32,
     drag_x: i32,
     drag_y: i32,
-    output_rect: &crate::screenshot::Rect,
+    output_rect: &crate::domain::Rect,
     outer_size: Size,
     outer_rect: Rectangle,
     accent: Color,

@@ -1,4 +1,6 @@
-use crate::{DBUS_NAME, DBUS_PATH, screenshot};
+use crate::core::portal::{DBUS_NAME, DBUS_PATH};
+use crate::screenshot;
+use crate::session::messages;
 use cosmic::Task;
 use cosmic::iced_core::event::wayland::OutputEvent;
 use cosmic::{
@@ -22,7 +24,6 @@ pub struct App {
     pub tx: Option<tokio::sync::mpsc::Sender<screenshot::Event>>,
     pub screenshot_args: Option<screenshot::Args>,
     pub location_options: Vec<String>,
-    pub prev_rectangle: Option<screenshot::Rect>,
     pub wayland_helper: crate::wayland::WaylandHelper,
     pub outputs: Vec<OutputState>,
     pub active_output: Option<WlOutput>,
@@ -42,9 +43,10 @@ pub struct OutputState {
 #[allow(clippy::large_enum_variant)]
 #[derive(Debug, Clone)]
 pub enum Msg {
-    Screenshot(screenshot::Msg),
+    Screenshot(messages::Msg),
     Portal(screenshot::Event),
     Output(OutputEvent, WlOutput),
+    Keyboard(cosmic::iced::keyboard::Event),
 }
 
 impl cosmic::Application for App {
@@ -75,7 +77,6 @@ impl cosmic::Application for App {
                 core,
                 screenshot_args: Default::default(),
                 location_options: Vec::new(),
-                prev_rectangle: Default::default(),
                 outputs: Default::default(),
                 active_output: Default::default(),
                 wayland_helper,
@@ -104,6 +105,20 @@ impl cosmic::Application for App {
         message: Self::Message,
     ) -> cosmic::iced::Task<cosmic::Action<Self::Message>> {
         match message {
+            Msg::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
+                key, modifiers, ..
+            }) => {
+                if let Some(args) = self.screenshot_args.as_ref() {
+                    let focused_output_index = args.session.focused_output_index;
+                    if let Some(msg) =
+                        crate::session::shortcuts::handle_key_event(args, key, modifiers, focused_output_index)
+                    {
+                        return self.update(Msg::Screenshot(msg));
+                    }
+                }
+                cosmic::iced::Task::none()
+            }
+            Msg::Keyboard(_) => cosmic::iced::Task::none(),
             Msg::Portal(e) => match e {
                 screenshot::Event::Screenshot(args) => {
                     screenshot::update_args(self, args).map(cosmic::Action::App)
@@ -169,21 +184,6 @@ impl cosmic::Application for App {
                     }
                 };
 
-                if self.prev_rectangle.is_none() {
-                    let mut rect = screenshot::Rect::default();
-                    for output in &self.outputs {
-                        rect.left = rect.left.min(output.logical_pos.0);
-                        rect.top = rect.top.min(output.logical_pos.1);
-                        rect.right = rect
-                            .right
-                            .max(output.logical_pos.0 + output.logical_size.0 as i32);
-                        rect.bottom = rect
-                            .bottom
-                            .max(output.logical_pos.1 + output.logical_size.1 as i32);
-                    }
-                    self.prev_rectangle = Some(rect);
-                }
-
                 cosmic::iced::Task::none()
             }
         }
@@ -198,6 +198,9 @@ impl cosmic::Application for App {
                         cosmic::iced_core::event::wayland::Event::Output(o_event, wl_output),
                     ),
                 ) => Some(Msg::Output(o_event, wl_output)),
+                cosmic::iced_core::Event::Keyboard(keyboard_event) => {
+                    Some(Msg::Keyboard(keyboard_event))
+                }
                 _ => None,
             }),
         ];

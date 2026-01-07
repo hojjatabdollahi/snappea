@@ -7,7 +7,7 @@ use cosmic::iced_core::{
     renderer::Quad,
 };
 
-use crate::screenshot::ToolbarPosition;
+use crate::config::ToolbarPosition;
 
 /// Widget for selecting toolbar position with triangular hit regions
 pub struct ToolbarPositionSelector<Msg> {

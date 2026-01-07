@@ -1,6 +1,6 @@
 //! Configuration persistence for blazingshot settings
 
-use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
+use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
 

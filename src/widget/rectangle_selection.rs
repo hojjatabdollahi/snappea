@@ -16,8 +16,9 @@ use cosmic::{
     widget::{self, Widget},
 };
 
+use super::drawing::draw_dark_overlay_around_selection;
 use super::magnifier::draw_magnifier;
-use crate::screenshot::Rect;
+use crate::domain::Rect;
 
 pub const MIME: &str = "X-BLAZINGSHOT-MyData";
 pub struct MyData;
@@ -44,37 +45,8 @@ impl AsMimeTypes for MyData {
     }
 }
 
-#[repr(u8)]
-#[derive(Default, Debug, Clone, Copy, PartialEq, Eq)]
-pub enum DragState {
-    #[default]
-    None,
-    NW,
-    N,
-    NE,
-    E,
-    SE,
-    S,
-    SW,
-    W,
-}
-
-impl From<u8> for DragState {
-    fn from(state: u8) -> Self {
-        match state {
-            0 => DragState::None,
-            1 => DragState::NW,
-            2 => DragState::N,
-            3 => DragState::NE,
-            4 => DragState::E,
-            5 => DragState::SE,
-            6 => DragState::S,
-            7 => DragState::SW,
-            8 => DragState::W,
-            _ => unreachable!(),
-        }
-    }
-}
+// Re-export DragState for backwards compatibility
+pub use crate::domain::DragState;
 
 const EDGE_GRAB_THICKNESS: f32 = 8.0;
 const CORNER_DIAMETER: f32 = 16.0;
@@ -467,7 +439,11 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
 
                 // Skip rectangle drawing when arrow, redact, pixelate, or shape mode is active
-                if self.arrow_mode || self.redact_mode || self.pixelate_mode || self.circle_mode || self.rect_outline_mode
+                if self.arrow_mode
+                    || self.redact_mode
+                    || self.pixelate_mode
+                    || self.circle_mode
+                    || self.rect_outline_mode
                 {
                     return cosmic::iced_core::event::Status::Ignored;
                 }
@@ -539,10 +515,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         let Some(clipped_inner_rect) = inner_rect.intersection(&outer_rect) else {
             return;
         };
-        // Draw dark overlay outside the selection (60% opacity).
-        // We do this as 4 rectangles (top/bottom/left/right strips) around the selection.
-        let mut overlay = Color::BLACK;
-        overlay.a = 0.6;
 
         // Translate selection rect to output-relative coordinates (0,0 is top-left of this output).
         let translated_clipped_inner_rect = Rectangle::new(
@@ -554,71 +526,9 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         );
 
         let outer_rel = Rectangle::new(Point::ORIGIN, outer_size);
-        let sel = translated_clipped_inner_rect;
 
-        // Top strip
-        if sel.y > outer_rel.y {
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle::new(
-                        Point::new(outer_rel.x, outer_rel.y),
-                        Size::new(outer_rel.width, sel.y - outer_rel.y),
-                    ),
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                },
-                overlay,
-            );
-        }
-
-        // Bottom strip
-        let sel_bottom = sel.y + sel.height;
-        let outer_bottom = outer_rel.y + outer_rel.height;
-        if sel_bottom < outer_bottom {
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle::new(
-                        Point::new(outer_rel.x, sel_bottom),
-                        Size::new(outer_rel.width, outer_bottom - sel_bottom),
-                    ),
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                },
-                overlay,
-            );
-        }
-
-        // Left strip (between top and bottom)
-        if sel.x > outer_rel.x {
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle::new(
-                        Point::new(outer_rel.x, sel.y),
-                        Size::new(sel.x - outer_rel.x, sel.height),
-                    ),
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                },
-                overlay,
-            );
-        }
-
-        // Right strip (between top and bottom)
-        let sel_right = sel.x + sel.width;
-        let outer_right = outer_rel.x + outer_rel.width;
-        if sel_right < outer_right {
-            renderer.fill_quad(
-                Quad {
-                    bounds: Rectangle::new(
-                        Point::new(sel_right, sel.y),
-                        Size::new(outer_right - sel_right, sel.height),
-                    ),
-                    border: Border::default(),
-                    shadow: Shadow::default(),
-                },
-                overlay,
-            );
-        }
+        // Draw dark overlay outside the selection (60% opacity)
+        draw_dark_overlay_around_selection(renderer, outer_rel, translated_clipped_inner_rect, 0.6);
 
         let quad = Quad {
             bounds: translated_clipped_inner_rect,

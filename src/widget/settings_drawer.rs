@@ -7,10 +7,10 @@ use cosmic::iced_widget::{column, row, toggler};
 use cosmic::widget::{container, radio, text};
 
 use super::toolbar::HoverOpacity;
-use crate::config::SaveLocation;
-use crate::screenshot::ToolbarPosition;
+use crate::config::{SaveLocation, ToolbarPosition};
 
 /// Build the settings drawer element
+#[allow(clippy::too_many_arguments)]
 pub fn build_settings_drawer<'a, Msg: Clone + 'static>(
     _toolbar_position: ToolbarPosition,
     magnifier_enabled: bool,

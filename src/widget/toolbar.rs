@@ -8,11 +8,11 @@ use cosmic::iced_core::{Background, Border, Layout, Size, layout, widget::Tree};
 use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, icon, tooltip};
 
-use super::rectangle_selection::DragState;
 use super::tool_button::{build_shape_button, build_tool_button};
 use super::toolbar_position_selector::ToolbarPositionSelector;
-use crate::config::{RedactTool, ShapeTool};
-use crate::screenshot::{Choice, DetectedQrCode, Rect, ToolbarPosition};
+use crate::capture::qr::DetectedQrCode;
+use crate::config::{RedactTool, ShapeTool, ToolbarPosition};
+use crate::domain::{Choice, DragState, Rect};
 
 /// A wrapper widget that reduces opacity when not hovered
 /// Draws a background with opacity and passes through all events
@@ -216,10 +216,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
-    on_shape_popup_toggle: Msg,
-    on_open_shape_popup: Msg,
-    on_redact_popup_toggle: Msg,
-    on_open_redact_popup: Msg,
+    on_shape_press: Msg,
+    on_shape_right_click: Msg,
+    on_redact_press: Msg,
+    on_redact_right_click: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
@@ -366,15 +366,15 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     );
 
     // Shape drawing button with indicator dots
-    // - Normal click: toggles shape mode on/off
-    // - Right-click or long-press: opens shape settings popup
+    // - Normal click: triggers primary action (toggles mode)
+    // - Right-click or long-press: triggers secondary action (opens popup)
     let btn_shapes: Element<'_, Msg> = build_shape_button(
         primary_shape_tool,
         shape_mode_active,
         shape_popup_open,
         has_selection,
-        has_selection.then_some(on_shape_popup_toggle.clone()),
-        has_selection.then_some(on_open_shape_popup.clone()),
+        has_selection.then_some(on_shape_press.clone()),
+        has_selection.then_some(on_shape_right_click.clone()),
         space_xs,
         space_xxs,
     );
@@ -388,8 +388,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         redact_mode_active,
         redact_popup_open,
         has_selection,
-        has_selection.then_some(on_redact_popup_toggle.clone()),
-        has_selection.then_some(on_open_redact_popup.clone()),
+        has_selection.then_some(on_redact_press.clone()),
+        has_selection.then_some(on_redact_right_click.clone()),
         space_xs,
     );
 
