@@ -313,7 +313,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         )
         .selected(matches!(choice, Choice::Output(..)))
         .class(cosmic::theme::Button::Icon)
-        .on_press(on_choice_change(Choice::Output(output_name.clone())))
+        .on_press(on_choice_change(Choice::Output(None))) // Goes to picker mode
         .padding(space_xs),
         "Select Screen (S)",
         tooltip::Position::Bottom,
@@ -323,7 +323,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     let copy_tooltip = match &choice {
         Choice::Rectangle(r, _) if r.dimensions().is_some() => "Copy Selected Region (Enter)",
         Choice::Window(_, Some(_)) => "Copy Selected Window (Enter)",
-        Choice::Output(_) => "Copy Selected Screen (Enter)",
+        Choice::Output(Some(_)) => "Copy Selected Screen (Enter)",
         _ if output_count > 1 => "Copy All Screens (Enter)",
         _ => "Copy Screen (Enter)",
     };
@@ -332,7 +332,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     let save_tooltip = match &choice {
         Choice::Rectangle(r, _) if r.dimensions().is_some() => "Save Selected Region (Ctrl+Enter)",
         Choice::Window(_, Some(_)) => "Save Selected Window (Ctrl+Enter)",
-        Choice::Output(_) => "Save Selected Screen (Ctrl+Enter)",
+        Choice::Output(Some(_)) => "Save Selected Screen (Ctrl+Enter)",
         _ if output_count > 1 => "Save All Screens (Ctrl+Enter)",
         _ => "Save Screen (Ctrl+Enter)",
     };

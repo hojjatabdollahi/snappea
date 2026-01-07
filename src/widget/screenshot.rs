@@ -102,6 +102,29 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
         use cosmic::iced_core::keyboard;
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
+        // Margin for shape clamping (0 = clamp to exact edge)
+        const ANNOTATION_MARGIN: f32 = 0.0;
+        
+        // Helper to clamp and check inner bounds
+        let (inner_x, inner_y, inner_w, inner_h) = if let Some((x, y, w, h)) = self.selection_rect {
+            (x + ANNOTATION_MARGIN, y + ANNOTATION_MARGIN, 
+             w - 2.0 * ANNOTATION_MARGIN, h - 2.0 * ANNOTATION_MARGIN)
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
+        
+        let clamp_pos = |px: f32, py: f32| -> (f32, f32) {
+            if let Some((x, y, w, h)) = self.selection_rect {
+                let min_x = x + ANNOTATION_MARGIN;
+                let max_x = x + w - ANNOTATION_MARGIN;
+                let min_y = y + ANNOTATION_MARGIN;
+                let max_y = y + h - ANNOTATION_MARGIN;
+                (px.clamp(min_x, max_x), py.clamp(min_y, max_y))
+            } else {
+                (px, py)
+            }
+        };
+
         match event {
             canvas::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
                 state.ctrl_down = mods.control();
@@ -114,18 +137,18 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 let Some(pos) = cursor.position_in(bounds) else {
                     return (canvas::event::Status::Ignored, None);
                 };
-                let inside = if let Some((x, y, w, h)) = self.selection_rect {
-                    pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h
-                } else {
-                    false
-                };
+                // Check if inside inner bounds (with margin)
+                let inside = inner_w > 0.0 && inner_h > 0.0
+                    && pos.x >= inner_x && pos.x <= inner_x + inner_w 
+                    && pos.y >= inner_y && pos.y <= inner_y + inner_h;
                 if !inside {
                     return (canvas::event::Status::Ignored, None);
                 }
 
-                // Convert to global coordinates
-                let gx = pos.x + self.output_rect.left as f32;
-                let gy = pos.y + self.output_rect.top as f32;
+                // Clamp and convert to global coordinates
+                let (cx, cy) = clamp_pos(pos.x, pos.y);
+                let gx = cx + self.output_rect.left as f32;
+                let gy = cy + self.output_rect.top as f32;
 
                 if self.circle_mode {
                     state.ctrl_latched = state.ctrl_down;
@@ -144,8 +167,10 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 let Some(pos) = cursor.position_in(bounds) else {
                     return (canvas::event::Status::Ignored, None);
                 };
-                let gx = pos.x + self.output_rect.left as f32;
-                let gy = pos.y + self.output_rect.top as f32;
+                // Clamp and convert to global coordinates
+                let (cx, cy) = clamp_pos(pos.x, pos.y);
+                let gx = cx + self.output_rect.left as f32;
+                let gy = cy + self.output_rect.top as f32;
 
                 if self.circle_mode && self.circle_drawing.is_some() {
                     let (sx, sy) = self.circle_drawing.unwrap_or((gx, gy));
@@ -762,6 +787,10 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub image_scale: f32,
     /// Pixelation block size for preview rendering
     pub pixelation_block_size: u32,
+    /// Optional window image for window mode (for correct pixelation preview)
+    pub window_image: Option<&'a ::image::RgbaImage>,
+    /// Window display info: (display_x, display_y, display_width, display_height, display_to_image_scale)
+    pub window_display_info: Option<(f32, f32, f32, f32, f32)>,
     /// Callback for setting shape color
     pub on_set_shape_color: Option<Box<dyn Fn(crate::config::ShapeColor) -> Msg + 'a>>,
     /// Callback for toggling shape shadow
@@ -784,6 +813,13 @@ pub struct ScreenshotSelection<'a, Msg> {
     pub has_any_redactions: bool,
     /// Whether there are any annotations (for clear button in popup)
     pub has_any_annotations: bool,
+    /// Whether this is the active output (where annotations are allowed)
+    /// False when another output has the selection, meaning annotations should be blocked
+    pub is_active_output: bool,
+    /// Whether there's a confirmed selection (for showing dark overlay on non-active screens)
+    pub has_confirmed_selection: bool,
+    /// Callback to switch to screen picker mode (when user tries to draw on non-active screen)
+    pub on_select_screen: Option<Msg>,
 }
 
 impl<'a, Msg> ScreenshotSelection<'a, Msg>
@@ -805,7 +841,7 @@ where
         window_id: window::Id,
         on_output_change: impl Fn(WlOutput) -> Msg,
         on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
-        toplevel_images: &HashMap<String, Vec<ScreenshotImage>>,
+        toplevel_images: &'a HashMap<String, Vec<ScreenshotImage>>,
         toplevel_chosen: impl Fn(String, usize) -> Msg,
         spacing: Spacing,
         dnd_id: u128,
@@ -885,6 +921,10 @@ where
         pixelation_block_size: u32,
         on_set_pixelation_size: impl Fn(u32) -> Msg + 'a,
         on_save_pixelation_size: Msg,
+        on_confirm_selection: Msg,
+        is_active_output: bool,
+        has_confirmed_selection: bool,
+        on_select_screen: Msg,
     ) -> Self {
         let space_l = spacing.space_l;
         let space_s = spacing.space_s;
@@ -920,9 +960,20 @@ where
                 magnifier_enabled,
             )
             .into(),
-            Choice::Output(ref selected_output) => {
+            Choice::Output(None) => {
+                // Screen picker mode - show hint and highlight on focused output
+                let is_focused = current_output_index == focused_output_index;
+                OutputSelection::new(on_output_change(output.output.clone()))
+                    .picker_mode(true)
+                    .focused(is_focused)
+                    .on_click(on_confirm_selection.clone())
+                    .into()
+            }
+            Choice::Output(Some(ref selected_output)) => {
+                // Confirmed mode - show selection frame only on the confirmed output
                 let is_selected = selected_output == &output.name;
                 OutputSelection::new(on_output_change(output.output.clone()))
+                    .picker_mode(false)
                     .selected(is_selected)
                     .into()
             }
@@ -1092,24 +1143,35 @@ where
             }
             Choice::Window(win_output, Some(win_idx)) => {
                 // For selected window mode, calculate where the window image will be drawn (centered)
+                // NOTE: Match the EXACT logic in SelectedImageWidget (pre-scale + display scale)
                 if let Some(img) = toplevel_images
                     .get(win_output)
                     .and_then(|imgs| imgs.get(*win_idx))
                 {
-                    let img_width = img.rgba.width() as f32;
-                    let img_height = img.rgba.height() as f32;
+                    let orig_width = img.rgba.width() as f32;
+                    let orig_height = img.rgba.height() as f32;
                     let output_width = output.logical_size.0 as f32;
                     let output_height = output.logical_size.1 as f32;
 
-                    // Match the centering logic in SelectedImageWidget::image_bounds (20px margin)
+                    // Step 1: Calculate the pre-scaled thumbnail size (same as SelectedImageWidget)
+                    let max_width = output_width * 0.85;
+                    let max_height = output_height * 0.85;
+                    let (thumb_width, thumb_height) = if orig_width > max_width || orig_height > max_height {
+                        let pre_scale = (max_width / orig_width).min(max_height / orig_height);
+                        (orig_width * pre_scale, orig_height * pre_scale)
+                    } else {
+                        (orig_width, orig_height)
+                    };
+
+                    // Step 2: Calculate display position (centering the thumbnail with 20px margin)
                     let available_width = output_width - 20.0;
                     let available_height = output_height - 20.0;
-                    let scale_x = available_width / img_width;
-                    let scale_y = available_height / img_height;
+                    let scale_x = available_width / thumb_width;
+                    let scale_y = available_height / thumb_height;
                     let scale = scale_x.min(scale_y).min(1.0);
 
-                    let display_width = img_width * scale;
-                    let display_height = img_height * scale;
+                    let display_width = thumb_width * scale;
+                    let display_height = thumb_height * scale;
                     let x = (output_width - display_width) / 2.0;
                     let y = (output_height - display_height) / 2.0;
 
@@ -1118,8 +1180,8 @@ where
                     None
                 }
             }
-            Choice::Output(_) => {
-                // For output mode, the entire output is the selection area
+            Choice::Output(Some(_)) => {
+                // For confirmed output mode, the entire output is the selection area
                 Some((
                     0.0,
                     0.0,
@@ -1128,6 +1190,56 @@ where
                 ))
             }
             _ => None,
+        };
+
+        // For window mode, get the window image and display info for correct pixelation preview
+        // NOTE: SelectedImageWidget may pre-scale the image before displaying it (see lines 362-390)
+        // We need to calculate the TOTAL scaling from display coordinates to original image pixels
+        let (window_image, window_display_info) = match &choice {
+            Choice::Window(win_output, Some(win_idx)) => {
+                if let Some(img) = toplevel_images
+                    .get(win_output)
+                    .and_then(|imgs| imgs.get(*win_idx))
+                {
+                    let orig_width = img.rgba.width() as f32;
+                    let orig_height = img.rgba.height() as f32;
+                    let output_width = output.logical_size.0 as f32;
+                    let output_height = output.logical_size.1 as f32;
+
+                    // Step 1: Calculate the pre-scaled thumbnail size (same logic as SelectedImageWidget)
+                    let max_width = output_width * 0.85;
+                    let max_height = output_height * 0.85;
+                    let (thumb_width, thumb_height) = if orig_width > max_width || orig_height > max_height {
+                        let pre_scale = (max_width / orig_width).min(max_height / orig_height);
+                        (orig_width * pre_scale, orig_height * pre_scale)
+                    } else {
+                        (orig_width, orig_height)
+                    };
+
+                    // Step 2: Calculate display position and scale (centering the thumbnail)
+                    let available_width = output_width - 20.0;
+                    let available_height = output_height - 20.0;
+                    let scale_x = available_width / thumb_width;
+                    let scale_y = available_height / thumb_height;
+                    let display_scale = scale_x.min(scale_y).min(1.0);
+
+                    let display_width = thumb_width * display_scale;
+                    let display_height = thumb_height * display_scale;
+                    let x = (output_width - display_width) / 2.0;
+                    let y = (output_height - display_height) / 2.0;
+
+                    // Total scale from display coords to ORIGINAL image pixels
+                    // display_coords → thumbnail_coords → original_coords
+                    let display_to_original_scale = orig_width / display_width;
+                    (
+                        Some(&img.rgba),
+                        Some((x, y, display_width, display_height, display_to_original_scale)),
+                    )
+                } else {
+                    (None, None)
+                }
+            }
+            _ => (None, None),
         };
 
         Self {
@@ -1148,7 +1260,7 @@ where
                 let has_selection = match choice {
                     Choice::Rectangle(r, _) => r.dimensions().is_some(),
                     Choice::Window(_, Some(_)) => true,
-                    Choice::Output(_) => true,
+                    Choice::Output(Some(_)) => true, // Only confirmed screen counts
                     _ => false,
                 };
 
@@ -1332,6 +1444,8 @@ where
             screenshot_image: &image.rgba,
             image_scale,
             pixelation_block_size,
+            window_image,
+            window_display_info,
             primary_redact_tool,
             redact_popup_open,
             on_redact_popup_toggle: Some(on_redact_popup_toggle),
@@ -1340,6 +1454,9 @@ where
             on_set_redact_tool: Some(Box::new(on_set_redact_tool)),
             on_clear_redactions: Some(on_clear_redactions),
             has_any_redactions,
+            is_active_output,
+            has_confirmed_selection,
+            on_select_screen: Some(on_select_screen),
         }
     }
 }
@@ -1526,6 +1643,15 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
             }
         }
 
+        // Block mouse events on non-active outputs when there's a confirmed selection
+        // Don't auto-switch to screen mode - just block and show the overlay message
+        if !self.is_active_output && self.has_confirmed_selection {
+            // Block all mouse events on non-active outputs (the overlay shows a hint message)
+            if matches!(&event, cosmic::iced_core::Event::Mouse(_)) {
+                return cosmic::iced_core::event::Status::Captured;
+            }
+        }
+
         // Handle clicks on QR code URL open buttons (before child widgets)
         if let cosmic::iced_core::Event::Mouse(mouse_event) = &event
             && let Some(pos) = cursor.position()
@@ -1626,35 +1752,140 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
         if let cosmic::iced_core::Event::Mouse(mouse_event) = &event
             && let Some(pos) = cursor.position()
         {
+            // Helper: check if position is on edge/corner of selection rectangle
+            let on_edge_or_corner = |sel_x: f32, sel_y: f32, sel_w: f32, sel_h: f32| -> bool {
+                const EDGE_THICKNESS: f32 = 12.0;
+                const CORNER_SIZE: f32 = 16.0;
+                
+                // Check corners first (they take priority)
+                let corners = [
+                    (sel_x, sel_y),                           // NW
+                    (sel_x + sel_w, sel_y),                   // NE
+                    (sel_x, sel_y + sel_h),                   // SW
+                    (sel_x + sel_w, sel_y + sel_h),           // SE
+                ];
+                for (cx, cy) in corners {
+                    if (pos.x - cx).abs() < CORNER_SIZE && (pos.y - cy).abs() < CORNER_SIZE {
+                        return true;
+                    }
+                }
+                
+                // Check edges
+                // Top edge
+                if pos.y >= sel_y - EDGE_THICKNESS / 2.0 && pos.y <= sel_y + EDGE_THICKNESS / 2.0
+                    && pos.x >= sel_x && pos.x <= sel_x + sel_w {
+                    return true;
+                }
+                // Bottom edge
+                if pos.y >= sel_y + sel_h - EDGE_THICKNESS / 2.0 && pos.y <= sel_y + sel_h + EDGE_THICKNESS / 2.0
+                    && pos.x >= sel_x && pos.x <= sel_x + sel_w {
+                    return true;
+                }
+                // Left edge
+                if pos.x >= sel_x - EDGE_THICKNESS / 2.0 && pos.x <= sel_x + EDGE_THICKNESS / 2.0
+                    && pos.y >= sel_y && pos.y <= sel_y + sel_h {
+                    return true;
+                }
+                // Right edge
+                if pos.x >= sel_x + sel_w - EDGE_THICKNESS / 2.0 && pos.x <= sel_x + sel_w + EDGE_THICKNESS / 2.0
+                    && pos.y >= sel_y && pos.y <= sel_y + sel_h {
+                    return true;
+                }
+                
+                false
+            };
+            
+            // Check if click is on edge/corner - if so, toggle off annotation modes
+            if let MouseEvent::ButtonPressed(Button::Left) = mouse_event {
+                if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                    if on_edge_or_corner(sel_x, sel_y, sel_w, sel_h) {
+                        // Toggle off any active annotation mode
+                        if self.arrow_mode {
+                            if let Some(ref on_arrow_toggle) = self.on_arrow_toggle {
+                                shell.publish(on_arrow_toggle.clone());
+                            }
+                            return cosmic::iced_core::event::Status::Ignored; // Let rectangle handle it
+                        }
+                        if self.circle_mode {
+                            if let Some(ref on_circle_toggle) = self.on_circle_toggle {
+                                shell.publish(on_circle_toggle.clone());
+                            }
+                            return cosmic::iced_core::event::Status::Ignored;
+                        }
+                        if self.rect_outline_mode {
+                            if let Some(ref on_rect_outline_toggle) = self.on_rect_outline_toggle {
+                                shell.publish(on_rect_outline_toggle.clone());
+                            }
+                            return cosmic::iced_core::event::Status::Ignored;
+                        }
+                        if self.redact_mode {
+                            if let Some(ref on_redact_toggle) = self.on_redact_toggle {
+                                shell.publish(on_redact_toggle.clone());
+                            }
+                            return cosmic::iced_core::event::Status::Ignored;
+                        }
+                        if self.pixelate_mode {
+                            if let Some(ref on_pixelate_toggle) = self.on_pixelate_toggle {
+                                shell.publish(on_pixelate_toggle.clone());
+                            }
+                            return cosmic::iced_core::event::Status::Ignored;
+                        }
+                    }
+                }
+            }
+
+            // Margin for annotation clamping (0 = clamp to exact edge)
+            const ANNOTATION_MARGIN: f32 = 0.0;
+            
+            // Helper to clamp position within selection rect with margin
+            let clamp_to_selection = |x: f32, y: f32, sel_x: f32, sel_y: f32, sel_w: f32, sel_h: f32| -> (f32, f32) {
+                let min_x = sel_x + ANNOTATION_MARGIN;
+                let max_x = sel_x + sel_w - ANNOTATION_MARGIN;
+                let min_y = sel_y + ANNOTATION_MARGIN;
+                let max_y = sel_y + sel_h - ANNOTATION_MARGIN;
+                (x.clamp(min_x, max_x), y.clamp(min_y, max_y))
+            };
+            
+            // Check if position is inside the inner area (with margin)
+            let inside_inner_selection = |sel_x: f32, sel_y: f32, sel_w: f32, sel_h: f32| -> bool {
+                pos.x >= sel_x + ANNOTATION_MARGIN
+                    && pos.x <= sel_x + sel_w - ANNOTATION_MARGIN
+                    && pos.y >= sel_y + ANNOTATION_MARGIN
+                    && pos.y <= sel_y + sel_h - ANNOTATION_MARGIN
+            };
+
             // Handle arrow drawing mode - press to start, release to end
             if self.arrow_mode {
-                // Check if position is inside selection rectangle
+                // Check if position is inside inner selection rectangle (with margin)
                 let inside_selection =
                     if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        pos.x >= sel_x
-                            && pos.x <= sel_x + sel_w
-                            && pos.y >= sel_y
-                            && pos.y <= sel_y + sel_h
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
                     } else {
                         false
                     };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
-                        // Start a new arrow on press
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_arrow_start) = self.on_arrow_start {
-                            shell.publish(on_arrow_start(global_x, global_y));
+                        // Start a new arrow on press (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_arrow_start) = self.on_arrow_start {
+                                shell.publish(on_arrow_start(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
                     MouseEvent::ButtonReleased(Button::Left) if self.arrow_drawing.is_some() => {
-                        // Finish the arrow on release
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_arrow_end) = self.on_arrow_end {
-                            shell.publish(on_arrow_end(global_x, global_y));
+                        // Finish the arrow on release (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_arrow_end) = self.on_arrow_end {
+                                shell.publish(on_arrow_end(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1664,33 +1895,36 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
 
             // Handle redact drawing mode - press to start, release to end
             if self.redact_mode {
-                // Check if position is inside selection rectangle
+                // Check if position is inside inner selection rectangle (with margin)
                 let inside_selection =
                     if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        pos.x >= sel_x
-                            && pos.x <= sel_x + sel_w
-                            && pos.y >= sel_y
-                            && pos.y <= sel_y + sel_h
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
                     } else {
                         false
                     };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
-                        // Start a new redaction on press
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_redact_start) = self.on_redact_start {
-                            shell.publish(on_redact_start(global_x, global_y));
+                        // Start a new redaction on press (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_redact_start) = self.on_redact_start {
+                                shell.publish(on_redact_start(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
                     MouseEvent::ButtonReleased(Button::Left) if self.redact_drawing.is_some() => {
-                        // Finish the redaction on release
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_redact_end) = self.on_redact_end {
-                            shell.publish(on_redact_end(global_x, global_y));
+                        // Finish the redaction on release (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_redact_end) = self.on_redact_end {
+                                shell.publish(on_redact_end(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1700,33 +1934,36 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
 
             // Handle pixelate drawing mode - press to start, release to end
             if self.pixelate_mode {
-                // Check if position is inside selection rectangle
+                // Check if position is inside inner selection rectangle (with margin)
                 let inside_selection =
                     if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                        pos.x >= sel_x
-                            && pos.x <= sel_x + sel_w
-                            && pos.y >= sel_y
-                            && pos.y <= sel_y + sel_h
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
                     } else {
                         false
                     };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
-                        // Start a new pixelation on press
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_pixelate_start) = self.on_pixelate_start {
-                            shell.publish(on_pixelate_start(global_x, global_y));
+                        // Start a new pixelation on press (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_pixelate_start) = self.on_pixelate_start {
+                                shell.publish(on_pixelate_start(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
                     MouseEvent::ButtonReleased(Button::Left) if self.pixelate_drawing.is_some() => {
-                        // Finish the pixelation on release
-                        let global_x = pos.x + self.output_rect.left as f32;
-                        let global_y = pos.y + self.output_rect.top as f32;
-                        if let Some(ref on_pixelate_end) = self.on_pixelate_end {
-                            shell.publish(on_pixelate_end(global_x, global_y));
+                        // Finish the pixelation on release (clamped to inner area)
+                        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                            let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                            let global_x = clamped_x + self.output_rect.left as f32;
+                            let global_y = clamped_y + self.output_rect.top as f32;
+                            if let Some(ref on_pixelate_end) = self.on_pixelate_end {
+                                shell.publish(on_pixelate_end(global_x, global_y));
+                            }
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -2126,6 +2363,80 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                 .draw(bg_tree, renderer, theme, style, layout, cursor, viewport);
         }
 
+        // If this is not the active output and there's a confirmed selection, draw a dark overlay
+        if !self.is_active_output && self.has_confirmed_selection {
+            let bounds = layout.bounds();
+            
+            // Use with_layer to ensure overlay is drawn on top of the background image
+            renderer.with_layer(bounds, |renderer| {
+                // Draw dark overlay
+                let dark_overlay = cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.7);
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds,
+                        border: Border::default(),
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(dark_overlay),
+                );
+
+                // Draw a centered hint box with text
+                let hint_text = "Press 'S' or Screen button to change selection";
+                let font_size = 18.0;
+                let box_width = 420.0_f32;
+                let box_height = 50.0_f32;
+                
+                // Center the box in the screen
+                let box_x = bounds.x + (bounds.width - box_width) / 2.0;
+                let box_y = bounds.y + (bounds.height - box_height) / 2.0;
+                
+                let hint_box = cosmic::iced_core::Rectangle {
+                    x: box_x,
+                    y: box_y,
+                    width: box_width,
+                    height: box_height,
+                };
+                
+                // Draw semi-transparent background for the hint box
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: hint_box,
+                        border: Border {
+                            radius: 8.0.into(),
+                            width: 0.0,
+                            color: cosmic::iced::Color::TRANSPARENT,
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
+                );
+                
+                // Draw text centered in the hint box
+                renderer.fill_text(
+                    Text {
+                        content: hint_text.to_string(),
+                        bounds: cosmic::iced_core::Size::new(box_width, box_height),
+                        size: cosmic::iced_core::Pixels(font_size),
+                        line_height: cosmic::iced_core::text::LineHeight::Relative(1.0),
+                        font: cosmic::iced_core::Font {
+                            weight: cosmic::iced_core::font::Weight::Medium,
+                            ..Default::default()
+                        },
+                        horizontal_alignment: cosmic::iced::alignment::Horizontal::Center,
+                        vertical_alignment: cosmic::iced::alignment::Vertical::Center,
+                        shaping: cosmic::iced_core::text::Shaping::Advanced,
+                        wrapping: cosmic::iced_core::text::Wrapping::None,
+                    },
+                    cosmic::iced_core::Point::new(box_x, box_y),
+                    cosmic::iced::Color::WHITE,
+                    hint_box,
+                );
+            });
+
+            // Don't draw any more elements on non-active output
+            return;
+        }
+
         // Draw fg_element (rectangle selection overlay)
         if let Some((i, (layout, child))) = children_iter.next() {
             renderer.with_layer(layout.bounds(), |renderer| {
@@ -2172,30 +2483,193 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                     let y2 = pixelate.y2 - self.output_rect.top as f32;
                     let (min_x, max_x) = if x1 < x2 { (x1, x2) } else { (x2, x1) };
                     let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
-                    let block_size_logical = pixelate.block_size as f32 / self.image_scale;
 
-                    renderer.with_layer(*viewport, |renderer| {
-                        let mut y = min_y;
-                        while y < max_y {
-                            let mut x = min_x;
-                            let block_h = block_size_logical.min(max_y - y);
-                            while x < max_x {
-                                let block_w = block_size_logical.min(max_x - x);
-                                let img_x = (x * self.image_scale).round() as u32;
-                                let img_y = (y * self.image_scale).round() as u32;
-                                let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
-                                let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
-                                let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
-                                let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
-                                let img_x2 = img_x2.min(self.screenshot_image.width());
-                                let img_y2 = img_y2.min(self.screenshot_image.height());
+                    // Check if we're in window mode
+                    if let (Some(win_img), Some((win_x, win_y, _win_w, _win_h, display_to_img_scale))) =
+                        (self.window_image, self.window_display_info)
+                    {
+                        // Window mode: sample from window image
+                        let block_size_display = pixelate.block_size as f32;
+
+                        renderer.with_layer(*viewport, |renderer| {
+                            let mut y = min_y;
+                            while y < max_y {
+                                let mut x = min_x;
+                                let block_h = block_size_display.min(max_y - y);
+                                while x < max_x {
+                                    let block_w = block_size_display.min(max_x - x);
+                                    // Convert from screen coords to window image coords
+                                    let win_rel_x = x - win_x;
+                                    let win_rel_y = y - win_y;
+                                    let img_x = (win_rel_x * display_to_img_scale).round() as i32;
+                                    let img_y = (win_rel_y * display_to_img_scale).round() as i32;
+                                    let img_x2 = ((win_rel_x + block_w) * display_to_img_scale).round() as i32;
+                                    let img_y2 = ((win_rel_y + block_h) * display_to_img_scale).round() as i32;
+
+                                    // Skip if outside window image bounds
+                                    if img_x >= 0 && img_y >= 0 && img_x2 > 0 && img_y2 > 0 {
+                                        let img_x = (img_x as u32).min(win_img.width().saturating_sub(1));
+                                        let img_y = (img_y as u32).min(win_img.height().saturating_sub(1));
+                                        let img_x2 = (img_x2 as u32).min(win_img.width());
+                                        let img_y2 = (img_y2 as u32).min(win_img.height());
+                                        let mut total_r: u64 = 0;
+                                        let mut total_g: u64 = 0;
+                                        let mut total_b: u64 = 0;
+                                        let mut pixel_count: u64 = 0;
+                                        for py in img_y..img_y2 {
+                                            for px in img_x..img_x2 {
+                                                let pixel = win_img.get_pixel(px, py);
+                                                total_r += pixel[0] as u64;
+                                                total_g += pixel[1] as u64;
+                                                total_b += pixel[2] as u64;
+                                                pixel_count += 1;
+                                            }
+                                        }
+                                        if pixel_count > 0 {
+                                            let color = cosmic::iced::Color::from_rgb8(
+                                                (total_r / pixel_count) as u8,
+                                                (total_g / pixel_count) as u8,
+                                                (total_b / pixel_count) as u8,
+                                            );
+                                            renderer.fill_quad(
+                                                cosmic::iced_core::renderer::Quad {
+                                                    bounds: cosmic::iced_core::Rectangle {
+                                                        x,
+                                                        y,
+                                                        width: block_w,
+                                                        height: block_h,
+                                                    },
+                                                    border: Border::default(),
+                                                    shadow: cosmic::iced_core::Shadow::default(),
+                                                },
+                                                Background::Color(color),
+                                            );
+                                        }
+                                    }
+                                    x += block_w;
+                                }
+                                y += block_h;
+                            }
+                        });
+                    } else {
+                        // Regular mode: sample from screenshot image
+                        let block_size_logical = pixelate.block_size as f32 / self.image_scale;
+
+                        renderer.with_layer(*viewport, |renderer| {
+                            let mut y = min_y;
+                            while y < max_y {
+                                let mut x = min_x;
+                                let block_h = block_size_logical.min(max_y - y);
+                                while x < max_x {
+                                    let block_w = block_size_logical.min(max_x - x);
+                                    let img_x = (x * self.image_scale).round() as u32;
+                                    let img_y = (y * self.image_scale).round() as u32;
+                                    let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                                    let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+                                    let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                                    let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                                    let img_x2 = img_x2.min(self.screenshot_image.width());
+                                    let img_y2 = img_y2.min(self.screenshot_image.height());
+                                    let mut total_r: u64 = 0;
+                                    let mut total_g: u64 = 0;
+                                    let mut total_b: u64 = 0;
+                                    let mut pixel_count: u64 = 0;
+                                    for py in img_y..img_y2 {
+                                        for px in img_x..img_x2 {
+                                            let pixel = self.screenshot_image.get_pixel(px, py);
+                                            total_r += pixel[0] as u64;
+                                            total_g += pixel[1] as u64;
+                                            total_b += pixel[2] as u64;
+                                            pixel_count += 1;
+                                        }
+                                    }
+                                    if pixel_count > 0 {
+                                        let color = cosmic::iced::Color::from_rgb8(
+                                            (total_r / pixel_count) as u8,
+                                            (total_g / pixel_count) as u8,
+                                            (total_b / pixel_count) as u8,
+                                        );
+                                        renderer.fill_quad(
+                                            cosmic::iced_core::renderer::Quad {
+                                                bounds: cosmic::iced_core::Rectangle {
+                                                    x,
+                                                    y,
+                                                    width: block_w,
+                                                    height: block_h,
+                                                },
+                                                border: Border::default(),
+                                                shadow: cosmic::iced_core::Shadow::default(),
+                                            },
+                                            Background::Color(color),
+                                        );
+                                    }
+                                    x += block_w;
+                                }
+                                y += block_h;
+                            }
+                        });
+                    }
+                }
+                // Skip other annotation types - they're drawn later
+                _ => {}
+            }
+        }
+
+        // Draw pixelation preview (currently being drawn)
+        if let Some((start_x, start_y)) = self.pixelate_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            let local_start_x = start_x - self.output_rect.left as f32;
+            let local_start_y = start_y - self.output_rect.top as f32;
+            let end_x = cursor_pos.x;
+            let end_y = cursor_pos.y;
+            let (min_x, max_x) = if local_start_x < end_x {
+                (local_start_x, end_x)
+            } else {
+                (end_x, local_start_x)
+            };
+            let (min_y, max_y) = if local_start_y < end_y {
+                (local_start_y, end_y)
+            } else {
+                (end_y, local_start_y)
+            };
+
+            // Check if we're in window mode with window image data
+            if let (Some(win_img), Some((win_x, win_y, _win_w, _win_h, display_to_img_scale))) =
+                (self.window_image, self.window_display_info)
+            {
+                // Window mode: sample from window image with proper coordinate transformation
+                // Block size in display coordinates (same as pixelation_block_size since it's in logical units)
+                let block_size_display = self.pixelation_block_size as f32;
+
+                renderer.with_layer(*viewport, |renderer| {
+                    let mut y = min_y;
+                    while y < max_y {
+                        let mut x = min_x;
+                        let block_h = block_size_display.min(max_y - y);
+                        while x < max_x {
+                            let block_w = block_size_display.min(max_x - x);
+                            // Convert from screen coords to window image coords
+                            let win_rel_x = x - win_x;
+                            let win_rel_y = y - win_y;
+                            let img_x = (win_rel_x * display_to_img_scale).round() as i32;
+                            let img_y = (win_rel_y * display_to_img_scale).round() as i32;
+                            let img_x2 = ((win_rel_x + block_w) * display_to_img_scale).round() as i32;
+                            let img_y2 = ((win_rel_y + block_h) * display_to_img_scale).round() as i32;
+
+                            // Skip if outside window image bounds
+                            if img_x >= 0 && img_y >= 0 && img_x2 > 0 && img_y2 > 0 {
+                                let img_x = (img_x as u32).min(win_img.width().saturating_sub(1));
+                                let img_y = (img_y as u32).min(win_img.height().saturating_sub(1));
+                                let img_x2 = (img_x2 as u32).min(win_img.width());
+                                let img_y2 = (img_y2 as u32).min(win_img.height());
                                 let mut total_r: u64 = 0;
                                 let mut total_g: u64 = 0;
                                 let mut total_b: u64 = 0;
                                 let mut pixel_count: u64 = 0;
                                 for py in img_y..img_y2 {
                                     for px in img_x..img_x2 {
-                                        let pixel = self.screenshot_image.get_pixel(px, py);
+                                        let pixel = win_img.get_pixel(px, py);
                                         total_r += pixel[0] as u64;
                                         total_g += pixel[1] as u64;
                                         total_b += pixel[2] as u64;
@@ -2222,109 +2696,108 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                                         Background::Color(color),
                                     );
                                 }
-                                x += block_w;
                             }
-                            y += block_h;
+                            x += block_w;
                         }
-                    });
-                }
-                // Skip other annotation types - they're drawn later
-                _ => {}
-            }
-        }
-
-        // Draw pixelation preview (currently being drawn)
-        if let Some((start_x, start_y)) = self.pixelate_drawing
-            && let Some(cursor_pos) = cursor.position()
-        {
-            let local_start_x = start_x - self.output_rect.left as f32;
-            let local_start_y = start_y - self.output_rect.top as f32;
-            let end_x = cursor_pos.x;
-            let end_y = cursor_pos.y;
-            let (min_x, max_x) = if local_start_x < end_x {
-                (local_start_x, end_x)
-            } else {
-                (end_x, local_start_x)
-            };
-            let (min_y, max_y) = if local_start_y < end_y {
-                (local_start_y, end_y)
-            } else {
-                (end_y, local_start_y)
-            };
-            let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
-
-            renderer.with_layer(*viewport, |renderer| {
-                let mut y = min_y;
-                while y < max_y {
-                    let mut x = min_x;
-                    let block_h = block_size_logical.min(max_y - y);
-                    while x < max_x {
-                        let block_w = block_size_logical.min(max_x - x);
-                        let img_x = (x * self.image_scale).round() as u32;
-                        let img_y = (y * self.image_scale).round() as u32;
-                        let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
-                        let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
-                        let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
-                        let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
-                        let img_x2 = img_x2.min(self.screenshot_image.width());
-                        let img_y2 = img_y2.min(self.screenshot_image.height());
-                        let mut total_r: u64 = 0;
-                        let mut total_g: u64 = 0;
-                        let mut total_b: u64 = 0;
-                        let mut pixel_count: u64 = 0;
-                        for py in img_y..img_y2 {
-                            for px in img_x..img_x2 {
-                                let pixel = self.screenshot_image.get_pixel(px, py);
-                                total_r += pixel[0] as u64;
-                                total_g += pixel[1] as u64;
-                                total_b += pixel[2] as u64;
-                                pixel_count += 1;
-                            }
-                        }
-                        if pixel_count > 0 {
-                            let color = cosmic::iced::Color::from_rgb8(
-                                (total_r / pixel_count) as u8,
-                                (total_g / pixel_count) as u8,
-                                (total_b / pixel_count) as u8,
-                            );
-                            renderer.fill_quad(
-                                cosmic::iced_core::renderer::Quad {
-                                    bounds: cosmic::iced_core::Rectangle {
-                                        x,
-                                        y,
-                                        width: block_w,
-                                        height: block_h,
-                                    },
-                                    border: Border::default(),
-                                    shadow: cosmic::iced_core::Shadow::default(),
-                                },
-                                Background::Color(color),
-                            );
-                        }
-                        x += block_w;
+                        y += block_h;
                     }
-                    y += block_h;
-                }
 
-                // Draw border
-                renderer.fill_quad(
-                    cosmic::iced_core::renderer::Quad {
-                        bounds: cosmic::iced_core::Rectangle {
-                            x: min_x,
-                            y: min_y,
-                            width: max_x - min_x,
-                            height: max_y - min_y,
+                    // Draw border
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: cosmic::iced_core::Rectangle {
+                                x: min_x,
+                                y: min_y,
+                                width: max_x - min_x,
+                                height: max_y - min_y,
+                            },
+                            border: Border {
+                                color: cosmic::iced::Color::WHITE,
+                                width: 1.0,
+                                radius: cosmic::iced_core::border::Radius::from(0.0),
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
                         },
-                        border: Border {
-                            color: cosmic::iced::Color::WHITE,
-                            width: 1.0,
-                            radius: cosmic::iced_core::border::Radius::from(0.0),
+                        Background::Color(cosmic::iced::Color::TRANSPARENT),
+                    );
+                });
+            } else {
+                // Regular mode (rectangle/output): sample from screenshot image
+                let block_size_logical = self.pixelation_block_size as f32 / self.image_scale;
+
+                renderer.with_layer(*viewport, |renderer| {
+                    let mut y = min_y;
+                    while y < max_y {
+                        let mut x = min_x;
+                        let block_h = block_size_logical.min(max_y - y);
+                        while x < max_x {
+                            let block_w = block_size_logical.min(max_x - x);
+                            let img_x = (x * self.image_scale).round() as u32;
+                            let img_y = (y * self.image_scale).round() as u32;
+                            let img_x2 = ((x + block_w) * self.image_scale).round() as u32;
+                            let img_y2 = ((y + block_h) * self.image_scale).round() as u32;
+                            let img_x = img_x.min(self.screenshot_image.width().saturating_sub(1));
+                            let img_y = img_y.min(self.screenshot_image.height().saturating_sub(1));
+                            let img_x2 = img_x2.min(self.screenshot_image.width());
+                            let img_y2 = img_y2.min(self.screenshot_image.height());
+                            let mut total_r: u64 = 0;
+                            let mut total_g: u64 = 0;
+                            let mut total_b: u64 = 0;
+                            let mut pixel_count: u64 = 0;
+                            for py in img_y..img_y2 {
+                                for px in img_x..img_x2 {
+                                    let pixel = self.screenshot_image.get_pixel(px, py);
+                                    total_r += pixel[0] as u64;
+                                    total_g += pixel[1] as u64;
+                                    total_b += pixel[2] as u64;
+                                    pixel_count += 1;
+                                }
+                            }
+                            if pixel_count > 0 {
+                                let color = cosmic::iced::Color::from_rgb8(
+                                    (total_r / pixel_count) as u8,
+                                    (total_g / pixel_count) as u8,
+                                    (total_b / pixel_count) as u8,
+                                );
+                                renderer.fill_quad(
+                                    cosmic::iced_core::renderer::Quad {
+                                        bounds: cosmic::iced_core::Rectangle {
+                                            x,
+                                            y,
+                                            width: block_w,
+                                            height: block_h,
+                                        },
+                                        border: Border::default(),
+                                        shadow: cosmic::iced_core::Shadow::default(),
+                                    },
+                                    Background::Color(color),
+                                );
+                            }
+                            x += block_w;
+                        }
+                        y += block_h;
+                    }
+
+                    // Draw border
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: cosmic::iced_core::Rectangle {
+                                x: min_x,
+                                y: min_y,
+                                width: max_x - min_x,
+                                height: max_y - min_y,
+                            },
+                            border: Border {
+                                color: cosmic::iced::Color::WHITE,
+                                width: 1.0,
+                                radius: cosmic::iced_core::border::Radius::from(0.0),
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
                         },
-                        shadow: cosmic::iced_core::Shadow::default(),
-                    },
-                    Background::Color(cosmic::iced::Color::TRANSPARENT),
-                );
-            });
+                        Background::Color(cosmic::iced::Color::TRANSPARENT),
+                    );
+                });
+            }
         }
 
         // Draw redaction preview (currently being drawn)
@@ -3006,6 +3479,74 @@ impl<'a, Msg: Clone> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer
                         Background::Color(cosmic::iced::Color::TRANSPARENT),
                     );
                 });
+            }
+        }
+
+        // ========== DRAW SELECTION FRAME ON TOP OF ALL ANNOTATIONS ==========
+        // Draw the selection rectangle border and corner handles after all annotations
+        // so they're always visible and clickable
+        // Only draw for rectangle and window modes (not screen mode where selection = full screen)
+        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+            // Skip if selection covers the entire output (screen mode)
+            let output_width = (self.output_rect.right - self.output_rect.left) as f32;
+            let output_height = (self.output_rect.bottom - self.output_rect.top) as f32;
+            let is_full_screen = sel_x == 0.0 && sel_y == 0.0 
+                && (sel_w - output_width).abs() < 1.0 
+                && (sel_h - output_height).abs() < 1.0;
+            
+            if sel_w > 0.0 && sel_h > 0.0 && !is_full_screen {
+                let cosmic_theme = theme.cosmic();
+                let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+                let radius_s = cosmic_theme.radius_s();
+                
+                // Selection border (2px accent color)
+                let sel_rect = cosmic::iced_core::Rectangle {
+                    x: sel_x,
+                    y: sel_y,
+                    width: sel_w,
+                    height: sel_h,
+                };
+                renderer.fill_quad(
+                    cosmic::iced_core::renderer::Quad {
+                        bounds: sel_rect,
+                        border: Border {
+                            radius: 0.0.into(),
+                            width: 2.0,
+                            color: accent,
+                        },
+                        shadow: cosmic::iced_core::Shadow::default(),
+                    },
+                    Background::Color(cosmic::iced::Color::TRANSPARENT),
+                );
+                
+                // Corner handles (circles at each corner)
+                let corner_size = 12.0_f32;
+                let corners = [
+                    (sel_x, sel_y),                    // NW
+                    (sel_x + sel_w, sel_y),            // NE
+                    (sel_x, sel_y + sel_h),            // SW
+                    (sel_x + sel_w, sel_y + sel_h),    // SE
+                ];
+                for (cx, cy) in corners {
+                    let bounds = cosmic::iced_core::Rectangle {
+                        x: cx - corner_size / 2.0,
+                        y: cy - corner_size / 2.0,
+                        width: corner_size,
+                        height: corner_size,
+                    };
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds,
+                            border: Border {
+                                radius: radius_s.into(),
+                                width: 0.0,
+                                color: cosmic::iced::Color::TRANSPARENT,
+                            },
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(accent),
+                    );
+                }
             }
         }
 

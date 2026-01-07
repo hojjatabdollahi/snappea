@@ -456,7 +456,8 @@ pub enum Msg {
 
 #[derive(Debug, Clone)]
 pub enum Choice {
-    Output(String),
+    /// Output selection: None = picker mode (selecting), Some = confirmed (screen locked in)
+    Output(Option<String>),
     Rectangle(Rect, DragState),
     Window(String, Option<usize>),
 }
@@ -855,13 +856,41 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             args.pixelation_block_size,
             Msg::SetPixelationBlockSize,
             Msg::SavePixelationBlockSize,
+            Msg::ConfirmSelection,
+            // is_active_output: determines if this screen is where the selection is
+            // Other screens should be darkened when there's an active selection
+            {
+                let output_name = &output.name;
+                match &args.choice {
+                    // Rectangle mode: ALL screens are active (user can draw new rectangle on any screen)
+                    Choice::Rectangle(_, _) => true,
+                    // Picker modes: all outputs are "active" (no dimming)
+                    Choice::Output(None) | Choice::Window(_, None) => true,
+                    // Confirmed window: only that output is active
+                    Choice::Window(win_output, Some(_)) => output_name == win_output,
+                    // Confirmed screen: only that output is active
+                    Choice::Output(Some(selected)) => output_name == selected,
+                }
+            },
+            // has_confirmed_selection: show dark overlay on non-active screens 
+            // Only for window and screen modes, NOT for rectangle mode
+            {
+                match &args.choice {
+                    // Rectangle mode: no overlay on other screens (user can draw new rectangle)
+                    Choice::Rectangle(_, _) => false,
+                    Choice::Window(_, Some(_)) => true,
+                    Choice::Output(Some(_)) => true,
+                    _ => false,
+                }
+            },
+            Msg::SelectScreenMode(i),
         ),
         {
             // Determine if we have a complete selection for action shortcuts
             let has_selection = match &args.choice {
                 Choice::Rectangle(r, _) => r.dimensions().is_some(),
                 Choice::Window(_, Some(_)) => true,
-                Choice::Output(_) => true,
+                Choice::Output(Some(_)) => true, // Only confirmed screen counts as selection
                 _ => false,
             };
             let arrow_mode = args.arrow_mode;
@@ -870,7 +899,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
             let current_output_index = i;
             // Check if we're in a mode that supports navigation
             let in_window_picker = matches!(&args.choice, Choice::Window(_, None));
-            let in_screen_picker = matches!(&args.choice, Choice::Output(_));
+            let in_screen_picker = matches!(&args.choice, Choice::Output(None)); // Picker mode only
             // Check if OCR/QR have results (pressing O/Q again should copy and close)
             let has_ocr_result = args.ocr_text.is_some();
             let has_qr_result = !args.qr_codes.is_empty();
@@ -911,11 +940,12 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
                 }
                 // Save/copy shortcuts (always available - empty selection captures all screens)
                 Key::Named(Named::Enter) if modifiers.control() => Some(Msg::SaveToPictures),
-                Key::Named(Named::Enter) if !in_window_picker => Some(Msg::CopyToClipboard),
                 Key::Named(Named::Escape) => Some(Msg::Cancel),
-                // Space to confirm selection in picker mode, or Enter in window picker
-                Key::Named(Named::Space) if in_window_picker => Some(Msg::ConfirmSelection),
-                Key::Named(Named::Enter) if in_window_picker => Some(Msg::ConfirmSelection),
+                // Space/Enter to confirm selection in picker mode (window or screen)
+                Key::Named(Named::Space) if in_window_picker || in_screen_picker => Some(Msg::ConfirmSelection),
+                Key::Named(Named::Enter) if in_window_picker || in_screen_picker => Some(Msg::ConfirmSelection),
+                // Enter to copy when not in picker mode
+                Key::Named(Named::Enter) => Some(Msg::CopyToClipboard),
                 // Navigation keys in window picker: hjkl and arrows all navigate windows
                 Key::Character(c) if c.as_str() == "h" && in_window_picker => {
                     Some(Msg::NavigateUp)
@@ -1029,7 +1059,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             let image_path = Screenshot::get_img_path(location);
 
             match choice {
-                Choice::Output(output_name) => {
+                Choice::Output(Some(output_name)) => {
                     if let Some(img) = images.remove(&output_name) {
                         let mut final_img = img.rgba.clone();
 
@@ -1425,17 +1455,19 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                             args.arrow_mode = false;
                             args.arrow_drawing = None;
                             args.redactions.clear();
-                                args.pixelations.clear();
+                            args.pixelations.clear();
                             args.redact_mode = false;
                             args.redact_drawing = None;
-                    args.pixelate_mode = false;
-                    args.pixelate_drawing = None;
+                            args.pixelate_mode = false;
+                            args.pixelate_drawing = None;
                             args.circles.clear();
                             args.circle_mode = false;
                             args.circle_drawing = None;
                             args.rect_outlines.clear();
                             args.rect_outline_mode = false;
                             args.rect_outline_drawing = None;
+                            args.annotations.clear();
+                            args.annotation_index = 0;
                         }
                     }
                     // Also clear if we're starting a new drag from None state
@@ -1448,31 +1480,33 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                         args.arrow_mode = false;
                         args.arrow_drawing = None;
                         args.redactions.clear();
-                                args.pixelations.clear();
+                        args.pixelations.clear();
                         args.redact_mode = false;
                         args.redact_drawing = None;
-                    args.pixelate_mode = false;
-                    args.pixelate_drawing = None;
+                        args.pixelate_mode = false;
+                        args.pixelate_drawing = None;
                         args.circles.clear();
                         args.circle_mode = false;
                         args.circle_drawing = None;
                         args.rect_outlines.clear();
                         args.rect_outline_mode = false;
                         args.rect_outline_drawing = None;
+                        args.annotations.clear();
+                        args.annotation_index = 0;
                     }
                 }
-                // Clear arrows/redactions when switching modes (Region, Window, or Output)
+                // Clear arrows/redactions when switching modes (Region, Window, or Output picker)
                 if matches!(
                     &c,
                     Choice::Rectangle(_, DragState::None)
                         | Choice::Window(_, None)
-                        | Choice::Output(_)
+                        | Choice::Output(None) // Only clear in picker mode, not when confirmed
                 ) {
                     args.arrows.clear();
                     args.arrow_mode = false;
                     args.arrow_drawing = None;
                     args.redactions.clear();
-                                args.pixelations.clear();
+                    args.pixelations.clear();
                     args.redact_mode = false;
                     args.redact_drawing = None;
                     args.pixelate_mode = false;
@@ -1483,6 +1517,8 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                     args.rect_outlines.clear();
                     args.rect_outline_mode = false;
                     args.rect_outline_drawing = None;
+                    args.annotations.clear();
+                    args.annotation_index = 0;
                 }
                 args.choice = c;
                 if let Choice::Rectangle(r, s) = &args.choice {
@@ -1494,35 +1530,17 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
             cosmic::Task::none()
         }
         Msg::OutputChanged(wl_output) => {
-            if let (Some(args), Some(o)) = (
-                app.screenshot_args.as_mut(),
-                app.outputs
-                    .iter()
-                    .find(|o| o.output == wl_output)
-                    .map(|o| o.name.clone()),
-            ) {
-                args.choice = Choice::Output(o);
-                // Clear annotations when selecting an output
-                args.arrows.clear();
-                args.arrow_mode = false;
-                args.arrow_drawing = None;
-                args.redactions.clear();
-                                args.pixelations.clear();
-                args.redact_mode = false;
-                args.redact_drawing = None;
-                    args.pixelate_mode = false;
-                    args.pixelate_drawing = None;
-                args.circles.clear();
-                args.circle_mode = false;
-                args.circle_drawing = None;
-                args.rect_outlines.clear();
-                args.rect_outline_mode = false;
-                args.rect_outline_drawing = None;
-            } else {
-                log::error!(
-                    "Failed to find output for OutputChange message: {:?}",
-                    wl_output
-                );
+            // In screen picker mode, cursor hover just updates focused_output_index
+            // In confirmed mode, this is ignored (screen stays locked)
+            if let Some(args) = app.screenshot_args.as_mut() {
+                // Find the output index
+                if let Some(output_index) = app.outputs.iter().position(|o| o.output == wl_output)
+                {
+                    // Only update highlight in picker mode (None means picker)
+                    if matches!(args.choice, Choice::Output(None)) {
+                        args.focused_output_index = output_index;
+                    }
+                }
             }
             app.active_output = Some(wl_output);
             cosmic::Task::none()
@@ -1695,7 +1713,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 )
                             })
                     }
-                    Choice::Output(output_name) => {
+                    Choice::Output(Some(output_name)) => {
                         args.output_images.get(output_name).and_then(|img| {
                             outputs_clone
                                 .iter()
@@ -1919,7 +1937,7 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 )
                             })
                     }
-                    Choice::Output(output_name) => {
+                    Choice::Output(Some(output_name)) => {
                         // Get full output image
                         args.output_images.get(output_name).and_then(|img| {
                             outputs_clone
@@ -3022,26 +3040,32 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::SelectScreenMode(output_index) => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                // Get the output name from the index
-                if let Some(output) = app.outputs.get(output_index) {
-                    args.choice = Choice::Output(output.name.clone());
-                    args.focused_output_index = output_index;
-                    // Clear any previous state
-                    args.ocr_overlays.clear();
-                    args.ocr_status = OcrStatus::Idle;
-                    args.ocr_text = None;
-                    args.qr_codes.clear();
-                    args.qr_scanning = false;
-                    args.arrows.clear();
-                    args.arrow_mode = false;
-                    args.arrow_drawing = None;
-                    args.redactions.clear();
-                                args.pixelations.clear();
-                    args.redact_mode = false;
-                    args.redact_drawing = None;
-                    args.pixelate_mode = false;
-                    args.pixelate_drawing = None;
-                }
+                // Go to picker mode (None), not directly selecting a screen
+                args.choice = Choice::Output(None);
+                args.focused_output_index = output_index;
+                // Clear any previous state
+                args.ocr_overlays.clear();
+                args.ocr_status = OcrStatus::Idle;
+                args.ocr_text = None;
+                args.qr_codes.clear();
+                args.qr_scanning = false;
+                args.arrows.clear();
+                args.arrow_mode = false;
+                args.arrow_drawing = None;
+                args.redactions.clear();
+                args.pixelations.clear();
+                args.redact_mode = false;
+                args.redact_drawing = None;
+                args.pixelate_mode = false;
+                args.pixelate_drawing = None;
+                args.circles.clear();
+                args.circle_mode = false;
+                args.circle_drawing = None;
+                args.rect_outlines.clear();
+                args.rect_outline_mode = false;
+                args.rect_outline_drawing = None;
+                args.annotations.clear();
+                args.annotation_index = 0;
             }
             cosmic::Task::none()
         }
@@ -3099,16 +3123,14 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 }
                             }
                         }
-                        Choice::Output(_) => {
-                            // In screen picker mode: move to previous screen
+                        Choice::Output(None) => {
+                            // In screen picker mode: move to previous screen (just update index)
                             args.focused_output_index = if args.focused_output_index == 0 {
                                 output_count - 1
                             } else {
                                 args.focused_output_index - 1
                             };
-                            if let Some(output) = app.outputs.get(args.focused_output_index) {
-                                args.choice = Choice::Output(output.name.clone());
-                            }
+                            // Choice stays as None (picker mode)
                         }
                         _ => {}
                     }
@@ -3168,12 +3190,10 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
                                 }
                             }
                         }
-                        Choice::Output(_) => {
-                            // In screen picker mode: move to next screen
+                        Choice::Output(None) => {
+                            // In screen picker mode: move to next screen (just update index)
                             args.focused_output_index = (args.focused_output_index + 1) % output_count;
-                            if let Some(output) = app.outputs.get(args.focused_output_index) {
-                                args.choice = Choice::Output(output.name.clone());
-                            }
+                            // Choice stays as None (picker mode)
                         }
                         _ => {}
                     }
@@ -3191,21 +3211,30 @@ pub fn update_msg(app: &mut App, msg: Msg) -> cosmic::Task<crate::app::Msg> {
         }
         Msg::ConfirmSelection => {
             if let Some(args) = app.screenshot_args.as_mut() {
-                if let Choice::Window(_, None) = &args.choice {
-                    // Confirm the highlighted window on the focused output
-                    if let Some(output) = app.outputs.get(args.focused_output_index) {
-                        let window_count = args
-                            .toplevel_images
-                            .get(&output.name)
-                            .map(|v| v.len())
-                            .unwrap_or(0);
-                        if window_count > 0 && args.highlighted_window_index < window_count {
-                            args.choice = Choice::Window(
-                                output.name.clone(),
-                                Some(args.highlighted_window_index),
-                            );
+                match &args.choice {
+                    Choice::Window(_, None) => {
+                        // Confirm the highlighted window on the focused output
+                        if let Some(output) = app.outputs.get(args.focused_output_index) {
+                            let window_count = args
+                                .toplevel_images
+                                .get(&output.name)
+                                .map(|v| v.len())
+                                .unwrap_or(0);
+                            if window_count > 0 && args.highlighted_window_index < window_count {
+                                args.choice = Choice::Window(
+                                    output.name.clone(),
+                                    Some(args.highlighted_window_index),
+                                );
+                            }
                         }
                     }
+                    Choice::Output(None) => {
+                        // Confirm the highlighted screen (enter confirmed mode)
+                        if let Some(output) = app.outputs.get(args.focused_output_index) {
+                            args.choice = Choice::Output(Some(output.name.clone()));
+                        }
+                    }
+                    _ => {}
                 }
             }
             cosmic::Task::none()

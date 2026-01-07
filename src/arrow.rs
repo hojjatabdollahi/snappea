@@ -255,7 +255,8 @@ pub fn draw_pixelations_on_image(
     scale: f32,
 ) {
     for pixelate in pixelations {
-        let block_size = pixelate.block_size.max(1);
+        // Scale the block size from display pixels to image pixels
+        let block_size = ((pixelate.block_size as f32) * scale).round().max(1.0) as u32;
         let x1 = ((pixelate.x - selection_rect.left as f32) * scale).round() as i32;
         let y1 = ((pixelate.y - selection_rect.top as f32) * scale).round() as i32;
         let x2 = ((pixelate.x2 - selection_rect.left as f32) * scale).round() as i32;
