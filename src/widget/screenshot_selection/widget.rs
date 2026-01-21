@@ -10,9 +10,8 @@ use cosmic::{
     cosmic_theme::Spacing,
     iced::{self, window},
     iced_core::{
-        Background, ContentFit, Degrees, Layout, Length, Point, Size, alignment,
-        gradient::Linear, layout, overlay,
-        widget::Tree,
+        Background, ContentFit, Degrees, Layout, Length, Point, Size, alignment, gradient::Linear,
+        layout, overlay, widget::Tree,
     },
     iced_widget::canvas,
     widget::{Row, button, horizontal_space, image, layer_container},
@@ -155,8 +154,7 @@ where
         on_event: E,
     ) -> Self {
         let output_rect = create_output_rect(output.logical_pos, output.logical_size);
-        let image_scale =
-            screenshot_image.rgba.width() as f32 / output.logical_size.0 as f32;
+        let image_scale = screenshot_image.rgba.width() as f32 / output.logical_size.0 as f32;
 
         // Build QR overlay - only show when not actively dragging a rectangle
         let show_qr_overlays = match choice {
@@ -166,18 +164,13 @@ where
         };
 
         // Filter QR codes and OCR overlays for this output
-        let qr_codes_for_output =
-            filter_qr_codes_for_output(&detection.qr_codes, &output.name);
+        let qr_codes_for_output = filter_qr_codes_for_output(&detection.qr_codes, &output.name);
         let ocr_overlays_for_output =
             filter_ocr_overlays_for_output(&detection.ocr_overlays, &output.name);
 
         // Calculate selection rectangle relative to this output
-        let selection_rect = calculate_selection_rect(
-            &choice,
-            output_rect,
-            output.logical_size,
-            toplevel_images,
-        );
+        let selection_rect =
+            calculate_selection_rect(&choice, output_rect, output.logical_size, toplevel_images);
 
         // Get window image and display info for correct pixelation preview
         let (window_image, window_display_info) =
@@ -249,40 +242,43 @@ where
         // Build fg_element
         let on_event_clone = on_event.clone();
         let fg_element: Element<'a, Msg> = match choice.clone() {
-            Choice::Rectangle(r, drag_state) => {
-                RectangleSelection::new(
-                    output_rect,
-                    r,
-                    drag_state,
-                    window_id,
-                    dnd_id,
-                    move |s, r| on_event_clone(ScreenshotEvent::choice_changed(Choice::Rectangle(r, s))),
-                    &screenshot_image.rgba,
-                    image_scale,
-                    annotations.arrow_mode,
-                    annotations.redact_mode,
-                    annotations.pixelate_mode,
-                    annotations.circle_mode,
-                    annotations.rect_outline_mode,
-                    ui.magnifier_enabled,
-                )
-                .into()
-            }
+            Choice::Rectangle(r, drag_state) => RectangleSelection::new(
+                output_rect,
+                r,
+                drag_state,
+                window_id,
+                dnd_id,
+                move |s, r| {
+                    on_event_clone(ScreenshotEvent::choice_changed(Choice::Rectangle(r, s)))
+                },
+                &screenshot_image.rgba,
+                image_scale,
+                annotations.arrow_mode,
+                annotations.redact_mode,
+                annotations.pixelate_mode,
+                annotations.circle_mode,
+                annotations.rect_outline_mode,
+                ui.magnifier_enabled,
+            )
+            .into(),
             Choice::Output(None) => {
-                let is_focused =
-                    output_ctx.current_output_index == output_ctx.focused_output_index;
-                OutputSelection::new(on_event(ScreenshotEvent::output_changed(output.output.clone())))
-                    .picker_mode(true)
-                    .focused(is_focused)
-                    .on_click(on_event(ScreenshotEvent::confirm()))
-                    .into()
+                let is_focused = output_ctx.current_output_index == output_ctx.focused_output_index;
+                OutputSelection::new(on_event(ScreenshotEvent::output_changed(
+                    output.output.clone(),
+                )))
+                .picker_mode(true)
+                .focused(is_focused)
+                .on_click(on_event(ScreenshotEvent::confirm()))
+                .into()
             }
             Choice::Output(Some(ref selected_output)) => {
                 let is_selected = selected_output == &output.name;
-                OutputSelection::new(on_event(ScreenshotEvent::output_changed(output.output.clone())))
-                    .picker_mode(false)
-                    .selected(is_selected)
-                    .into()
+                OutputSelection::new(on_event(ScreenshotEvent::output_changed(
+                    output.output.clone(),
+                )))
+                .picker_mode(false)
+                .selected(is_selected)
+                .into()
             }
             Choice::Window(_, None) => {
                 let imgs = toplevel_images
@@ -336,11 +332,9 @@ where
                 )
                 .into()
             }
-            Choice::Window(_, Some(_)) => {
-                cosmic::widget::horizontal_space()
-                    .width(Length::Fill)
-                    .into()
-            }
+            Choice::Window(_, Some(_)) => cosmic::widget::horizontal_space()
+                .width(Length::Fill)
+                .into(),
         };
 
         // Build menu_element
@@ -416,10 +410,18 @@ where
                 rect_outline_mode: annotations.rect_outline_mode,
                 circle_drawing: annotations.circle_drawing,
                 rect_outline_drawing: annotations.rect_outline_drawing,
-                on_circle_start: Some(Box::new(move |x, y| on_event_c1(ScreenshotEvent::circle_start(x, y)))),
-                on_circle_end: Some(Box::new(move |x, y| on_event_c2(ScreenshotEvent::circle_end(x, y)))),
-                on_rect_start: Some(Box::new(move |x, y| on_event_r1(ScreenshotEvent::rectangle_start(x, y)))),
-                on_rect_end: Some(Box::new(move |x, y| on_event_r2(ScreenshotEvent::rectangle_end(x, y)))),
+                on_circle_start: Some(Box::new(move |x, y| {
+                    on_event_c1(ScreenshotEvent::circle_start(x, y))
+                })),
+                on_circle_end: Some(Box::new(move |x, y| {
+                    on_event_c2(ScreenshotEvent::circle_end(x, y))
+                })),
+                on_rect_start: Some(Box::new(move |x, y| {
+                    on_event_r1(ScreenshotEvent::rectangle_start(x, y))
+                })),
+                on_rect_end: Some(Box::new(move |x, y| {
+                    on_event_r2(ScreenshotEvent::rectangle_end(x, y))
+                })),
                 shape_color: ui.shape_color,
                 shape_shadow: ui.shape_shadow,
             };
@@ -431,6 +433,7 @@ where
         };
 
         // Build settings_drawer_element
+        const REPOSITORY: &str = "https://github.com/hojjatabdollahi/blazingshot";
         let settings_drawer_element = if ui.settings_drawer_open {
             Some(build_settings_drawer(
                 ui.toolbar_position,
@@ -441,6 +444,7 @@ where
                 on_event(ScreenshotEvent::save_location_documents()),
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
+                on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
                 space_s,
                 space_xs,
             ))
@@ -476,8 +480,12 @@ where
                 ui.primary_redact_tool,
                 has_any_redactions,
                 ui.pixelation_block_size,
-                on_event(ScreenshotEvent::redact_tool_set(crate::config::RedactTool::Redact)),
-                on_event(ScreenshotEvent::redact_tool_set(crate::config::RedactTool::Pixelate)),
+                on_event(ScreenshotEvent::redact_tool_set(
+                    crate::config::RedactTool::Redact,
+                )),
+                on_event(ScreenshotEvent::redact_tool_set(
+                    crate::config::RedactTool::Pixelate,
+                )),
                 move |size| on_event_size(ScreenshotEvent::pixelation_size_set(size)),
                 on_event(ScreenshotEvent::pixelation_size_save()),
                 on_event(ScreenshotEvent::clear_redactions()),
@@ -624,14 +632,14 @@ where
             .fg_element
             .as_widget()
             .layout(&mut children[1], renderer, limits);
-        let shapes_node = self
-            .shapes_element
-            .as_widget()
-            .layout(&mut children[2], renderer, limits);
-        let mut menu_node = self
-            .menu_element
-            .as_widget()
-            .layout(&mut children[3], renderer, limits);
+        let shapes_node =
+            self.shapes_element
+                .as_widget()
+                .layout(&mut children[2], renderer, limits);
+        let mut menu_node =
+            self.menu_element
+                .as_widget()
+                .layout(&mut children[3], renderer, limits);
 
         let menu_bounds = menu_node.bounds();
         let margin = 32.0_f32;
@@ -712,10 +720,15 @@ where
 
         // Layout shape selector popup if present
         if let Some(ref selector) = self.shape_popup_element {
-            let child_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
-            let mut selector_node = selector
-                .as_widget()
-                .layout(&mut children[child_idx], renderer, limits);
+            let child_idx = if self.settings_drawer_element.is_some() {
+                5
+            } else {
+                4
+            };
+            let mut selector_node =
+                selector
+                    .as_widget()
+                    .layout(&mut children[child_idx], renderer, limits);
             let selector_bounds = selector_node.bounds();
             let selector_margin = 4.0_f32;
             let shapes_btn_fraction = 0.42_f32;
@@ -771,9 +784,10 @@ where
             if self.shape_popup_element.is_some() {
                 child_idx += 1;
             }
-            let mut popup_node = popup
-                .as_widget()
-                .layout(&mut children[child_idx], renderer, limits);
+            let mut popup_node =
+                popup
+                    .as_widget()
+                    .layout(&mut children[child_idx], renderer, limits);
             let popup_bounds = popup_node.bounds();
             let popup_margin = 4.0_f32;
             let redact_btn_fraction = 0.52_f32;
@@ -874,20 +888,21 @@ where
 
         // Draw redactions and pixelations
         let output_offset = (self.output_rect.left as f32, self.output_rect.top as f32);
-        let pixelation_source = if let (Some(win_img), Some((win_x, win_y, _win_w, _win_h, display_to_img_scale))) =
-            (self.window_image, self.window_display_info)
-        {
-            PixelationSource::Window {
-                image: win_img,
-                offset: (win_x, win_y),
-                scale: display_to_img_scale,
-            }
-        } else {
-            PixelationSource::Screenshot {
-                image: &self.screenshot_image.rgba,
-                scale: self.image_scale,
-            }
-        };
+        let pixelation_source =
+            if let (Some(win_img), Some((win_x, win_y, _win_w, _win_h, display_to_img_scale))) =
+                (self.window_image, self.window_display_info)
+            {
+                PixelationSource::Window {
+                    image: win_img,
+                    offset: (win_x, win_y),
+                    scale: display_to_img_scale,
+                }
+            } else {
+                PixelationSource::Screenshot {
+                    image: &self.screenshot_image.rgba,
+                    scale: self.image_scale,
+                }
+            };
 
         draw_redactions_and_pixelations(
             renderer,
@@ -1052,7 +1067,11 @@ where
         // Draw shape selector popup
         if let Some(ref selector) = self.shape_popup_element {
             let layout_children: Vec<_> = layout.children().collect();
-            let selector_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
+            let selector_idx = if self.settings_drawer_element.is_some() {
+                5
+            } else {
+                4
+            };
             if layout_children.len() > selector_idx {
                 let selector_layout = layout_children[selector_idx];
                 renderer.with_layer(selector_layout.bounds(), |renderer| {
@@ -1120,7 +1139,11 @@ where
 
             // Handle shape selector popup click-outside
             if self.ui.shape_popup_open {
-                let selector_idx = if self.settings_drawer_element.is_some() { 5 } else { 4 };
+                let selector_idx = if self.settings_drawer_element.is_some() {
+                    5
+                } else {
+                    4
+                };
                 let inside_selector = if layout_children.len() > selector_idx {
                     layout_children[selector_idx].bounds().contains(pos)
                 } else {
@@ -1305,11 +1328,12 @@ where
 
             // Handle arrow drawing
             if self.is_arrow_mode() {
-                let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                    inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
-                } else {
-                    false
-                };
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
+                    } else {
+                        false
+                    };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
@@ -1318,17 +1342,22 @@ where
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::arrow_start(global_x, global_y)));
+                            shell.publish(
+                                self.emit(ScreenshotEvent::arrow_start(global_x, global_y)),
+                            );
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
-                    MouseEvent::ButtonReleased(Button::Left) if self.annotations.arrow_drawing.is_some() => {
+                    MouseEvent::ButtonReleased(Button::Left)
+                        if self.annotations.arrow_drawing.is_some() =>
+                    {
                         if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
                             let (clamped_x, clamped_y) =
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::arrow_end(global_x, global_y)));
+                            shell
+                                .publish(self.emit(ScreenshotEvent::arrow_end(global_x, global_y)));
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1338,11 +1367,12 @@ where
 
             // Handle redact drawing
             if self.is_redact_mode() {
-                let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                    inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
-                } else {
-                    false
-                };
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
+                    } else {
+                        false
+                    };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
@@ -1351,17 +1381,23 @@ where
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::redact_start(global_x, global_y)));
+                            shell.publish(
+                                self.emit(ScreenshotEvent::redact_start(global_x, global_y)),
+                            );
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
-                    MouseEvent::ButtonReleased(Button::Left) if self.annotations.redact_drawing.is_some() => {
+                    MouseEvent::ButtonReleased(Button::Left)
+                        if self.annotations.redact_drawing.is_some() =>
+                    {
                         if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
                             let (clamped_x, clamped_y) =
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::redact_end(global_x, global_y)));
+                            shell.publish(
+                                self.emit(ScreenshotEvent::redact_end(global_x, global_y)),
+                            );
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1371,11 +1407,12 @@ where
 
             // Handle pixelate drawing
             if self.is_pixelate_mode() {
-                let inside_selection = if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-                    inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
-                } else {
-                    false
-                };
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
+                    } else {
+                        false
+                    };
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) if inside_selection => {
@@ -1384,17 +1421,23 @@ where
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::pixelate_start(global_x, global_y)));
+                            shell.publish(
+                                self.emit(ScreenshotEvent::pixelate_start(global_x, global_y)),
+                            );
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
-                    MouseEvent::ButtonReleased(Button::Left) if self.annotations.pixelate_drawing.is_some() => {
+                    MouseEvent::ButtonReleased(Button::Left)
+                        if self.annotations.pixelate_drawing.is_some() =>
+                    {
                         if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
                             let (clamped_x, clamped_y) =
                                 clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
                             let global_x = clamped_x + self.output_rect.left as f32;
                             let global_y = clamped_y + self.output_rect.top as f32;
-                            shell.publish(self.emit(ScreenshotEvent::pixelate_end(global_x, global_y)));
+                            shell.publish(
+                                self.emit(ScreenshotEvent::pixelate_end(global_x, global_y)),
+                            );
                         }
                         return cosmic::iced_core::event::Status::Captured;
                     }
@@ -1435,9 +1478,16 @@ where
         }
 
         let layout = layout.children().collect::<Vec<_>>();
-        for (i, (layout, child)) in layout.into_iter().zip(children.into_iter()).enumerate().rev() {
+        for (i, (layout, child)) in layout
+            .into_iter()
+            .zip(children.into_iter())
+            .enumerate()
+            .rev()
+        {
             let tree = &state.children[i];
-            let interaction = child.as_widget().mouse_interaction(tree, layout, cursor, viewport, renderer);
+            let interaction = child
+                .as_widget()
+                .mouse_interaction(tree, layout, cursor, viewport, renderer);
             if cursor.is_over(layout.bounds()) {
                 return interaction;
             }
@@ -1505,7 +1555,12 @@ where
         if let Some(ref popup) = self.redact_popup_element {
             children.push(popup);
         }
-        for (i, (layout, child)) in layout.into_iter().zip(children.into_iter()).enumerate().rev() {
+        for (i, (layout, child)) in layout
+            .into_iter()
+            .zip(children.into_iter())
+            .enumerate()
+            .rev()
+        {
             let tree = &mut tree.children[i];
             child.as_widget().operate(tree, layout, renderer, operation);
         }
@@ -1534,11 +1589,8 @@ where
         renderer: &cosmic::Renderer,
         dnd_rectangles: &mut cosmic::iced_core::clipboard::DndDestinationRectangles,
     ) {
-        let mut children: Vec<&Element<'_, Msg>> = vec![
-            &self.bg_element,
-            &self.fg_element,
-            &self.menu_element,
-        ];
+        let mut children: Vec<&Element<'_, Msg>> =
+            vec![&self.bg_element, &self.fg_element, &self.menu_element];
         if let Some(ref drawer) = self.settings_drawer_element {
             children.push(drawer);
         }
