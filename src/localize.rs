@@ -40,6 +40,6 @@ pub fn localize() {
     let requested_languages = i18n_embed::DesktopLanguageRequester::requested_languages();
 
     if let Err(error) = localizer.select(&requested_languages) {
-        log::error!("Error while loading language for blazingshot: {}", error);
+        log::error!("Error while loading language for snappea: {}", error);
     }
 }

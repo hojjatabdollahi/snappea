@@ -56,7 +56,7 @@ impl cosmic::Application for App {
 
     type Message = Msg;
 
-    const APP_ID: &'static str = "org.freedesktop.impl.portal.blazingshot";
+    const APP_ID: &'static str = "io.github.hojjatabdollahi.snappea";
 
     fn core(&self) -> &app::Core {
         &self.core

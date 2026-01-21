@@ -1,4 +1,4 @@
-//! Configuration persistence for blazingshot settings
+//! Configuration persistence for snappea settings
 
 use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use cosmic::iced::Color;
@@ -151,8 +151,8 @@ impl RedactTool {
 
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
-#[version = 6]
-pub struct BlazingshotConfig {
+#[version = 1]
+pub struct SnapPeaConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
     /// Where to save screenshots (Pictures or Documents folder)
@@ -173,9 +173,9 @@ pub struct BlazingshotConfig {
     pub toolbar_position: ToolbarPosition,
 }
 
-impl BlazingshotConfig {
+impl SnapPeaConfig {
     /// Configuration ID for cosmic-config
-    pub const ID: &'static str = "org.freedesktop.impl.portal.blazingshot";
+    pub const ID: &'static str = "io.github.hojjatabdollahi.snappea";
 
     /// Load configuration from disk, or return defaults if unavailable
     pub fn load() -> Self {
@@ -209,7 +209,7 @@ impl BlazingshotConfig {
     }
 }
 
-impl Default for BlazingshotConfig {
+impl Default for SnapPeaConfig {
     fn default() -> Self {
         Self {
             // Magnifier enabled by default for precise selection

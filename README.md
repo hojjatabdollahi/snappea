@@ -1,4 +1,4 @@
-# Blazingshot
+# SnapPea
 
 A screenshot portal implementation for the COSMIC desktop environment with annotation capabilities.
 
@@ -32,7 +32,13 @@ To override the default screenshot portal, create or edit `~/.config/xdg-desktop
 
 ```ini
 [preferred]
-org.freedesktop.impl.portal.Screenshot=blazingshot
+org.freedesktop.impl.portal.Screenshot=snappea
+```
+
+and run
+
+```bash
+systemctl --user restart xdg-desktop-portal
 ```
 
 ## License

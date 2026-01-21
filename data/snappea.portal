@@ -1,4 +1,4 @@
 [portal]
-DBusName=org.freedesktop.impl.portal.blazingshot
+DBusName=io.github.hojjatabdollahi.snappea
 Interfaces=org.freedesktop.impl.portal.Screenshot
 UseIn=COSMIC

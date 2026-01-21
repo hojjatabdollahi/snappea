@@ -258,6 +258,7 @@ where
                 annotations.pixelate_mode,
                 annotations.circle_mode,
                 annotations.rect_outline_mode,
+                ui.shape_popup_open || ui.redact_popup_open || ui.settings_drawer_open,
                 ui.magnifier_enabled,
             )
             .into(),
@@ -433,7 +434,7 @@ where
         };
 
         // Build settings_drawer_element
-        const REPOSITORY: &str = "https://github.com/hojjatabdollahi/blazingshot";
+        const REPOSITORY: &str = "https://github.com/hojjatabdollahi/snappea";
         let settings_drawer_element = if ui.settings_drawer_open {
             Some(build_settings_drawer(
                 ui.toolbar_position,
@@ -1131,8 +1132,9 @@ where
         use cosmic::iced_core::Event;
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
-        // Handle click-outside-to-close for popups
-        if let Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) = &event
+        // Handle click-outside-to-close for popups (both left and right click)
+        if let Event::Mouse(MouseEvent::ButtonPressed(button)) = &event
+            && matches!(button, Button::Left | Button::Right)
             && let Some(pos) = cursor.position()
         {
             let layout_children: Vec<_> = layout.children().collect();
@@ -1301,6 +1303,51 @@ where
             }
             if matches!(status, cosmic::iced_core::event::Status::Captured) {
                 return status;
+            }
+        }
+
+        // Capture unhandled clicks inside popups to prevent drawing behind them (both left and right)
+        if let Event::Mouse(MouseEvent::ButtonPressed(button)) = &event
+            && matches!(button, Button::Left | Button::Right)
+            && let Some(pos) = cursor.position()
+        {
+            let layout_children: Vec<_> = layout.children().collect();
+
+            // Check shape popup
+            if self.ui.shape_popup_open {
+                let selector_idx = if self.settings_drawer_element.is_some() {
+                    5
+                } else {
+                    4
+                };
+                if layout_children.len() > selector_idx
+                    && layout_children[selector_idx].bounds().contains(pos)
+                {
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+
+            // Check redact popup
+            if self.ui.redact_popup_open {
+                let mut popup_idx = 4;
+                if self.settings_drawer_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.shape_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                if layout_children.len() > popup_idx
+                    && layout_children[popup_idx].bounds().contains(pos)
+                {
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+
+            // Check settings drawer
+            if self.ui.settings_drawer_open {
+                if layout_children.len() > 4 && layout_children[4].bounds().contains(pos) {
+                    return cosmic::iced_core::event::Status::Captured;
+                }
             }
         }
 

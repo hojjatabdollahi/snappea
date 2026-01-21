@@ -1,7 +1,7 @@
 set dotenv-load := true
 
-name := 'blazingshot'
-export APPID := 'org.freedesktop.impl.portal.blazingshot'
+name := 'snappea'
+export APPID := 'io.github.hojjatabdollahi.snappea'
 
 rootdir := ''
 prefix := '/usr'
@@ -13,11 +13,11 @@ export INSTALL_DIR := base-dir / 'share'
 bin-src := 'target' / 'release' / name
 bin-dst := base-dir / 'libexec' / name
 
-portal-src := 'data' / 'blazingshot.portal'
-portal-dst := base-dir / 'share' / 'xdg-desktop-portal' / 'portals' / 'blazingshot.portal'
+portal-src := 'data' / 'snappea.portal'
+portal-dst := base-dir / 'share' / 'xdg-desktop-portal' / 'portals' / 'snappea.portal'
 
-service-src := 'data' / 'org.freedesktop.impl.portal.blazingshot.service'
-service-dst := base-dir / 'share' / 'dbus-1' / 'services' / 'org.freedesktop.impl.portal.blazingshot.service'
+service-src := 'data' / 'io.github.hojjatabdollahi.snappea.service'
+service-dst := base-dir / 'share' / 'dbus-1' / 'services' / 'io.github.hojjatabdollahi.snappea.service'
 
 icons-src := 'data' / 'icons'
 icons-dst := base-dir / 'share' / 'icons'

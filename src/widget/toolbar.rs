@@ -452,23 +452,26 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         )
     };
 
-    // Settings button
-    let btn_settings = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("application-menu-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(if settings_drawer_open {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press(on_settings_toggle)
-        .padding(space_xs),
-        "Settings",
-        tooltip::Position::Bottom,
-    );
+    // Settings button - responds to both left and right click
+    let btn_settings: Element<'_, Msg> = {
+        let settings_btn = tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("application-menu-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(if settings_drawer_open {
+                cosmic::theme::Button::Suggested
+            } else {
+                cosmic::theme::Button::Icon
+            })
+            .on_press(on_settings_toggle.clone())
+            .padding(space_xs),
+            "Settings",
+            tooltip::Position::Bottom,
+        );
+        super::tool_button::RightClickWrapper::new(settings_btn, Some(on_settings_toggle)).into()
+    };
 
     let btn_close = tooltip(
         button::custom(

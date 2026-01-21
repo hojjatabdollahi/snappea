@@ -20,7 +20,7 @@ use super::drawing::draw_dark_overlay_around_selection;
 use super::magnifier::draw_magnifier;
 use crate::domain::Rect;
 
-pub const MIME: &str = "X-BLAZINGSHOT-MyData";
+pub const MIME: &str = "X-SNAPPEA-MyData";
 pub struct MyData;
 
 impl From<(Vec<u8>, String)> for MyData {
@@ -73,6 +73,8 @@ pub struct RectangleSelection<'a, Msg> {
     circle_mode: bool,
     /// Whether rectangle-outline drawing mode is active (skip rectangle capturing)
     rect_outline_mode: bool,
+    /// Whether any popup or drawer is open (skip rectangle capturing)
+    popup_open: bool,
     /// Whether magnifier is enabled
     magnifier_enabled: bool,
     _phantom: std::marker::PhantomData<Msg>,
@@ -94,6 +96,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         pixelate_mode: bool,
         circle_mode: bool,
         rect_outline_mode: bool,
+        popup_open: bool,
         magnifier_enabled: bool,
     ) -> Self {
         Self {
@@ -111,6 +114,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             pixelate_mode,
             circle_mode,
             rect_outline_mode,
+            popup_open,
             magnifier_enabled,
             _phantom: std::marker::PhantomData,
         }
@@ -438,12 +442,13 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 
-                // Skip rectangle drawing when arrow, redact, pixelate, or shape mode is active
+                // Skip rectangle drawing when arrow, redact, pixelate, shape mode is active, or popup is open
                 if self.arrow_mode
                     || self.redact_mode
                     || self.pixelate_mode
                     || self.circle_mode
                     || self.rect_outline_mode
+                    || self.popup_open
                 {
                     return cosmic::iced_core::event::Status::Ignored;
                 }

@@ -25,7 +25,7 @@ use crate::capture::ocr::{
 };
 use crate::capture::qr::{DetectedQrCode, detect_qr_codes_at_resolution, is_duplicate_qr};
 use crate::config::{
-    BlazingshotConfig, SaveLocation,
+    SnapPeaConfig, SaveLocation,
 };
 use crate::core::app::{App, OutputState};
 use crate::core::portal::PortalResponse;
@@ -350,7 +350,7 @@ impl Screenshot {
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
         // Load persisted config for settings
-        let config = BlazingshotConfig::load();
+        let config = SnapPeaConfig::load();
 
         // Send UI immediately with empty QR codes, detection happens async
         if let Err(err) = self
@@ -1666,7 +1666,7 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
                         input_zone: None,
                         anchor: Anchor::all(),
                         output: IcedOutput::Output(output.clone()),
-                        namespace: "blazingshot".to_string(),
+                        namespace: "snappea".to_string(),
                         size: Some((None, None)),
                         exclusive_zone: -1,
                         size_limits: Limits::NONE.min_height(1.0).min_width(1.0),

@@ -70,30 +70,38 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static>(
     .width(Length::Fill);
 
     // About section
-    const COSMIC_LOGO: &[u8] = include_bytes!("../../data/cosmic_logo.svg");
+    const SNAPPEA_LOGO: &[u8] = include_bytes!("../../data/logo.svg");
+    const GITHUB_ICON: &[u8] =
+        include_bytes!("../../data/icons/hicolor/scalable/actions/github.svg");
 
     let version = env!("CARGO_PKG_VERSION");
-    let cosmic_logo =
-        cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(COSMIC_LOGO).symbolic(true))
-            .width(Length::Fixed(80.0))
-            .height(Length::Fixed(12.0));
 
-    let about_section = column![
-        row![
-            text::caption(format!("v{}", version)),
-            cosmic::widget::button::link("GitHub")
-                .on_press(on_github_click)
-                .trailing_icon(false),
-        ]
-        .spacing(space_s)
-        .align_y(cosmic::iced_core::Alignment::Center),
-        row![text::body("Made with ❤️ for "), cosmic_logo,]
+    let snappea_logo =
+        cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(SNAPPEA_LOGO).symbolic(false))
+            .width(Length::Fixed(32.0))
+            .height(Length::Fixed(32.0));
+
+    let about_section = row![
+        snappea_logo,
+        column![
+            row![text::title4("SnapPea"), text::caption(format!("v{}", version)),]
+                .spacing(space_xs)
+                .align_y(cosmic::iced_core::Alignment::Center),
+            row![
+                text::caption("by Hojjat Abdollahi"),
+                cosmic::widget::button::icon(
+                    cosmic::widget::icon::from_svg_bytes(GITHUB_ICON).symbolic(true)
+                )
+                .extra_small()
+                .on_press(on_github_click),
+            ]
+            .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
-        text::caption("by Hojjat Abdollahi"),
+        ]
+        .spacing(space_xs)
     ]
-    .spacing(space_xs)
-    .align_x(cosmic::iced_core::Alignment::Center)
-    .width(Length::Fill);
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center);
 
     let drawer_content: Element<'_, Msg> = column![
         magnifier_row,

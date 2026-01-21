@@ -2,7 +2,7 @@
 //!
 //! Handles ToolMsg for popup state, tool selection, colors, and config persistence.
 
-use crate::config::{BlazingshotConfig, RedactTool, ShapeTool};
+use crate::config::{SnapPeaConfig, RedactTool, ShapeTool};
 use crate::screenshot::Args;
 use crate::session::messages::{ToolMsg, ToolPopupAction};
 
@@ -63,7 +63,7 @@ pub fn handle_tool_msg(args: &mut Args, msg: ToolMsg) -> bool {
 
 /// Save current tool config to persistent storage
 pub fn save_tool_config(args: &Args) {
-    let mut config = BlazingshotConfig::load();
+    let mut config = SnapPeaConfig::load();
     config.primary_shape_tool = args.ui.primary_shape_tool;
     config.shape_color = args.ui.shape_color;
     config.shape_shadow = args.ui.shape_shadow;
@@ -141,6 +141,9 @@ fn handle_shape_popup(args: &mut Args, action: ToolPopupAction) {
                 args.ui.redact_popup_open = false;
                 args.ui.settings_drawer_open = false;
                 args.disable_all_modes();
+            } else {
+                // Re-enable the current shape tool when closing
+                set_primary_shape_tool(args, args.ui.primary_shape_tool);
             }
         }
         ToolPopupAction::Open => {
@@ -151,6 +154,8 @@ fn handle_shape_popup(args: &mut Args, action: ToolPopupAction) {
         }
         ToolPopupAction::Close => {
             args.ui.shape_popup_open = false;
+            // Re-enable the current shape tool when closing
+            set_primary_shape_tool(args, args.ui.primary_shape_tool);
         }
     }
 }
@@ -188,6 +193,9 @@ fn handle_redact_popup(args: &mut Args, action: ToolPopupAction) {
                 args.ui.shape_popup_open = false;
                 args.ui.settings_drawer_open = false;
                 args.disable_all_modes();
+            } else {
+                // Re-enable the current redact tool when closing
+                set_primary_redact_tool(args, args.ui.primary_redact_tool);
             }
         }
         ToolPopupAction::Open => {
@@ -198,6 +206,8 @@ fn handle_redact_popup(args: &mut Args, action: ToolPopupAction) {
         }
         ToolPopupAction::Close => {
             args.ui.redact_popup_open = false;
+            // Re-enable the current redact tool when closing
+            set_primary_redact_tool(args, args.ui.primary_redact_tool);
         }
     }
 }

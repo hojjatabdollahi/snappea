@@ -38,7 +38,7 @@ impl<T: zvariant::Type + serde::Serialize> serde::Serialize for PortalResponse<T
 }
 
 /// D-Bus service name for the portal
-pub const DBUS_NAME: &str = "org.freedesktop.impl.portal.blazingshot";
+pub const DBUS_NAME: &str = "io.github.hojjatabdollahi.snappea";
 
 /// D-Bus object path for the portal
 pub const DBUS_PATH: &str = "/org/freedesktop/portal/desktop";
