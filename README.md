@@ -13,6 +13,7 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 ## Features
 
 - Interactive screenshot selection
+- Screen recording with hardware acceleration
 - Annotation tools: arrows, circles, squares
 - Text recognition (OCR)
 - QR code detection

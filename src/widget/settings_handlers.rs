@@ -1,9 +1,10 @@
 //! Handlers for settings-related messages
 //!
 //! Handles: ToolbarPositionChange, ToggleSettingsDrawer, ToggleMagnifier,
-//!          SetSaveLocation, ToggleCopyOnSave
+//!          SetSaveLocation, ToggleCopyOnSave, SetVideoEncoder, SetVideoContainer,
+//!          SetVideoFramerate
 
-use crate::config::{SnapPeaConfig, SaveLocation, ToolbarPosition};
+use crate::config::{Container, SnapPeaConfig, SaveLocation, ToolbarPosition};
 use crate::screenshot::Args;
 use crate::screenshot::handlers::HandlerResult;
 
@@ -62,6 +63,33 @@ pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {
     args.ui.copy_to_clipboard_on_save = !args.ui.copy_to_clipboard_on_save;
     let mut config = SnapPeaConfig::load();
     config.copy_to_clipboard_on_save = args.ui.copy_to_clipboard_on_save;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetVideoEncoder message
+pub fn handle_set_video_encoder(args: &mut Args, encoder: String) -> HandlerResult {
+    args.ui.selected_encoder = Some(encoder.clone());
+    let mut config = SnapPeaConfig::load();
+    config.video_encoder = Some(encoder);
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetVideoContainer message
+pub fn handle_set_video_container(args: &mut Args, container: Container) -> HandlerResult {
+    args.ui.video_container = container;
+    let mut config = SnapPeaConfig::load();
+    config.video_container = container;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetVideoFramerate message
+pub fn handle_set_video_framerate(args: &mut Args, framerate: u32) -> HandlerResult {
+    args.ui.video_framerate = framerate;
+    let mut config = SnapPeaConfig::load();
+    config.video_framerate = framerate;
     config.save();
     cosmic::Task::none()
 }

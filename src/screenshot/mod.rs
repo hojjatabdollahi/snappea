@@ -275,6 +275,14 @@ impl Screenshot {
         parent_window: &str,
         options: ScreenshotOptions,
     ) -> PortalResponse<ScreenshotResult> {
+        // Check if a recording is active and stop it
+        if crate::screencast::is_recording() {
+            log::info!("Active recording detected, stopping before showing screenshot UI");
+            if let Err(e) = crate::screencast::stop_recording() {
+                log::error!("Failed to stop recording: {}", e);
+            }
+        }
+
         let mut outputs = Vec::new();
         for output in self.wayland_helper.outputs() {
             let Some(info) = self.wayland_helper.output_info(&output) else {
@@ -381,20 +389,35 @@ impl Screenshot {
                 },
                 detection: DetectionState::default(),
                 annotations: AnnotationState::default(),
-                ui: UiState {
-                    toolbar_position: config.toolbar_position,
-                    settings_drawer_open: false,
-                    primary_shape_tool: config.primary_shape_tool,
-                    shape_popup_open: false,
-                    shape_color: config.shape_color,
-                    shape_shadow: config.shape_shadow,
-                    primary_redact_tool: config.primary_redact_tool,
-                    redact_popup_open: false,
-                    pixelation_block_size: config.pixelation_block_size,
-                    magnifier_enabled: config.magnifier_enabled,
-                    save_location_setting: config.save_location,
-                    copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
-                    tesseract_available: is_tesseract_available(),
+                ui: {
+                    // Detect available encoders
+                    use crate::screencast::encoder::detect_encoders;
+                    let available_encoders = detect_encoders().unwrap_or_default();
+                    let encoder_displays: Vec<(String, String)> = available_encoders
+                        .iter()
+                        .map(|e| (e.display_name(), e.gst_element.clone()))
+                        .collect();
+
+                    UiState {
+                        toolbar_position: config.toolbar_position,
+                        settings_drawer_open: false,
+                        primary_shape_tool: config.primary_shape_tool,
+                        shape_popup_open: false,
+                        shape_color: config.shape_color,
+                        shape_shadow: config.shape_shadow,
+                        primary_redact_tool: config.primary_redact_tool,
+                        redact_popup_open: false,
+                        pixelation_block_size: config.pixelation_block_size,
+                        magnifier_enabled: config.magnifier_enabled,
+                        save_location_setting: config.save_location,
+                        copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+                        tesseract_available: is_tesseract_available(),
+                        available_encoders,
+                        encoder_displays,
+                        selected_encoder: config.video_encoder.clone(),
+                        video_container: config.video_container,
+                        video_framerate: config.video_framerate,
+                    }
                 },
             }))
             .await
@@ -564,6 +587,15 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 }
             },
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
+            SettingsMsg::SetVideoEncoder(encoder) => {
+                settings_handlers::handle_set_video_encoder(args, encoder)
+            }
+            SettingsMsg::SetVideoContainer(container) => {
+                settings_handlers::handle_set_video_container(args, container)
+            }
+            SettingsMsg::SetVideoFramerate(framerate) => {
+                settings_handlers::handle_set_video_framerate(args, framerate)
+            }
         }
     })
 }
@@ -610,6 +642,198 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 }
             }
             handle_capture_inner(app)
+        }
+        CaptureMsg::RecordRegion => {
+            // Get region from selection state
+            let Some(args) = app.screenshot_args.as_ref() else {
+                log::warn!("Record clicked but no screenshot args available");
+                return cosmic::Task::none();
+            };
+
+            let region = match &args.session.choice {
+                Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
+                    (rect.left, rect.top, rect.width() as u32, rect.height() as u32)
+                }
+                Choice::Output(Some(output_name)) => {
+                    // Find output dimensions
+                    if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
+                        (
+                            output.logical_pos.0,
+                            output.logical_pos.1,
+                            output.logical_size.0,
+                            output.logical_size.1,
+                        )
+                    } else {
+                        log::warn!("Record clicked but output not found: {}", output_name);
+                        return cosmic::Task::none();
+                    }
+                }
+                Choice::Window(output_name, Some(window_index)) => {
+                    // Get window dimensions from toplevel images
+                    if let Some(imgs) = args.capture.toplevel_images.get(output_name) {
+                        if let Some(img) = imgs.get(*window_index) {
+                            if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
+                                let orig_width = img.rgba.width() as f32;
+                                let orig_height = img.rgba.height() as f32;
+                                let output_width = output.logical_size.0 as f32;
+                                let output_height = output.logical_size.1 as f32;
+
+                                // Calculate display bounds (matching capture logic)
+                                let max_width = output_width * 0.85;
+                                let max_height = output_height * 0.85;
+                                let (thumb_width, thumb_height) =
+                                    if orig_width > max_width || orig_height > max_height {
+                                        let pre_scale =
+                                            (max_width / orig_width).min(max_height / orig_height);
+                                        (orig_width * pre_scale, orig_height * pre_scale)
+                                    } else {
+                                        (orig_width, orig_height)
+                                    };
+
+                                let available_width = output_width - 20.0;
+                                let available_height = output_height - 20.0;
+                                let scale_x = available_width / thumb_width;
+                                let scale_y = available_height / thumb_height;
+                                let display_scale = scale_x.min(scale_y).min(1.0);
+
+                                let display_width = thumb_width * display_scale;
+                                let display_height = thumb_height * display_scale;
+                                let sel_x = (output_width - display_width) / 2.0;
+                                let sel_y = (output_height - display_height) / 2.0;
+
+                                (
+                                    (output.logical_pos.0 as f32 + sel_x) as i32,
+                                    (output.logical_pos.1 as f32 + sel_y) as i32,
+                                    display_width as u32,
+                                    display_height as u32,
+                                )
+                            } else {
+                                log::warn!("Record clicked but output not found: {}", output_name);
+                                return cosmic::Task::none();
+                            }
+                        } else {
+                            log::warn!("Record clicked but window index {} not found", window_index);
+                            return cosmic::Task::none();
+                        }
+                    } else {
+                        log::warn!("Record clicked but no windows found for output: {}", output_name);
+                        return cosmic::Task::none();
+                    }
+                }
+                _ => {
+                    log::warn!("Record clicked but no valid region selected");
+                    return cosmic::Task::none();
+                }
+            };
+
+            // Find output with most overlap with the region
+            let region_rect = crate::domain::Rect {
+                left: region.0,
+                top: region.1,
+                right: region.0 + region.2 as i32,
+                bottom: region.1 + region.3 as i32,
+            };
+
+            let output_name = app
+                .outputs
+                .iter()
+                .filter_map(|output| {
+                    let output_rect = crate::domain::Rect {
+                        left: output.logical_pos.0,
+                        top: output.logical_pos.1,
+                        right: output.logical_pos.0 + output.logical_size.0 as i32,
+                        bottom: output.logical_pos.1 + output.logical_size.1 as i32,
+                    };
+
+                    // Calculate overlap area
+                    region_rect.intersect(output_rect).map(|intersection| {
+                        let overlap_area = (intersection.right - intersection.left) as u64
+                            * (intersection.bottom - intersection.top) as u64;
+                        (output, overlap_area)
+                    })
+                })
+                .max_by_key(|(_, area)| *area)
+                .map(|(output, area)| {
+                    log::info!(
+                        "Selected output '{}' with {} pixels of overlap",
+                        output.name,
+                        area
+                    );
+                    output.name.clone()
+                })
+                .unwrap_or_else(|| {
+                    // Fallback to first output
+                    log::warn!("No output overlap found, using first output as fallback");
+                    app.outputs
+                        .first()
+                        .map(|o| o.name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string())
+                });
+
+            // Generate timestamped output filename
+            let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
+            let config = crate::config::SnapPeaConfig::load();
+            let container = config.video_container;
+            let output_dir = dirs::video_dir()
+                .or_else(|| dirs::home_dir())
+                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            let output_file = output_dir.join(format!("recording-{}.{}", timestamp, container.extension()));
+
+            // Determine encoder (from config or best_encoder)
+            let encoder = config
+                .video_encoder
+                .or_else(|| crate::screencast::best_encoder().ok().map(|e| e.gst_element))
+                .unwrap_or_else(|| "x264enc".to_string());
+
+            let framerate = config.video_framerate;
+
+            // Spawn subprocess with --record args
+            let args_vec = vec![
+                "--record".to_string(),
+                "--output".to_string(),
+                output_file.display().to_string(),
+                "--output-name".to_string(),
+                output_name,
+                "--region".to_string(),
+                format!("{},{},{},{}", region.0, region.1, region.2, region.3),
+                "--encoder".to_string(),
+                encoder,
+                "--container".to_string(),
+                format!("{:?}", container),
+                "--framerate".to_string(),
+                framerate.to_string(),
+            ];
+
+            let exe = match std::env::current_exe() {
+                Ok(exe) => exe,
+                Err(e) => {
+                    log::error!("Failed to get current executable: {}", e);
+                    return cosmic::Task::none();
+                }
+            };
+
+            match std::process::Command::new(exe).args(&args_vec).spawn() {
+                Ok(child) => {
+                    log::info!(
+                        "Recording started: PID {}, output: {}, region: {:?}",
+                        child.id(),
+                        output_file.display(),
+                        region
+                    );
+                    // Close UI - same as Cancel
+                    handle_cancel_inner(app)
+                }
+                Err(e) => {
+                    log::error!(
+                        "Failed to start recording: {} (output: {}, region: {:?})",
+                        e,
+                        output_file.display(),
+                        region
+                    );
+                    // TODO: Show notification to user when cosmic notification API is available
+                    cosmic::Task::none()
+                }
+            }
         }
         CaptureMsg::Choice(c) => handle_choice_inner(app, c),
         CaptureMsg::Location(loc) => handle_location_inner(app, loc),

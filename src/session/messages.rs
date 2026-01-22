@@ -8,7 +8,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::capture::ocr::OcrStatus;
 use crate::capture::qr::DetectedQrCode;
-use crate::config::{RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
+use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
 
 // ============================================================================
@@ -137,6 +137,8 @@ pub enum CaptureMsg {
     CopyToClipboard,
     /// Save to Pictures folder
     SaveToPictures,
+    /// Record selected region
+    RecordRegion,
     /// Set selection choice
     Choice(Choice),
     /// Set location index
@@ -210,6 +212,12 @@ pub enum SettingsMsg {
     SetSaveLocation(SaveLocationChoice),
     /// Toggle copy to clipboard on save
     ToggleCopyOnSave,
+    /// Set video encoder (gst_element name)
+    SetVideoEncoder(String),
+    /// Set video container format
+    SetVideoContainer(Container),
+    /// Set video framerate
+    SetVideoFramerate(u32),
 }
 
 // ============================================================================
@@ -386,6 +394,9 @@ impl Msg {
     pub fn save_to_pictures() -> Self {
         Self::Capture(CaptureMsg::SaveToPictures)
     }
+    pub fn record_region() -> Self {
+        Self::Capture(CaptureMsg::RecordRegion)
+    }
     pub fn choice(c: Choice) -> Self {
         Self::Capture(CaptureMsg::Choice(c))
     }
@@ -437,5 +448,14 @@ impl Msg {
     }
     pub fn toggle_copy_on_save() -> Self {
         Self::Settings(SettingsMsg::ToggleCopyOnSave)
+    }
+    pub fn set_video_encoder(encoder: String) -> Self {
+        Self::Settings(SettingsMsg::SetVideoEncoder(encoder))
+    }
+    pub fn set_video_container(container: Container) -> Self {
+        Self::Settings(SettingsMsg::SetVideoContainer(container))
+    }
+    pub fn set_video_framerate(framerate: u32) -> Self {
+        Self::Settings(SettingsMsg::SetVideoFramerate(framerate))
     }
 }

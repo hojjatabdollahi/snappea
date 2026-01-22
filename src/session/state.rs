@@ -5,7 +5,7 @@ use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{OcrStatus, OcrTextOverlay};
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{
-    RedactTool, SaveLocation, ShapeColor, ShapeTool, ToolbarPosition,
+    Container, RedactTool, SaveLocation, ShapeColor, ShapeTool, ToolbarPosition,
 };
 use crate::core::portal::{PortalResponse};
 use crate::domain::{
@@ -13,6 +13,7 @@ use crate::domain::{
     ImageSaveLocation, PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
 };
 use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
+use crate::screencast::encoder::EncoderInfo;
 
 #[derive(Clone, Debug)]
 pub struct PortalContext {
@@ -205,6 +206,12 @@ pub struct UiState {
     pub save_location_setting: SaveLocation,
     pub copy_to_clipboard_on_save: bool,
     pub tesseract_available: bool,
+    // Recording settings
+    pub available_encoders: Vec<EncoderInfo>,
+    pub encoder_displays: Vec<(String, String)>, // Cached (display_name, gst_element) for UI
+    pub selected_encoder: Option<String>,
+    pub video_container: Container,
+    pub video_framerate: u32,
 }
 
 impl UiState {

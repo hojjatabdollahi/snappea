@@ -149,6 +149,35 @@ impl RedactTool {
     }
 }
 
+/// Video container format
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum Container {
+    #[default]
+    Mp4,
+    Webm,
+    Mkv,
+}
+
+impl Container {
+    /// Get file extension for this container
+    pub fn extension(&self) -> &'static str {
+        match self {
+            Container::Mp4 => "mp4",
+            Container::Webm => "webm",
+            Container::Mkv => "mkv",
+        }
+    }
+
+    /// Get GStreamer muxer element name
+    pub fn muxer_element(&self) -> &'static str {
+        match self {
+            Container::Mp4 => "mp4mux",
+            Container::Webm => "webmmux",
+            Container::Mkv => "matroskamux",
+        }
+    }
+}
+
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
 #[version = 1]
@@ -171,6 +200,12 @@ pub struct SnapPeaConfig {
     pub pixelation_block_size: u32,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
+    /// Video encoder to use (None = auto-detect hardware encoder)
+    pub video_encoder: Option<String>,
+    /// Video container format
+    pub video_container: Container,
+    /// Recording framerate (30 or 60)
+    pub video_framerate: u32,
 }
 
 impl SnapPeaConfig {
@@ -230,6 +265,10 @@ impl Default for SnapPeaConfig {
             pixelation_block_size: 16,
             // Default toolbar position at the bottom
             toolbar_position: ToolbarPosition::Bottom,
+            // Recording defaults
+            video_encoder: None, // Auto-detect
+            video_container: Container::Mp4,
+            video_framerate: 60,
         }
     }
 }

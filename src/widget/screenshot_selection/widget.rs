@@ -377,6 +377,7 @@ where
             move |c| on_event_clone2(ScreenshotEvent::choice_changed(c)),
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
+            on_event(ScreenshotEvent::record_region()),
             on_event(ScreenshotEvent::shape_mode_toggle()),
             on_event(ScreenshotEvent::shape_popup_toggle()),
             on_event(ScreenshotEvent::redact_tool_mode_toggle()),
@@ -437,6 +438,10 @@ where
         // Build settings_drawer_element
         const REPOSITORY: &str = "https://github.com/hojjatabdollahi/snappea";
         let settings_drawer_element = if ui.settings_drawer_open {
+            let on_event_encoder = on_event.clone();
+            let on_event_container = on_event.clone();
+            let on_event_framerate = on_event.clone();
+
             Some(build_settings_drawer(
                 ui.toolbar_position,
                 ui.magnifier_enabled,
@@ -447,6 +452,14 @@ where
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
+                // Recording settings
+                ui.encoder_displays.clone(),
+                ui.selected_encoder.clone(),
+                move |e| on_event_encoder(ScreenshotEvent::video_encoder_set(e)),
+                ui.video_container,
+                move |c| on_event_container(ScreenshotEvent::video_container_set(c)),
+                ui.video_framerate,
+                move |f| on_event_framerate(ScreenshotEvent::video_framerate_set(f)),
                 space_s,
                 space_xs,
             ))

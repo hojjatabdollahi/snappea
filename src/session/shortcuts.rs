@@ -108,6 +108,10 @@ pub fn handle_key_event(
         // QR shortcut: if result exists, copy and close; otherwise start scan
         Key::Character(c) if c.as_str() == "q" && has_qr_result => Some(Msg::qr_copy_and_close()),
         Key::Character(c) if c.as_str() == "q" && has_selection => Some(Msg::qr_requested()),
+        // Shift+R: trigger recording (only when region is selected)
+        Key::Character(c) if c.as_str() == "R" && modifiers.shift() && has_selection => {
+            Some(Msg::record_region())
+        }
         // Selection mode shortcuts (always available, but not when in draw mode)
         // Use current_output_index (the screen where this key was pressed)
         Key::Character(c) if c.as_str() == "r" && !arrow_mode && !redact_mode => {

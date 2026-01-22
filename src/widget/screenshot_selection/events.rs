@@ -4,7 +4,7 @@
 //! application's message system. The parent component translates these
 //! events to its own message types.
 
-use crate::config::{RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
+use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
 use wayland_client::protocol::wl_output::WlOutput;
 
@@ -124,6 +124,12 @@ pub enum SettingsEvent {
     SaveLocationDocuments,
     /// Copy on save toggled
     CopyOnSaveToggle,
+    /// Video encoder selected (gst_element name)
+    VideoEncoderSet(String),
+    /// Video container format selected
+    VideoContainerSet(Container),
+    /// Video framerate selected
+    VideoFramerateSet(u32),
 }
 
 /// Capture action events
@@ -133,6 +139,8 @@ pub enum CaptureEvent {
     CopyToClipboard,
     /// Save to pictures folder
     SaveToPictures,
+    /// Record selected region
+    RecordRegion,
     /// Cancel screenshot
     Cancel,
 }
@@ -382,6 +390,18 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::CopyOnSaveToggle)
     }
 
+    pub fn video_encoder_set(encoder: String) -> Self {
+        Self::Settings(SettingsEvent::VideoEncoderSet(encoder))
+    }
+
+    pub fn video_container_set(container: Container) -> Self {
+        Self::Settings(SettingsEvent::VideoContainerSet(container))
+    }
+
+    pub fn video_framerate_set(framerate: u32) -> Self {
+        Self::Settings(SettingsEvent::VideoFramerateSet(framerate))
+    }
+
     // Capture events
     pub fn copy_to_clipboard() -> Self {
         Self::Capture(CaptureEvent::CopyToClipboard)
@@ -389,6 +409,10 @@ impl ScreenshotEvent {
 
     pub fn save_to_pictures() -> Self {
         Self::Capture(CaptureEvent::SaveToPictures)
+    }
+
+    pub fn record_region() -> Self {
+        Self::Capture(CaptureEvent::RecordRegion)
     }
 
     pub fn cancel() -> Self {
@@ -502,10 +526,20 @@ impl ScreenshotEvent {
                 Msg::set_save_location_documents()
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
+            Self::Settings(SettingsEvent::VideoEncoderSet(encoder)) => {
+                Msg::set_video_encoder(encoder)
+            }
+            Self::Settings(SettingsEvent::VideoContainerSet(container)) => {
+                Msg::set_video_container(container)
+            }
+            Self::Settings(SettingsEvent::VideoFramerateSet(framerate)) => {
+                Msg::set_video_framerate(framerate)
+            }
 
             // Capture events
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),
             Self::Capture(CaptureEvent::SaveToPictures) => Msg::save_to_pictures(),
+            Self::Capture(CaptureEvent::RecordRegion) => Msg::record_region(),
             Self::Capture(CaptureEvent::Cancel) => Msg::cancel(),
         }
     }

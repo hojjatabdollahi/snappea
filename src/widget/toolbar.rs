@@ -216,6 +216,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
+    on_record_region: Msg,
     on_shape_press: Msg,
     on_shape_right_click: Msg,
     on_redact_press: Msg,
@@ -363,6 +364,20 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .on_press(on_save_to_pictures)
         .padding(space_xs),
         save_tooltip,
+        tooltip::Position::Bottom,
+    );
+
+    // Record button - enabled only when region is selected
+    let btn_record = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("media-record-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press_maybe(has_selection.then_some(on_record_region))
+        .padding(space_xs),
+        "Record selected region (Shift+R)",
         tooltip::Position::Bottom,
     );
 
@@ -516,7 +531,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 horizontal::light().width(Length::Fixed(64.0)),
                 tool_buttons,
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save]
+                column![btn_copy, btn_save, btn_record]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -536,7 +551,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save]
+                column![btn_copy, btn_save, btn_record]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -565,7 +580,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 vertical::light().height(Length::Fixed(64.0)),
                 tool_buttons,
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save]
+                row![btn_copy, btn_save, btn_record]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
@@ -585,7 +600,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save]
+                row![btn_copy, btn_save, btn_record]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
