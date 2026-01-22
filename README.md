@@ -2,6 +2,9 @@
 
 A screenshot portal implementation for the COSMIC desktop environment with annotation capabilities.
 
+
+Disclaimer: This project is based on xdg-desktop-portal-cosmic with added features. It implements the same screenshot portal interface. When set up correctly, dbus messages sent by `cosmic-screenshot` will be handled by SnapPea instead of `xdg-desktop-portal-cosmic` (only Screenshot Portal messages).
+
 ## Features
 
 - Interactive screenshot selection
@@ -11,6 +14,7 @@ A screenshot portal implementation for the COSMIC desktop environment with annot
 - Redaction and pixelation
 - Multi-window and multi-output support
 - Keyboard shortcuts
+- Configurable settings
 
 ## Installation
 
@@ -21,11 +25,6 @@ just
 sudo just install
 ```
 
-To uninstall:
-
-```sh
-sudo just uninstall
-```
 
 > [!IMPORTANT]
 To override the default screenshot portal, create or edit `~/.config/xdg-desktop-portal/portals.conf`:
@@ -35,11 +34,19 @@ To override the default screenshot portal, create or edit `~/.config/xdg-desktop
 org.freedesktop.impl.portal.Screenshot=snappea
 ```
 
-and run
+Reload xdg-desktop-portal to apply changes:
 
 ```bash
 systemctl --user restart xdg-desktop-portal
 ```
+
+To uninstall:
+
+```sh
+sudo just uninstall
+```
+
+Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf` if you set it.
 
 ## License
 
