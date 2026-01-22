@@ -21,7 +21,7 @@ use zbus::zvariant;
 pub use crate::domain::{Action, Choice, DragState, ImageSaveLocation, Rect, RectDimension};
 use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{
-    OcrMapping, OcrStatus, models_need_download, run_ocr_on_image_with_status,
+    OcrMapping, OcrStatus, is_tesseract_available, models_need_download, run_ocr_on_image_with_status,
 };
 use crate::capture::qr::{DetectedQrCode, detect_qr_codes_at_resolution, is_duplicate_qr};
 use crate::config::{
@@ -394,6 +394,7 @@ impl Screenshot {
                     magnifier_enabled: config.magnifier_enabled,
                     save_location_setting: config.save_location,
                     copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+                    tesseract_available: is_tesseract_available(),
                 },
             }))
             .await

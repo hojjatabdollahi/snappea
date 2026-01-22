@@ -204,6 +204,7 @@ pub struct UiState {
     pub magnifier_enabled: bool,
     pub save_location_setting: SaveLocation,
     pub copy_to_clipboard_on_save: bool,
+    pub tesseract_available: bool,
 }
 
 impl UiState {

@@ -394,6 +394,7 @@ where
             ui.settings_drawer_open,
             ui.settings_drawer_open || ui.shape_popup_open || ui.redact_popup_open,
             output_ctx.output_count,
+            ui.tesseract_available,
         );
 
         // Build shapes_element

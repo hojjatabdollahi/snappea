@@ -48,6 +48,15 @@ pub fn models_need_download() -> bool {
     false
 }
 
+/// Check if tesseract is installed and available on the system.
+pub fn is_tesseract_available() -> bool {
+    std::process::Command::new("tesseract")
+        .arg("--version")
+        .output()
+        .map(|output| output.status.success())
+        .unwrap_or(false)
+}
+
 /// Run OCR on an image and return the status with detected text and overlays.
 pub fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> OcrStatus {
     use rusty_tesseract::{Args, Image};

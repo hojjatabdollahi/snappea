@@ -40,6 +40,14 @@ Reload xdg-desktop-portal to apply changes:
 systemctl --user restart xdg-desktop-portal
 ```
 
+
+To enable OCR install [tesseract-ocr](https://github.com/tesseract-ocr/tesseract) and the desired language packs.
+
+```bash
+sudo apt install tesseract-ocr
+```
+
+
 To uninstall:
 
 ```sh

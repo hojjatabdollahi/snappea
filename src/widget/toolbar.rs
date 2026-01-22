@@ -230,6 +230,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     settings_drawer_open: bool,
     force_toolbar_opaque: bool,
     output_count: usize,
+    tesseract_available: bool,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
 
@@ -407,7 +408,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             "Copy OCR Text (O)",
             tooltip::Position::Bottom,
         )
-    } else {
+    } else if tesseract_available {
         tooltip(
             button::custom(
                 icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
@@ -418,6 +419,19 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .on_press_maybe(has_selection.then_some(on_ocr.clone()))
             .padding(space_xs),
             "Recognize Text (O)",
+            tooltip::Position::Bottom,
+        )
+    } else {
+        tooltip(
+            button::custom(
+                icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(None)
+            .padding(space_xs),
+            "Install tesseract to enable OCR",
             tooltip::Position::Bottom,
         )
     };
