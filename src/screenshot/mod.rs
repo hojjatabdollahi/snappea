@@ -921,26 +921,38 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
                 if !annotations.is_empty() {
                     // Find the output to calculate where the window was displayed
                     if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
-                        let img_width = final_img.width() as f32;
-                        let img_height = final_img.height() as f32;
+                        let orig_width = final_img.width() as f32;
+                        let orig_height = final_img.height() as f32;
                         let output_width = output.logical_size.0 as f32;
                         let output_height = output.logical_size.1 as f32;
 
-                        // Match the centering logic in SelectedImageWidget::image_bounds (20px margin)
+                        // Step 1: Calculate pre-scaled thumbnail size (matching calculate_window_display_bounds)
+                        let max_width = output_width * 0.85;
+                        let max_height = output_height * 0.85;
+                        let (thumb_width, thumb_height) =
+                            if orig_width > max_width || orig_height > max_height {
+                                let pre_scale =
+                                    (max_width / orig_width).min(max_height / orig_height);
+                                (orig_width * pre_scale, orig_height * pre_scale)
+                            } else {
+                                (orig_width, orig_height)
+                            };
+
+                        // Step 2: Calculate display position (centering with 20px margin)
                         let available_width = output_width - 20.0;
                         let available_height = output_height - 20.0;
-                        let scale_x = available_width / img_width;
-                        let scale_y = available_height / img_height;
+                        let scale_x = available_width / thumb_width;
+                        let scale_y = available_height / thumb_height;
                         let display_scale = scale_x.min(scale_y).min(1.0);
 
-                        let display_width = img_width * display_scale;
-                        let display_height = img_height * display_scale;
+                        let display_width = thumb_width * display_scale;
+                        let display_height = thumb_height * display_scale;
                         let sel_x = (output_width - display_width) / 2.0;
                         let sel_y = (output_height - display_height) / 2.0;
 
                         // The selection_rect is where the window was displayed on screen (in global coords)
                         // Annotation coords are stored in global coordinates (output.left + pos.x)
-                        // Image scale factor is 1/display_scale (to go from display to original)
+                        // Image scale converts from display coords to original image pixels
                         let output_left = output.logical_pos.0 as f32;
                         let output_top = output.logical_pos.1 as f32;
                         let window_rect = Rect {
@@ -949,7 +961,8 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
                             right: (output_left + sel_x + display_width) as i32,
                             bottom: (output_top + sel_y + display_height) as i32,
                         };
-                        let image_scale = 1.0 / display_scale;
+                        // Scale factor: original_size / display_size
+                        let image_scale = orig_width / display_width;
                         draw_annotations_in_order(
                             &mut final_img,
                             annotations,
@@ -1182,19 +1195,32 @@ fn handle_qr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::Ms
                             .iter()
                             .find(|o| &o.name == output_name)
                             .map(|output| {
-                                let img_width = img.rgba.width() as f32;
-                                let img_height = img.rgba.height() as f32;
+                                let orig_width = img.rgba.width() as f32;
+                                let orig_height = img.rgba.height() as f32;
                                 let output_width = output.logical_size.0 as f32;
                                 let output_height = output.logical_size.1 as f32;
 
+                                // Step 1: Pre-scale to 85% of screen (matching calculate_window_display_bounds)
+                                let max_width = output_width * 0.85;
+                                let max_height = output_height * 0.85;
+                                let (thumb_width, thumb_height) =
+                                    if orig_width > max_width || orig_height > max_height {
+                                        let pre_scale =
+                                            (max_width / orig_width).min(max_height / orig_height);
+                                        (orig_width * pre_scale, orig_height * pre_scale)
+                                    } else {
+                                        (orig_width, orig_height)
+                                    };
+
+                                // Step 2: Center with 20px margin
                                 let available_width = output_width - 20.0;
                                 let available_height = output_height - 20.0;
-                                let scale_x = available_width / img_width;
-                                let scale_y = available_height / img_height;
+                                let scale_x = available_width / thumb_width;
+                                let scale_y = available_height / thumb_height;
                                 let display_scale = scale_x.min(scale_y).min(1.0);
 
-                                let display_width = img_width * display_scale;
-                                let display_height = img_height * display_scale;
+                                let display_width = thumb_width * display_scale;
+                                let display_height = thumb_height * display_scale;
                                 let sel_x = (output_width - display_width) / 2.0;
                                 let sel_y = (output_height - display_height) / 2.0;
 
@@ -1206,7 +1232,8 @@ fn handle_qr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::Ms
                                     right: (output_left + sel_x + display_width) as i32,
                                     bottom: (output_top + sel_y + display_height) as i32,
                                 };
-                                let img_scale = 1.0 / display_scale;
+                                // Scale factor: original_size / display_size
+                                let img_scale = orig_width / display_width;
 
                                 (
                                     img.rgba.clone(),
@@ -1391,19 +1418,32 @@ fn handle_ocr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::M
                             .iter()
                             .find(|o| &o.name == output_name)
                             .map(|output| {
-                                let img_width = img.rgba.width() as f32;
-                                let img_height = img.rgba.height() as f32;
+                                let orig_width = img.rgba.width() as f32;
+                                let orig_height = img.rgba.height() as f32;
                                 let output_width = output.logical_size.0 as f32;
                                 let output_height = output.logical_size.1 as f32;
 
+                                // Step 1: Pre-scale to 85% of screen (matching calculate_window_display_bounds)
+                                let max_width = output_width * 0.85;
+                                let max_height = output_height * 0.85;
+                                let (thumb_width, thumb_height) =
+                                    if orig_width > max_width || orig_height > max_height {
+                                        let pre_scale =
+                                            (max_width / orig_width).min(max_height / orig_height);
+                                        (orig_width * pre_scale, orig_height * pre_scale)
+                                    } else {
+                                        (orig_width, orig_height)
+                                    };
+
+                                // Step 2: Center with 20px margin
                                 let available_width = output_width - 20.0;
                                 let available_height = output_height - 20.0;
-                                let scale_x = available_width / img_width;
-                                let scale_y = available_height / img_height;
+                                let scale_x = available_width / thumb_width;
+                                let scale_y = available_height / thumb_height;
                                 let display_scale = scale_x.min(scale_y).min(1.0);
 
-                                let display_width = img_width * display_scale;
-                                let display_height = img_height * display_scale;
+                                let display_width = thumb_width * display_scale;
+                                let display_height = thumb_height * display_scale;
                                 let sel_x = (output_width - display_width) / 2.0;
                                 let sel_y = (output_height - display_height) / 2.0;
 
@@ -1415,12 +1455,12 @@ fn handle_ocr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::M
                                     right: (output_left + sel_x + display_width) as i32,
                                     bottom: (output_top + sel_y + display_height) as i32,
                                 };
-                                let img_scale = 1.0 / display_scale;
+                                // Scale factor: original_size / display_size
+                                let img_scale = orig_width / display_width;
 
                                 // OCR origin is where the window is displayed on the output (in output-relative coords)
-                                // OCR scale is display_scale (pixels per logical unit in the displayed image)
-                                // The image is the original, so OCR sees original pixels, but mapping needs display coords
-                                let ocr_scale = img.rgba.width() as f32 / display_width;
+                                // OCR scale converts from display coords to original image pixels
+                                let ocr_scale = orig_width / display_width;
 
                                 (
                                     img.rgba.clone(),

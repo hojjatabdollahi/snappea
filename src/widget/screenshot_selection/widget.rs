@@ -884,8 +884,22 @@ where
             return;
         }
 
-        // Save fg_element for later (selection UI should be above annotations)
+        // Get fg_element info
         let fg_info = children_iter.next();
+
+        // In window mode, draw fg_element (SelectedImageWidget) FIRST so annotations appear on top
+        // In other modes, we draw fg_element later (after annotations) since it's just selection handles
+        let is_window_mode = matches!(self.choice, Choice::Window(_, Some(_)));
+        if is_window_mode {
+            if let Some((i, (layout, child))) = &fg_info {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    let tree = &tree.children[*i];
+                    child
+                        .as_widget()
+                        .draw(tree, renderer, theme, style, *layout, cursor, viewport);
+                });
+            }
+        }
 
         // Draw redactions and pixelations
         let output_offset = (self.output_rect.left as f32, self.output_rect.top as f32);
@@ -974,14 +988,17 @@ where
             );
         }
 
-        // Now draw fg_element (selection UI) so it's above annotations
-        if let Some((i, (layout, child))) = fg_info {
-            renderer.with_layer(layout.bounds(), |renderer| {
-                let tree = &tree.children[i];
-                child
-                    .as_widget()
-                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
-            });
+        // Draw fg_element for non-window modes (selection UI above annotations)
+        // In window mode, fg_element was already drawn earlier so annotations appear on top
+        if !is_window_mode {
+            if let Some((i, (layout, child))) = fg_info {
+                renderer.with_layer(layout.bounds(), |renderer| {
+                    let tree = &tree.children[i];
+                    child
+                        .as_widget()
+                        .draw(tree, renderer, theme, style, layout, cursor, viewport);
+                });
+            }
         }
 
         let cosmic_theme = theme.cosmic();
