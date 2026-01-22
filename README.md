@@ -63,7 +63,3 @@ Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf
 
 ## Why SnapPea?
 It Snaps Pics!
-
-## License
-
-GPL-3.0-or-later
