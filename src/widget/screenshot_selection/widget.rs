@@ -1279,6 +1279,21 @@ where
             }
         }
 
+        // Get layout children for bounds checking
+        let layout_children = layout.children().collect::<Vec<_>>();
+
+        // Check if click is inside toolbar bounds - if so, only let the toolbar handle it
+        // This prevents clicks on the toolbar from starting rectangle selections behind it
+        let click_inside_toolbar = if let Event::Mouse(MouseEvent::ButtonPressed(_)) = &event {
+            if let Some(pos) = cursor.position() {
+                layout_children.len() > 3 && layout_children[3].bounds().contains(pos)
+            } else {
+                false
+            }
+        } else {
+            false
+        };
+
         // Let child widgets handle the event
         let mut children: Vec<&mut Element<'_, Msg>> = vec![
             &mut self.bg_element,
@@ -1296,7 +1311,6 @@ where
             children.push(popup);
         }
 
-        let layout_children = layout.children().collect::<Vec<_>>();
         let mut status = cosmic::iced_core::event::Status::Ignored;
         for (i, (child_layout, child)) in layout_children
             .into_iter()
@@ -1304,6 +1318,12 @@ where
             .enumerate()
             .rev()
         {
+            // Skip bg_element (0), fg_element (1), and shapes_element (2) if click is inside toolbar
+            // Only let menu_element (3) and popups/drawers handle it
+            if click_inside_toolbar && i < 3 {
+                continue;
+            }
+
             let child_tree = &mut tree.children[i];
             status = child.as_widget_mut().on_event(
                 child_tree,
@@ -1323,47 +1343,53 @@ where
             }
         }
 
-        // Capture unhandled clicks inside popups to prevent drawing behind them (both left and right)
+        // Capture unhandled clicks inside toolbar and popups to prevent drawing behind them (both left and right)
         if let Event::Mouse(MouseEvent::ButtonPressed(button)) = &event
             && matches!(button, Button::Left | Button::Right)
-            && let Some(pos) = cursor.position()
         {
-            let layout_children: Vec<_> = layout.children().collect();
-
-            // Check shape popup
-            if self.ui.shape_popup_open {
-                let selector_idx = if self.settings_drawer_element.is_some() {
-                    5
-                } else {
-                    4
-                };
-                if layout_children.len() > selector_idx
-                    && layout_children[selector_idx].bounds().contains(pos)
-                {
-                    return cosmic::iced_core::event::Status::Captured;
-                }
+            // If click was inside toolbar, capture it even if no button handled it
+            if click_inside_toolbar {
+                return cosmic::iced_core::event::Status::Captured;
             }
 
-            // Check redact popup
-            if self.ui.redact_popup_open {
-                let mut popup_idx = 4;
-                if self.settings_drawer_element.is_some() {
-                    popup_idx += 1;
-                }
-                if self.shape_popup_element.is_some() {
-                    popup_idx += 1;
-                }
-                if layout_children.len() > popup_idx
-                    && layout_children[popup_idx].bounds().contains(pos)
-                {
-                    return cosmic::iced_core::event::Status::Captured;
-                }
-            }
+            if let Some(pos) = cursor.position() {
+                let layout_children: Vec<_> = layout.children().collect();
 
-            // Check settings drawer
-            if self.ui.settings_drawer_open {
-                if layout_children.len() > 4 && layout_children[4].bounds().contains(pos) {
-                    return cosmic::iced_core::event::Status::Captured;
+                // Check shape popup
+                if self.ui.shape_popup_open {
+                    let selector_idx = if self.settings_drawer_element.is_some() {
+                        5
+                    } else {
+                        4
+                    };
+                    if layout_children.len() > selector_idx
+                        && layout_children[selector_idx].bounds().contains(pos)
+                    {
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+
+                // Check redact popup
+                if self.ui.redact_popup_open {
+                    let mut popup_idx = 4;
+                    if self.settings_drawer_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.shape_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if layout_children.len() > popup_idx
+                        && layout_children[popup_idx].bounds().contains(pos)
+                    {
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+
+                // Check settings drawer
+                if self.ui.settings_drawer_open {
+                    if layout_children.len() > 4 && layout_children[4].bounds().contains(pos) {
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
                 }
             }
         }
