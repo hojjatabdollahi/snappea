@@ -1,7 +1,12 @@
+<p align="center">
+  <img src="data/logo.svg" alt="SnapPea Logo" width="128">
+</p>
+
 # SnapPea
 
 A screenshot portal implementation for the COSMIC desktop environment with annotation capabilities.
 
+![SnapPea Demo](data/demo.gif)
 
 Disclaimer: This project is based on xdg-desktop-portal-cosmic with added features. It implements the same screenshot portal interface. When set up correctly, dbus messages sent by `cosmic-screenshot` will be handled by SnapPea instead of `xdg-desktop-portal-cosmic` (only Screenshot Portal messages).
 
@@ -55,6 +60,9 @@ sudo just uninstall
 ```
 
 Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf` if you set it.
+
+## Why SnapPea?
+It Snaps Pics!
 
 ## License
 
