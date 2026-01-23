@@ -334,6 +334,7 @@ pub fn start_recording(
 
         // Clone what we need for the capture thread
         let formats_clone = formats.clone();
+        let show_cursor_clone = show_cursor;
 
         // Spawn capture thread - captures as fast as compositor allows
         let capture_thread = std::thread::spawn(move || {
@@ -379,7 +380,7 @@ pub fn start_recording(
                 CaptureSource::Output(output)
             };
 
-            let session = helper.capture_source_session(capture_source, false);
+            let session = helper.capture_source_session(capture_source, show_cursor_clone);
 
             while !stop_capture_clone.load(Ordering::Relaxed) {
                 match capture_frame_shm(&helper, &session, &formats_clone) {

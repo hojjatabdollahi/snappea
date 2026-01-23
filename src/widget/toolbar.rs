@@ -5,7 +5,7 @@ use std::rc::Rc;
 use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::{Background, Border, Layout, Size, layout, widget::Tree};
-use cosmic::iced_widget::{column, row};
+use cosmic::iced_widget::{column, container, row};
 use cosmic::widget::{button, icon, tooltip};
 
 use super::tool_button::{build_shape_button, build_tool_button};
@@ -368,16 +368,60 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     );
 
     // Record button - enabled only when region is selected
+    // Custom red circular button with themed border
+    let record_icon = container(
+        icon::Icon::from(icon::from_name("media-record-symbolic").size(64))
+            .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                cosmic::iced_widget::svg::Style {
+                    color: Some(cosmic::iced::Color::WHITE),
+                }
+            })))
+            .width(Length::Fixed(24.0))
+            .height(Length::Fixed(24.0)),
+    )
+    .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
+        let cosmic_theme = theme.cosmic();
+        // Check if dark theme by examining background luminance
+        let bg = cosmic_theme.background.base;
+        let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
+        let border_color = if is_dark {
+            cosmic::iced::Color::WHITE
+        } else {
+            cosmic::iced::Color::BLACK
+        };
+        let red_color = if has_selection {
+            cosmic::iced::Color::from_rgb(0.85, 0.2, 0.2) // Bright red when enabled
+        } else {
+            cosmic::iced::Color::from_rgb(0.5, 0.3, 0.3) // Muted red when disabled
+        };
+        cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(red_color)),
+            border: Border {
+                radius: 20.0.into(), // Circular
+                width: 2.0,
+                color: border_color,
+            },
+            ..Default::default()
+        }
+    })))
+    .padding(8)
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center)
+    .align_y(cosmic::iced_core::alignment::Vertical::Center);
+
+    let record_tooltip = if has_selection {
+        "Record selection (Shift+R)"
+    } else {
+        "Disabled: select a region, window, or screen first"
+    };
+
     let btn_record = tooltip(
-        button::custom(
-            icon::Icon::from(icon::from_name("media-record-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .class(cosmic::theme::Button::Icon)
-        .on_press_maybe(has_selection.then_some(on_record_region))
-        .padding(space_xs),
-        "Record selection (Shift+R)",
+        button::custom(record_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_record_region))
+            .padding(0),
+        record_tooltip,
         tooltip::Position::Bottom,
     );
 

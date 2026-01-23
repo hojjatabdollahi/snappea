@@ -367,8 +367,11 @@ impl WaylandHelper {
     pub fn capture_source_session(&self, source: CaptureSource, overlay_cursor: bool) -> Session {
         Session(Arc::new_cyclic(|weak_session| {
             let options = if overlay_cursor {
-                CaptureOptions::PaintCursors
+                let opts = CaptureOptions::PaintCursors;
+                log::info!("Creating screencopy session WITH cursor painting enabled (options bits: {:?})", opts.bits());
+                opts
             } else {
+                log::info!("Creating screencopy session WITHOUT cursor painting (options bits: 0)");
                 CaptureOptions::empty()
             };
             let capture_session = self

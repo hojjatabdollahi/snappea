@@ -886,8 +886,10 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             }
 
             // Add cursor visibility flag
+            log::info!("Cursor visibility setting: {}", args.ui.video_show_cursor);
             if args.ui.video_show_cursor {
                 args_vec.push("--show-cursor".to_string());
+                log::info!("Adding --show-cursor flag to recording subprocess");
             }
 
             let exe = match std::env::current_exe() {
