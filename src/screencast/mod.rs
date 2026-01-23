@@ -11,5 +11,5 @@ mod recorder;
 
 pub use state::{RecordingState, is_recording, stop_recording};
 pub use encoder::best_encoder;
-pub use pipeline::Pipeline;
+pub use pipeline::{Pipeline, CropRegion};
 pub use recorder::start_recording;

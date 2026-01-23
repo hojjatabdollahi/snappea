@@ -255,6 +255,7 @@ struct Output {
     output: WlOutput,
     logical_position: (i32, i32),
     logical_size: (i32, i32),
+    scale_factor: i32,
     name: String,
 }
 
@@ -312,6 +313,7 @@ impl Screenshot {
                 output,
                 logical_position,
                 logical_size,
+                scale_factor: info.scale_factor,
                 name,
             });
         }
@@ -734,7 +736,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 bottom: region.1 + region.3 as i32,
             };
 
-            let output_name = app
+            let selected_output = app
                 .outputs
                 .iter()
                 .filter_map(|output| {
@@ -759,16 +761,43 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                         output.name,
                         area
                     );
-                    output.name.clone()
-                })
-                .unwrap_or_else(|| {
-                    // Fallback to first output
-                    log::warn!("No output overlap found, using first output as fallback");
-                    app.outputs
-                        .first()
-                        .map(|o| o.name.clone())
-                        .unwrap_or_else(|| "Unknown".to_string())
+                    output
                 });
+
+            let (output_name, local_region, output_logical_size) = match selected_output {
+                Some(output) => {
+                    // Translate global region to output-local LOGICAL coordinates
+                    // The recorder will scale to physical using actual screencopy dimensions
+                    let local_x = (region.0 - output.logical_pos.0).max(0);
+                    let local_y = (region.1 - output.logical_pos.1).max(0);
+
+                    // Clamp to output logical bounds
+                    let clamped_w = region.2.min((output.logical_size.0 as i32 - local_x).max(0) as u32);
+                    let clamped_h = region.3.min((output.logical_size.1 as i32 - local_y).max(0) as u32);
+
+                    log::info!(
+                        "Translated region: global ({}, {}, {}x{}) -> local logical ({}, {}, {}x{}) on output '{}' (logical_size={}x{})",
+                        region.0, region.1, region.2, region.3,
+                        local_x, local_y, clamped_w, clamped_h,
+                        output.name, output.logical_size.0, output.logical_size.1
+                    );
+
+                    (
+                        output.name.clone(),
+                        (local_x, local_y, clamped_w, clamped_h),
+                        (output.logical_size.0, output.logical_size.1),
+                    )
+                }
+                None => {
+                    // Fallback to first output with original region
+                    log::warn!("No output overlap found, using first output as fallback");
+                    let (output_name, logical_size) = app.outputs
+                        .first()
+                        .map(|o| (o.name.clone(), (o.logical_size.0, o.logical_size.1)))
+                        .unwrap_or_else(|| ("Unknown".to_string(), (1920, 1080)));
+                    (output_name, region, logical_size)
+                }
+            };
 
             // Generate timestamped output filename
             let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
@@ -788,6 +817,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             let framerate = config.video_framerate;
 
             // Spawn subprocess with --record args
+            // Pass logical region and logical output size - recorder will scale to physical
             let args_vec = vec![
                 "--record".to_string(),
                 "--output".to_string(),
@@ -795,7 +825,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 "--output-name".to_string(),
                 output_name,
                 "--region".to_string(),
-                format!("{},{},{},{}", region.0, region.1, region.2, region.3),
+                format!("{},{},{},{}", local_region.0, local_region.1, local_region.2, local_region.3),
+                "--logical-size".to_string(),
+                format!("{},{}", output_logical_size.0, output_logical_size.1),
                 "--encoder".to_string(),
                 encoder,
                 "--container".to_string(),
@@ -815,20 +847,20 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             match std::process::Command::new(exe).args(&args_vec).spawn() {
                 Ok(child) => {
                     log::info!(
-                        "Recording started: PID {}, output: {}, region: {:?}",
+                        "Recording started: PID {}, output: {}, local_region: {:?}",
                         child.id(),
                         output_file.display(),
-                        region
+                        local_region
                     );
                     // Close UI - same as Cancel
                     handle_cancel_inner(app)
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to start recording: {} (output: {}, region: {:?})",
+                        "Failed to start recording: {} (output: {}, local_region: {:?})",
                         e,
                         output_file.display(),
-                        region
+                        local_region
                     );
                     // TODO: Show notification to user when cosmic notification API is available
                     cosmic::Task::none()

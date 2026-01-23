@@ -25,6 +25,7 @@ fn main() -> cosmic::iced::Result {
         let mut output_file = None;
         let mut output_name = None;
         let mut region = None;
+        let mut logical_size = None;
         let mut encoder = None;
         let mut container = config::Container::Mp4;
         let mut framerate = 60;
@@ -66,6 +67,22 @@ fn main() -> cosmic::iced::Result {
                         i += 1;
                     }
                 }
+                "--logical-size" => {
+                    if i + 1 < args.len() {
+                        let parts: Vec<&str> = args[i + 1].split(',').collect();
+                        if parts.len() == 2 {
+                            if let (Ok(w), Ok(h)) = (
+                                parts[0].parse::<u32>(),
+                                parts[1].parse::<u32>(),
+                            ) {
+                                logical_size = Some((w, h));
+                            }
+                        }
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
                 "--encoder" => {
                     if i + 1 < args.len() {
                         encoder = Some(args[i + 1].clone());
@@ -100,8 +117,8 @@ fn main() -> cosmic::iced::Result {
         }
 
         // Run recording
-        if let (Some(output_file), Some(output_name), Some(region), Some(encoder)) =
-            (output_file, output_name, region, encoder)
+        if let (Some(output_file), Some(output_name), Some(region), Some(logical_size), Some(encoder)) =
+            (output_file, output_name, region, logical_size, encoder)
         {
             // Save state before starting
             let state = screencast::RecordingState {
@@ -119,6 +136,7 @@ fn main() -> cosmic::iced::Result {
                 output_file,
                 output_name,
                 region,
+                logical_size,
                 encoder,
                 container,
                 framerate,
@@ -135,7 +153,7 @@ fn main() -> cosmic::iced::Result {
         } else {
             log::error!("Missing required arguments for --record");
             log::error!(
-                "Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --encoder ENC [--container FMT] [--framerate FPS]"
+                "Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS]"
             );
             std::process::exit(1);
         }

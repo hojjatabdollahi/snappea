@@ -10,8 +10,8 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use crate::wayland::{CaptureSource, Rect, WaylandHelper};
-use super::dmabuf::{DmabufContext, DmabufBuffer, select_best_format, drm_format_to_gst_format};
-use super::Pipeline;
+use super::dmabuf::{DmabufContext, DmabufBuffer, TripleBufferPool, select_best_format, drm_format_to_gst_format};
+use super::pipeline::{Pipeline, CropRegion};
 use super::encoder::{detect_encoders, EncoderInfo};
 
 /// Global flag for graceful shutdown on SIGTERM
@@ -23,6 +23,7 @@ static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// * `output_file` - Path to save video
 /// * `output_name` - Wayland output name
 /// * `region` - (x, y, width, height) in logical coordinates
+/// * `logical_size` - (width, height) of the output in logical coordinates
 /// * `encoder` - Encoder element name
 /// * `container` - Container format
 /// * `framerate` - Frames per second
@@ -30,6 +31,7 @@ pub fn start_recording(
     output_file: PathBuf,
     output_name: String,
     region: (i32, i32, u32, u32),
+    logical_size: (u32, u32),
     encoder: String,
     container: crate::config::Container,
     framerate: u32,
@@ -152,7 +154,57 @@ pub fn start_recording(
 
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
-    let (_, _, record_width, record_height) = region;
+    let (region_x, region_y, record_width, record_height) = region;
+    let (logical_width, logical_height) = logical_size;
+
+    // Calculate actual scale factor from buffer size vs logical size
+    // This is more accurate than using the reported scale_factor which can be wrong
+    let scale_x = if logical_width > 0 {
+        buffer_width as f64 / logical_width as f64
+    } else {
+        1.0
+    };
+    let scale_y = if logical_height > 0 {
+        buffer_height as f64 / logical_height as f64
+    } else {
+        1.0
+    };
+
+    log::info!(
+        "Scale calculation: buffer={}x{}, logical={}x{}, scale=({:.3}, {:.3})",
+        buffer_width, buffer_height, logical_width, logical_height, scale_x, scale_y
+    );
+
+    // Scale the region from logical to physical coordinates
+    let physical_x = (region_x as f64 * scale_x).round() as u32;
+    let physical_y = (region_y as f64 * scale_y).round() as u32;
+    let physical_width = (record_width as f64 * scale_x).round() as u32;
+    let physical_height = (record_height as f64 * scale_y).round() as u32;
+
+    log::info!(
+        "Region scaling: logical ({}, {}, {}x{}) -> physical ({}, {}, {}x{})",
+        region_x, region_y, record_width, record_height,
+        physical_x, physical_y, physical_width, physical_height
+    );
+
+    // Calculate crop region if recording a subset of the screen
+    let crop = if physical_x != 0 || physical_y != 0
+        || physical_width != buffer_width || physical_height != buffer_height
+    {
+        log::info!(
+            "Region differs from capture: physical region ({}, {}, {}x{}) vs capture ({}x{})",
+            physical_x, physical_y, physical_width, physical_height,
+            buffer_width, buffer_height
+        );
+        Some(CropRegion {
+            left: physical_x,
+            top: physical_y,
+            width: physical_width,
+            height: physical_height,
+        })
+    } else {
+        None
+    };
 
     let pipeline = if use_dmabuf {
         let (drm_format, _modifier) = dmabuf_format.unwrap();
@@ -161,8 +213,9 @@ pub fn start_recording(
             &encoder_info,
             container,
             &output_file,
-            record_width,
-            record_height,
+            buffer_width,
+            buffer_height,
+            crop,
             framerate,
             drm_format,
         )
@@ -172,8 +225,9 @@ pub fn start_recording(
             &encoder_info,
             container,
             &output_file,
-            record_width,
-            record_height,
+            buffer_width,
+            buffer_height,
+            crop,
             framerate,
         )
         .context("Failed to create GStreamer pipeline. Check logs for details.")?
@@ -190,24 +244,25 @@ pub fn start_recording(
     const MAX_CONSECUTIVE_ERRORS: u32 = 10;
     let start_time = Instant::now();
 
-    // Allocate DMA-buf buffer if using zero-copy path
-    let dmabuf_buffer: Option<DmabufBuffer> = if use_dmabuf {
+    // Allocate triple buffer pool if using zero-copy path
+    let mut buffer_pool: Option<TripleBufferPool> = if use_dmabuf {
         let (drm_format, modifier) = dmabuf_format.unwrap();
         let ctx = dmabuf_context.as_ref().unwrap();
         log::info!(
-            "Attempting DMA-buf allocation: {}x{}, format={:?}, modifier={:?}",
+            "Attempting triple buffer allocation: {}x{}, format={:?}, modifier={:?}",
             buffer_width, buffer_height, drm_format, modifier
         );
-        match ctx.allocate_buffer(buffer_width, buffer_height, drm_format, modifier) {
-            Ok(buf) => {
+        match TripleBufferPool::new(ctx, buffer_width, buffer_height, drm_format, modifier) {
+            Ok(pool) => {
                 log::info!(
-                    "Allocated DMA-buf buffer: {}x{}, format={:?} (0x{:08x}), modifier=0x{:016x}, stride={}, size={}",
-                    buf.width, buf.height, buf.format, buf.format as u32, u64::from(buf.modifier), buf.stride, buf.size
+                    "Allocated triple buffer pool: {}x{}, format={:?} (0x{:08x}), modifier=0x{:016x}, stride={}, size={}",
+                    pool.width(), pool.height(), pool.format(), pool.format() as u32,
+                    u64::from(pool.modifier()), pool.stride(), pool.size()
                 );
-                Some(buf)
+                Some(pool)
             }
             Err(e) => {
-                log::warn!("Failed to allocate DMA-buf buffer: {}. Falling back to SHM.", e);
+                log::warn!("Failed to allocate triple buffer pool: {}. Falling back to SHM.", e);
                 None
             }
         }
@@ -216,9 +271,9 @@ pub fn start_recording(
     };
 
     // Determine actual capture mode
-    let actual_dmabuf = dmabuf_buffer.is_some() && pipeline.is_dmabuf_mode();
+    let actual_dmabuf = buffer_pool.is_some() && pipeline.is_dmabuf_mode();
     if actual_dmabuf {
-        log::info!("Using DMA-buf zero-copy capture path");
+        log::info!("Using DMA-buf zero-copy capture path with triple buffering");
     } else {
         log::info!("Using SHM capture path");
     }
@@ -231,8 +286,8 @@ pub fn start_recording(
 
         // Capture and push frame
         let capture_result = if actual_dmabuf {
-            let dmabuf = dmabuf_buffer.as_ref().unwrap();
-            capture_frame_dmabuf(&wayland_helper, &session, dmabuf, &pipeline, timestamp)
+            let pool = buffer_pool.as_mut().unwrap();
+            capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
         } else {
             capture_frame_shm(&wayland_helper, &session, &formats)
                 .and_then(|frame_data| pipeline.push_frame(&frame_data, timestamp))

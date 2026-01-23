@@ -36,6 +36,7 @@ pub struct OutputState {
     pub name: String,
     pub logical_size: (u32, u32),
     pub logical_pos: (i32, i32),
+    pub scale_factor: i32,
     pub has_pointer: bool,
     pub bg_source: Option<cosmic_bg_config::Source>,
 }
@@ -145,6 +146,7 @@ impl cosmic::Application for App {
                                 .map(|(w, h)| (w as u32, h as u32))
                                 .unwrap(),
                             logical_pos: info.logical_position.unwrap(),
+                            scale_factor: info.scale_factor,
                             has_pointer: false,
                             bg_source: None,
                         })
@@ -163,6 +165,7 @@ impl cosmic::Application for App {
                                 .map(|(w, h)| (w as u32, h as u32))
                                 .unwrap();
                             state.logical_pos = info.logical_position.unwrap();
+                            state.scale_factor = info.scale_factor;
                         } else {
                             log::warn!("Updated output {:?} not found", wl_output);
                             self.outputs.push(OutputState {
@@ -174,6 +177,7 @@ impl cosmic::Application for App {
                                     .map(|(w, h)| (w as u32, h as u32))
                                     .unwrap(),
                                 logical_pos: info.logical_position.unwrap(),
+                                scale_factor: info.scale_factor,
                                 has_pointer: false,
                                 bg_source: None,
                             });

@@ -12,6 +12,19 @@ use crate::config::Container;
 use super::encoder::EncoderInfo;
 use super::dmabuf::drm_format_to_gst_format;
 
+/// Region to crop from captured frame
+#[derive(Clone, Copy, Debug)]
+pub struct CropRegion {
+    /// Left offset in pixels
+    pub left: u32,
+    /// Top offset in pixels
+    pub top: u32,
+    /// Width of region
+    pub width: u32,
+    /// Height of region
+    pub height: u32,
+}
+
 /// GStreamer pipeline for encoding screen capture to video file
 pub struct Pipeline {
     pipeline: gst::Pipeline,
@@ -28,15 +41,17 @@ impl Pipeline {
     /// * `encoder` - Encoder to use
     /// * `container` - Container format
     /// * `output_path` - Output file path
-    /// * `width` - Video width
-    /// * `height` - Video height
+    /// * `capture_width` - Width of input frames
+    /// * `capture_height` - Height of input frames
+    /// * `crop` - Optional region to crop from input
     /// * `framerate` - Frames per second
     pub fn new(
         encoder: &EncoderInfo,
         container: Container,
         output_path: &Path,
-        width: u32,
-        height: u32,
+        capture_width: u32,
+        capture_height: u32,
+        crop: Option<CropRegion>,
         framerate: u32,
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
@@ -54,9 +69,29 @@ impl Pipeline {
             .build()
             .context("Failed to create videoconvert element")?;
 
+        // Add videoscale to handle dimension alignment for hardware encoders
+        let videoscale = gst::ElementFactory::make("videoscale")
+            .build()
+            .context("Failed to create videoscale element")?;
+
         let encoder_elem = gst::ElementFactory::make(&encoder.gst_element)
             .build()
             .with_context(|| format!("Failed to create encoder: {}", encoder.gst_element))?;
+
+        // Add parser element for certain codecs (required for proper muxing)
+        let parser_elem = match encoder.codec {
+            super::encoder::Codec::H264 => Some(
+                gst::ElementFactory::make("h264parse")
+                    .build()
+                    .context("Failed to create h264parse element")?
+            ),
+            super::encoder::Codec::H265 => Some(
+                gst::ElementFactory::make("h265parse")
+                    .build()
+                    .context("Failed to create h265parse element")?
+            ),
+            _ => None,
+        };
 
         let muxer = gst::ElementFactory::make(container.muxer_element())
             .build()
@@ -67,29 +102,106 @@ impl Pipeline {
             .build()
             .context("Failed to create filesink element")?;
 
-        // Add elements to pipeline
-        pipeline.add_many([
-            appsrc.upcast_ref(),
-            &videoconvert,
-            &encoder_elem,
-            &muxer,
-            &filesink,
-        ])?;
+        // Add cropping element if needed
+        if let Some(region) = crop {
+            // Clamp region to capture bounds to prevent overflow
+            let clamped_left = region.left.min(capture_width.saturating_sub(1));
+            let clamped_top = region.top.min(capture_height.saturating_sub(1));
+            let max_width = capture_width.saturating_sub(clamped_left);
+            let max_height = capture_height.saturating_sub(clamped_top);
+            let clamped_width = region.width.min(max_width).max(1);
+            let clamped_height = region.height.min(max_height).max(1);
 
-        // Link elements
-        gst::Element::link_many([
-            appsrc.upcast_ref(),
-            &videoconvert,
-            &encoder_elem,
-            &muxer,
-            &filesink,
-        ])?;
+            let right = capture_width.saturating_sub(clamped_left).saturating_sub(clamped_width);
+            let bottom = capture_height.saturating_sub(clamped_top).saturating_sub(clamped_height);
 
-        // Configure appsrc caps (raw RGBA video)
+            log::info!(
+                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
+                region.left, region.top, region.width, region.height,
+                capture_width, capture_height,
+                clamped_left, clamped_top, clamped_width, clamped_height
+            );
+
+            let videocrop = gst::ElementFactory::make("videocrop")
+                .property("left", clamped_left as i32)
+                .property("top", clamped_top as i32)
+                .property("right", right as i32)
+                .property("bottom", bottom as i32)
+                .build()
+                .context("Failed to create videocrop element")?;
+
+            log::info!(
+                "Adding crop: left={}, top={}, right={}, bottom={} (output: {}x{})",
+                clamped_left,
+                clamped_top,
+                right,
+                bottom,
+                clamped_width,
+                clamped_height
+            );
+
+            // Add elements to pipeline
+            pipeline.add_many([
+                appsrc.upcast_ref(),
+                &videocrop,
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                pipeline.add(parser)?;
+            }
+            pipeline.add_many([&muxer, &filesink])?;
+
+            // Link elements with crop
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videocrop,
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                encoder_elem.link(parser)?;
+                parser.link(&muxer)?;
+            } else {
+                encoder_elem.link(&muxer)?;
+            }
+            muxer.link(&filesink)?;
+        } else {
+            // Add elements to pipeline without crop
+            pipeline.add_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                pipeline.add(parser)?;
+            }
+            pipeline.add_many([&muxer, &filesink])?;
+
+            // Link elements
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                encoder_elem.link(parser)?;
+                parser.link(&muxer)?;
+            } else {
+                encoder_elem.link(&muxer)?;
+            }
+            muxer.link(&filesink)?;
+        }
+
+        // Configure appsrc caps (raw RGBA video at capture size)
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", "RGBA")
-            .field("width", width as i32)
-            .field("height", height as i32)
+            .field("width", capture_width as i32)
+            .field("height", capture_height as i32)
             .field("framerate", gst::Fraction::new(framerate as i32, 1))
             .build();
         appsrc.set_caps(Some(&caps));
@@ -111,16 +223,18 @@ impl Pipeline {
     /// * `encoder` - Encoder to use
     /// * `container` - Container format
     /// * `output_path` - Output file path
-    /// * `width` - Video width
-    /// * `height` - Video height
+    /// * `capture_width` - Width of input frames
+    /// * `capture_height` - Height of input frames
+    /// * `crop` - Optional region to crop from input
     /// * `framerate` - Frames per second
     /// * `drm_format` - DRM fourcc format of input buffers
     pub fn new_dmabuf(
         encoder: &EncoderInfo,
         container: Container,
         output_path: &Path,
-        width: u32,
-        height: u32,
+        capture_width: u32,
+        capture_height: u32,
+        crop: Option<CropRegion>,
         framerate: u32,
         drm_format: DrmFourcc,
     ) -> Result<Self> {
@@ -129,10 +243,13 @@ impl Pipeline {
         let gst_format = drm_format_to_gst_format(drm_format)
             .ok_or_else(|| anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format))?;
 
+        let output_size = crop.map(|c| (c.width, c.height)).unwrap_or((capture_width, capture_height));
         log::info!(
-            "Creating DMA-buf pipeline: {}x{} @ {} fps, format={:?} ({})",
-            width,
-            height,
+            "Creating DMA-buf pipeline: capture {}x{}, output {}x{} @ {} fps, format={:?} ({})",
+            capture_width,
+            capture_height,
+            output_size.0,
+            output_size.1,
             framerate,
             drm_format,
             gst_format
@@ -151,9 +268,29 @@ impl Pipeline {
             .build()
             .context("Failed to create videoconvert element")?;
 
+        // Add videoscale to handle dimension alignment for hardware encoders
+        let videoscale = gst::ElementFactory::make("videoscale")
+            .build()
+            .context("Failed to create videoscale element")?;
+
         let encoder_elem = gst::ElementFactory::make(&encoder.gst_element)
             .build()
             .with_context(|| format!("Failed to create encoder: {}", encoder.gst_element))?;
+
+        // Add parser element for certain codecs (required for proper muxing)
+        let parser_elem = match encoder.codec {
+            super::encoder::Codec::H264 => Some(
+                gst::ElementFactory::make("h264parse")
+                    .build()
+                    .context("Failed to create h264parse element")?
+            ),
+            super::encoder::Codec::H265 => Some(
+                gst::ElementFactory::make("h265parse")
+                    .build()
+                    .context("Failed to create h265parse element")?
+            ),
+            _ => None,
+        };
 
         let muxer = gst::ElementFactory::make(container.muxer_element())
             .build()
@@ -164,32 +301,109 @@ impl Pipeline {
             .build()
             .context("Failed to create filesink element")?;
 
-        // Add elements to pipeline
-        pipeline.add_many([
-            appsrc.upcast_ref(),
-            &videoconvert,
-            &encoder_elem,
-            &muxer,
-            &filesink,
-        ])?;
+        // Add cropping element if needed
+        if let Some(region) = crop {
+            // Clamp region to capture bounds to prevent overflow
+            let clamped_left = region.left.min(capture_width.saturating_sub(1));
+            let clamped_top = region.top.min(capture_height.saturating_sub(1));
+            let max_width = capture_width.saturating_sub(clamped_left);
+            let max_height = capture_height.saturating_sub(clamped_top);
+            let clamped_width = region.width.min(max_width).max(1);
+            let clamped_height = region.height.min(max_height).max(1);
 
-        // Link elements
-        gst::Element::link_many([
-            appsrc.upcast_ref(),
-            &videoconvert,
-            &encoder_elem,
-            &muxer,
-            &filesink,
-        ])?;
+            let right = capture_width.saturating_sub(clamped_left).saturating_sub(clamped_width);
+            let bottom = capture_height.saturating_sub(clamped_top).saturating_sub(clamped_height);
 
-        // Configure appsrc caps for DMA-buf input
+            log::info!(
+                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
+                region.left, region.top, region.width, region.height,
+                capture_width, capture_height,
+                clamped_left, clamped_top, clamped_width, clamped_height
+            );
+
+            let videocrop = gst::ElementFactory::make("videocrop")
+                .property("left", clamped_left as i32)
+                .property("top", clamped_top as i32)
+                .property("right", right as i32)
+                .property("bottom", bottom as i32)
+                .build()
+                .context("Failed to create videocrop element")?;
+
+            log::info!(
+                "Adding crop: left={}, top={}, right={}, bottom={} (output: {}x{})",
+                clamped_left,
+                clamped_top,
+                right,
+                bottom,
+                clamped_width,
+                clamped_height
+            );
+
+            // Add elements to pipeline
+            pipeline.add_many([
+                appsrc.upcast_ref(),
+                &videocrop,
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                pipeline.add(parser)?;
+            }
+            pipeline.add_many([&muxer, &filesink])?;
+
+            // Link elements with crop
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videocrop,
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                encoder_elem.link(parser)?;
+                parser.link(&muxer)?;
+            } else {
+                encoder_elem.link(&muxer)?;
+            }
+            muxer.link(&filesink)?;
+        } else {
+            // Add elements to pipeline without crop
+            pipeline.add_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                pipeline.add(parser)?;
+            }
+            pipeline.add_many([&muxer, &filesink])?;
+
+            // Link elements
+            gst::Element::link_many([
+                appsrc.upcast_ref(),
+                &videoconvert,
+                &videoscale,
+                &encoder_elem,
+            ])?;
+            if let Some(ref parser) = parser_elem {
+                encoder_elem.link(parser)?;
+                parser.link(&muxer)?;
+            } else {
+                encoder_elem.link(&muxer)?;
+            }
+            muxer.link(&filesink)?;
+        }
+
+        // Configure appsrc caps for DMA-buf input at capture size
         // Note: We don't use memory:DMABuf feature because videoconvert doesn't
         // support it directly. GStreamer will auto-map the DMA-buf when needed.
         // This still saves the userspace ABGR→RGBA conversion compared to SHM path.
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", gst_format)
-            .field("width", width as i32)
-            .field("height", height as i32)
+            .field("width", capture_width as i32)
+            .field("height", capture_height as i32)
             .field("framerate", gst::Fraction::new(framerate as i32, 1))
             .build();
         appsrc.set_caps(Some(&caps));

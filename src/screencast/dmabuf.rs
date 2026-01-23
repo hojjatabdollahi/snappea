@@ -247,6 +247,73 @@ pub fn drm_format_to_gst_format(format: DrmFourcc) -> Option<&'static str> {
     }
 }
 
+/// Triple buffer pool for efficient frame capture
+///
+/// Uses 3 buffers to allow:
+/// - Buffer 0: Being captured by compositor
+/// - Buffer 1: Being encoded by GStreamer
+/// - Buffer 2: Ready for next capture
+pub struct TripleBufferPool {
+    buffers: [DmabufBuffer; 3],
+    current_index: usize,
+}
+
+impl TripleBufferPool {
+    /// Create a new triple buffer pool
+    pub fn new(ctx: &DmabufContext, width: u32, height: u32, format: DrmFourcc, modifier: DrmModifier) -> Result<Self> {
+        log::info!("Allocating triple buffer pool: {}x{}, format={:?}", width, height, format);
+
+        let buffer0 = ctx.allocate_buffer(width, height, format, modifier)
+            .context("Failed to allocate buffer 0")?;
+        let buffer1 = ctx.allocate_buffer(width, height, format, modifier)
+            .context("Failed to allocate buffer 1")?;
+        let buffer2 = ctx.allocate_buffer(width, height, format, modifier)
+            .context("Failed to allocate buffer 2")?;
+
+        log::info!("Triple buffer pool allocated successfully");
+
+        Ok(Self {
+            buffers: [buffer0, buffer1, buffer2],
+            current_index: 0,
+        })
+    }
+
+    /// Get the current buffer for capture
+    pub fn current(&self) -> &DmabufBuffer {
+        &self.buffers[self.current_index]
+    }
+
+    /// Advance to the next buffer
+    pub fn advance(&mut self) {
+        self.current_index = (self.current_index + 1) % 3;
+    }
+
+    /// Get buffer info (format, modifier, etc.) - all buffers have same properties
+    pub fn format(&self) -> DrmFourcc {
+        self.buffers[0].format
+    }
+
+    pub fn modifier(&self) -> DrmModifier {
+        self.buffers[0].modifier
+    }
+
+    pub fn width(&self) -> u32 {
+        self.buffers[0].width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.buffers[0].height
+    }
+
+    pub fn stride(&self) -> u32 {
+        self.buffers[0].stride
+    }
+
+    pub fn size(&self) -> usize {
+        self.buffers[0].size
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
