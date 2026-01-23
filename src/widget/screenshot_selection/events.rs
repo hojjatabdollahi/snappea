@@ -145,6 +145,8 @@ pub enum CaptureEvent {
     RecordRegion,
     /// Cancel screenshot
     Cancel,
+    /// Toggle capture mode (screenshot vs video) - true = video mode
+    CaptureModeToggle(bool),
 }
 
 /// All events that can be emitted by ScreenshotSelection widget
@@ -424,6 +426,10 @@ impl ScreenshotEvent {
     pub fn cancel() -> Self {
         Self::Capture(CaptureEvent::Cancel)
     }
+
+    pub fn capture_mode_toggle(is_video: bool) -> Self {
+        Self::Capture(CaptureEvent::CaptureModeToggle(is_video))
+    }
 }
 
 // ============================================================================
@@ -548,6 +554,9 @@ impl ScreenshotEvent {
             Self::Capture(CaptureEvent::SaveToPictures) => Msg::save_to_pictures(),
             Self::Capture(CaptureEvent::RecordRegion) => Msg::record_region(),
             Self::Capture(CaptureEvent::Cancel) => Msg::cancel(),
+            Self::Capture(CaptureEvent::CaptureModeToggle(is_video)) => {
+                Msg::Capture(crate::session::messages::CaptureMsg::ToggleCaptureMode(is_video))
+            }
         }
     }
 }

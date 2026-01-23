@@ -1,5 +1,6 @@
 pub mod annotation_canvas;
 pub mod drawing;
+pub mod icon_toggle;
 pub mod magnifier;
 pub mod output_selection;
 pub mod overlays;

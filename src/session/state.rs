@@ -216,6 +216,8 @@ pub struct UiState {
     pub video_container: Container,
     pub video_framerate: u32,
     pub video_show_cursor: bool,
+    /// Whether video mode is selected (false = screenshot, true = video)
+    pub is_video_mode: bool,
 }
 
 impl UiState {

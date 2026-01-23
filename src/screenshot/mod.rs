@@ -441,6 +441,7 @@ impl Screenshot {
                         video_container: config.video_container,
                         video_framerate: config.video_framerate,
                         video_show_cursor: config.video_show_cursor,
+                        is_video_mode: false,
                     }
                 },
             }))
@@ -1041,6 +1042,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         CaptureMsg::OutputChanged(wl_output) => handle_output_changed_inner(app, wl_output),
         CaptureMsg::WindowChosen(name, idx) => handle_window_chosen_inner(app, name, idx),
         CaptureMsg::OpenUrl(url) => handle_open_url_inner(app, url),
+        CaptureMsg::ToggleCaptureMode(is_video) => {
+            log::info!("Capture mode toggled: is_video_mode = {}", is_video);
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.is_video_mode = is_video;
+            }
+            cosmic::Task::none()
+        }
     }
 }
 

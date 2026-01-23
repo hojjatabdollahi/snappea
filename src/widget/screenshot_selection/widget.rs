@@ -396,6 +396,11 @@ where
             ui.settings_drawer_open || ui.shape_popup_open || ui.redact_popup_open,
             output_ctx.output_count,
             ui.tesseract_available,
+            ui.is_video_mode,
+            {
+                let on_event = on_event.clone();
+                move |is_video| on_event(ScreenshotEvent::capture_mode_toggle(is_video))
+            },
         );
 
         // Build shapes_element

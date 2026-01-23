@@ -8,6 +8,7 @@ use cosmic::iced_core::{Background, Border, Layout, Size, layout, widget::Tree};
 use cosmic::iced_widget::{column, container, row};
 use cosmic::widget::{button, icon, tooltip};
 
+use super::icon_toggle::icon_toggle;
 use super::tool_button::{build_shape_button, build_tool_button};
 use super::toolbar_position_selector::ToolbarPositionSelector;
 use crate::capture::qr::DetectedQrCode;
@@ -232,6 +233,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     force_toolbar_opaque: bool,
     output_count: usize,
     tesseract_available: bool,
+    is_video_mode: bool,
+    on_capture_mode_toggle: impl Fn(bool) -> Msg + 'a,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
 
@@ -256,6 +259,24 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             on_toolbar_position(ToolbarPosition::Right),
         ),
         "Move Toolbar (Ctrl+hjkl)",
+        tooltip::Position::Bottom,
+    )
+    .into();
+
+    // Mode toggle - switch between screenshot and video recording
+    let toggle_widget = icon_toggle(
+        "camera-photo-symbolic",
+        "camera-video-symbolic",
+        is_video_mode,
+    )
+    .on_toggle(on_capture_mode_toggle);
+    let mode_toggle: Element<'_, Msg> = tooltip(
+        if is_vertical {
+            toggle_widget.vertical()
+        } else {
+            toggle_widget
+        },
+        "Screenshot / Video",
         tooltip::Position::Bottom,
     )
     .into();
@@ -568,6 +589,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
             column![
                 position_selector,
+                mode_toggle,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -590,6 +612,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             column![
                 position_selector,
+                mode_toggle,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -617,6 +640,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
             row![
                 position_selector,
+                mode_toggle,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -639,6 +663,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             row![
                 position_selector,
+                mode_toggle,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen]
                     .spacing(space_s)

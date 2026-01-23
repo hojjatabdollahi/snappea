@@ -139,6 +139,8 @@ pub enum CaptureMsg {
     SaveToPictures,
     /// Record selected region
     RecordRegion,
+    /// Toggle capture mode (screenshot vs video) - true = video mode
+    ToggleCaptureMode(bool),
     /// Set selection choice
     Choice(Choice),
     /// Set location index
