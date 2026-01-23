@@ -127,6 +127,11 @@ fn main() -> cosmic::iced::Result {
                 let _ = screencast::RecordingState::delete();
                 std::process::exit(1);
             }
+
+            // Clean up state file after successful recording
+            if let Err(e) = screencast::RecordingState::delete() {
+                log::warn!("Failed to delete state file after recording: {}", e);
+            }
         } else {
             log::error!("Missing required arguments for --record");
             log::error!(

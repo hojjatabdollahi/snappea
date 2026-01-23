@@ -41,7 +41,9 @@ zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
 gstreamer = "0.23"
 gstreamer-app = "0.23"
 gstreamer-video = "0.23"
+gstreamer-allocators = "0.23"
 gbm = "0.18"
+drm-fourcc = "2"
 
 # i18n
 i18n-embed = { version = "0.16", features = [

@@ -2512,6 +2512,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "gstreamer-allocators"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "45f3c36aa5bc98e5dbfd19a27536373167ab1ad734ffafb84d5d65203fe75208"
+dependencies = [
+ "glib",
+ "gstreamer",
+ "gstreamer-allocators-sys",
+ "libc",
+ "once_cell",
+]
+
+[[package]]
+name = "gstreamer-allocators-sys"
+version = "0.23.5"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c005b6cfae0c7e97b0ea95921f561fc8a8786b734cec25c29363a52305074a10"
+dependencies = [
+ "glib-sys",
+ "gobject-sys",
+ "gstreamer-sys",
+ "libc",
+ "system-deps",
+]
+
+[[package]]
 name = "gstreamer-app"
 version = "0.23.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5560,10 +5586,12 @@ dependencies = [
  "cosmic-config",
  "cosmic-protocols 0.1.0 (git+https://github.com/pop-os/cosmic-protocols?branch=main)",
  "dirs",
+ "drm-fourcc",
  "env_logger",
  "futures",
  "gbm",
  "gstreamer",
+ "gstreamer-allocators",
  "gstreamer-app",
  "gstreamer-video",
  "i18n-embed",

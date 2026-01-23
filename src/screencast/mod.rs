@@ -5,10 +5,11 @@
 
 mod state;
 pub mod encoder;
+pub mod dmabuf;
 mod pipeline;
 mod recorder;
 
 pub use state::{RecordingState, is_recording, stop_recording};
-pub use encoder::{Codec, EncoderInfo, detect_encoders, best_encoder};
+pub use encoder::best_encoder;
 pub use pipeline::Pipeline;
 pub use recorder::start_recording;

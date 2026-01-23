@@ -1,6 +1,7 @@
 //! Main recording loop
 
 use anyhow::{Context, Result};
+use drm_fourcc::{DrmFourcc, DrmModifier};
 use futures::executor::block_on;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -8,8 +9,9 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use crate::wayland::{CaptureSource, Rect, WaylandHelper};
+use super::dmabuf::{DmabufContext, select_best_format, drm_format_to_gst_format};
 use super::Pipeline;
-use super::encoder::detect_encoders;
+use super::encoder::{detect_encoders, EncoderInfo};
 
 /// Global flag for graceful shutdown on SIGTERM
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -119,9 +121,30 @@ pub fn start_recording(
 
     log::info!("Using encoder: {} ({:?})", encoder_info.gst_element, encoder_info.codec);
 
+    // Try to set up DMA-buf capture for zero-copy performance
+    let dmabuf_context = match DmabufContext::new() {
+        Ok(ctx) => {
+            log::info!("DMA-buf context initialized successfully");
+            Some(ctx)
+        }
+        Err(e) => {
+            log::warn!("Failed to initialize DMA-buf context: {}. Falling back to SHM.", e);
+            None
+        }
+    };
+
+    // Check for DMA-buf format support from compositor
+    let dmabuf_format = dmabuf_context.as_ref().and_then(|ctx| {
+        select_dmabuf_format(&formats, &encoder_info, ctx)
+    });
+
+    let use_dmabuf = dmabuf_format.is_some();
+
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
     let (_, _, record_width, record_height) = region;
+
+    // Create pipeline (using SHM input for now)
     let pipeline = Pipeline::new(
         &encoder_info,
         container,
@@ -143,48 +166,51 @@ pub fn start_recording(
     const MAX_CONSECUTIVE_ERRORS: u32 = 10;
     let start_time = Instant::now();
 
+    // Note: Full DMA-buf zero-copy capture requires linux-dmabuf Wayland protocol
+    // integration to create wl_buffers from DMA-buf fds. The infrastructure is in
+    // place but the screencopy capture still uses SHM buffers.
+    //
+    // TODO: Implement full DMA-buf screencopy path:
+    // 1. Bind zwp_linux_dmabuf_v1 global in wayland/mod.rs
+    // 2. Create wl_buffer from DMA-buf using zwp_linux_buffer_params_v1
+    // 3. Use that buffer with session.capture_wl_buffer()
+    //
+    // For now, we always use the SHM path which works reliably.
+    let _ = (use_dmabuf, dmabuf_context, dmabuf_format); // Suppress unused warnings
+    log::info!("Using SHM capture path (DMA-buf screencopy not yet fully implemented)");
+
     while !STOP_REQUESTED.load(Ordering::Relaxed) {
         let frame_start = Instant::now();
 
-        // Capture frame using SHM
-        match capture_frame_shm(&wayland_helper, &session, &formats) {
-            Ok(frame_data) => {
-                // Calculate timestamp (in nanoseconds)
-                let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+        // Calculate timestamp (in nanoseconds)
+        let timestamp = frame_count * 1_000_000_000 / framerate as u64;
 
-                // Push frame to GStreamer pipeline
-                if let Err(e) = pipeline.push_frame(&frame_data, timestamp) {
-                    log::error!("Failed to push frame to pipeline: {}", e);
-                    consecutive_errors += 1;
-                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                        log::error!(
-                            "Too many consecutive errors ({}), stopping recording",
-                            consecutive_errors
-                        );
-                        break;
-                    }
-                } else {
-                    consecutive_errors = 0; // Reset on success
-                    frame_count += 1;
+        // Capture frame using SHM and push to pipeline
+        let capture_result = capture_frame_shm(&wayland_helper, &session, &formats)
+            .and_then(|frame_data| pipeline.push_frame(&frame_data, timestamp));
 
-                    // Log progress every 60 frames
-                    if frame_count % 60 == 0 {
-                        let elapsed = start_time.elapsed();
-                        let fps = frame_count as f64 / elapsed.as_secs_f64();
-                        log::info!(
-                            "Recording: {} frames captured ({:.1} fps)",
-                            frame_count,
-                            fps
-                        );
-                    }
+        match capture_result {
+            Ok(()) => {
+                consecutive_errors = 0;
+                frame_count += 1;
+
+                // Log progress every 60 frames
+                if frame_count % 60 == 0 {
+                    let elapsed = start_time.elapsed();
+                    let fps = frame_count as f64 / elapsed.as_secs_f64();
+                    log::info!(
+                        "Recording: {} frames captured ({:.1} fps)",
+                        frame_count,
+                        fps
+                    );
                 }
             }
             Err(e) => {
-                log::error!("Failed to capture frame: {}", e);
+                log::error!("Failed to capture/push frame: {}", e);
                 consecutive_errors += 1;
                 if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
                     log::error!(
-                        "Too many consecutive frame capture failures ({}), stopping recording",
+                        "Too many consecutive errors ({}), stopping recording",
                         consecutive_errors
                     );
                     break;
@@ -258,6 +284,89 @@ fn capture_frame_shm(
 
     Ok(rgba_data)
 }
+
+/// Select the best DMA-buf format from available formats
+fn select_dmabuf_format(
+    formats: &cosmic_client_toolkit::screencopy::Formats,
+    encoder_info: &EncoderInfo,
+    dmabuf_ctx: &DmabufContext,
+) -> Option<(DrmFourcc, DrmModifier)> {
+    // Check if compositor advertises any DMA-buf formats
+    if formats.dmabuf_formats.is_empty() {
+        log::debug!("Compositor does not support DMA-buf screencopy");
+        return None;
+    }
+
+    // Convert compositor formats to our format
+    let available_formats: Vec<(DrmFourcc, Vec<DrmModifier>)> = formats
+        .dmabuf_formats
+        .iter()
+        .filter_map(|(fourcc, modifiers)| {
+            // Try to parse the fourcc as a DRM format
+            let drm_format = DrmFourcc::try_from(*fourcc).ok()?;
+
+            // Filter to modifiers we can actually use
+            let valid_modifiers: Vec<DrmModifier> = modifiers
+                .iter()
+                .filter_map(|&m| {
+                    let modifier = DrmModifier::from(m);
+                    // Check if GBM can allocate this format/modifier combo
+                    if dmabuf_ctx.is_format_supported(drm_format, modifier) {
+                        Some(modifier)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+
+            if valid_modifiers.is_empty() {
+                None
+            } else {
+                Some((drm_format, valid_modifiers))
+            }
+        })
+        .collect();
+
+    if available_formats.is_empty() {
+        log::debug!("No usable DMA-buf formats found");
+        return None;
+    }
+
+    log::debug!(
+        "Available DMA-buf formats: {:?}",
+        available_formats.iter().map(|(f, _)| f).collect::<Vec<_>>()
+    );
+
+    // Select the best format for the encoder
+    let prefer_hardware = encoder_info.hardware;
+    let result = select_best_format(&available_formats, prefer_hardware);
+
+    if let Some((format, _modifier)) = &result {
+        // Verify GStreamer can handle this format
+        if drm_format_to_gst_format(*format).is_none() {
+            log::debug!(
+                "Selected format {:?} not supported by GStreamer, skipping DMA-buf",
+                format
+            );
+            return None;
+        }
+    }
+
+    result
+}
+
+// TODO: Implement full DMA-buf zero-copy capture
+//
+// The infrastructure for DMA-buf is in place (see dmabuf.rs and Pipeline::new_dmabuf),
+// but full zero-copy screencopy requires:
+//
+// 1. Bind zwp_linux_dmabuf_v1 global in wayland/mod.rs
+// 2. Create wl_buffer from DMA-buf fd using zwp_linux_buffer_params_v1
+// 3. Use that buffer with session.capture_wl_buffer()
+// 4. Push the same DMA-buf fd to GStreamer via Pipeline::push_dmabuf_frame()
+//
+// This would eliminate all CPU copies: compositor renders to DMA-buf,
+// screencopy captures to the same buffer, GStreamer encodes directly from GPU memory.
 
 /// Set up signal handler for SIGTERM
 fn setup_signal_handler() -> Result<()> {

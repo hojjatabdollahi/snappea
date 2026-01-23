@@ -1,18 +1,27 @@
 //! GStreamer pipeline construction and management
 
 use anyhow::{Context, Result};
+use drm_fourcc::DrmFourcc;
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use gstreamer_allocators as gst_allocators;
 use gstreamer_app as gst_app;
-use std::path::Path;
+use std::os::fd::RawFd;
+use std::path::{Path, PathBuf};
 
 use crate::config::Container;
 use super::encoder::EncoderInfo;
+use super::dmabuf::drm_format_to_gst_format;
 
 /// GStreamer pipeline for encoding screen capture to video file
 pub struct Pipeline {
     pipeline: gst::Pipeline,
     appsrc: gst_app::AppSrc,
+    output_path: PathBuf,
+    /// Whether this pipeline is configured for DMA-buf input
+    dmabuf_mode: bool,
+    /// DMA-buf allocator (only set in dmabuf mode)
+    dmabuf_allocator: Option<gst_allocators::DmaBufAllocator>,
 }
 
 impl Pipeline {
@@ -88,7 +97,121 @@ impl Pipeline {
             .build();
         appsrc.set_caps(Some(&caps));
 
-        Ok(Self { pipeline, appsrc })
+        Ok(Self {
+            pipeline,
+            appsrc,
+            output_path: output_path.to_path_buf(),
+            dmabuf_mode: false,
+            dmabuf_allocator: None,
+        })
+    }
+
+    /// Create a new encoding pipeline configured for DMA-buf input
+    ///
+    /// This pipeline can receive frames directly from DMA-buf file descriptors
+    /// without CPU copies, enabling zero-copy capture from the compositor.
+    ///
+    /// # Arguments
+    /// * `encoder` - Encoder to use
+    /// * `container` - Container format
+    /// * `output_path` - Output file path
+    /// * `width` - Video width
+    /// * `height` - Video height
+    /// * `framerate` - Frames per second
+    /// * `drm_format` - DRM fourcc format of input buffers
+    pub fn new_dmabuf(
+        encoder: &EncoderInfo,
+        container: Container,
+        output_path: &Path,
+        width: u32,
+        height: u32,
+        framerate: u32,
+        drm_format: DrmFourcc,
+    ) -> Result<Self> {
+        gst::init().context("Failed to initialize GStreamer")?;
+
+        let gst_format = drm_format_to_gst_format(drm_format)
+            .ok_or_else(|| anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format))?;
+
+        log::info!(
+            "Creating DMA-buf pipeline: {}x{} @ {} fps, format={:?} ({})",
+            width,
+            height,
+            framerate,
+            drm_format,
+            gst_format
+        );
+
+        let pipeline = gst::Pipeline::new();
+
+        // Create elements
+        let appsrc = gst_app::AppSrc::builder()
+            .name("screen-source")
+            .is_live(true)
+            .format(gst::Format::Time)
+            .build();
+
+        let videoconvert = gst::ElementFactory::make("videoconvert")
+            .build()
+            .context("Failed to create videoconvert element")?;
+
+        let encoder_elem = gst::ElementFactory::make(&encoder.gst_element)
+            .build()
+            .with_context(|| format!("Failed to create encoder: {}", encoder.gst_element))?;
+
+        let muxer = gst::ElementFactory::make(container.muxer_element())
+            .build()
+            .with_context(|| format!("Failed to create muxer: {}", container.muxer_element()))?;
+
+        let filesink = gst::ElementFactory::make("filesink")
+            .property("location", output_path.to_str().unwrap())
+            .build()
+            .context("Failed to create filesink element")?;
+
+        // Add elements to pipeline
+        pipeline.add_many([
+            appsrc.upcast_ref(),
+            &videoconvert,
+            &encoder_elem,
+            &muxer,
+            &filesink,
+        ])?;
+
+        // Link elements
+        gst::Element::link_many([
+            appsrc.upcast_ref(),
+            &videoconvert,
+            &encoder_elem,
+            &muxer,
+            &filesink,
+        ])?;
+
+        // Configure appsrc caps for DMA-buf input
+        // Use memory:DMABuf feature to indicate DMA-buf memory
+        let caps = gst::Caps::builder("video/x-raw")
+            .field("format", gst_format)
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", gst::Fraction::new(framerate as i32, 1))
+            .features(["memory:DMABuf"])
+            .build();
+        appsrc.set_caps(Some(&caps));
+
+        // Get DMA-buf allocator
+        let dmabuf_allocator = gst_allocators::DmaBufAllocator::new();
+
+        Ok(Self {
+            pipeline,
+            appsrc,
+            output_path: output_path.to_path_buf(),
+            dmabuf_mode: true,
+            dmabuf_allocator: Some(dmabuf_allocator),
+        })
+    }
+
+    /// Check if this pipeline is configured for DMA-buf input
+    pub fn is_dmabuf_mode(&self) -> bool {
+        self.dmabuf_mode
     }
 
     /// Start the pipeline
@@ -123,17 +246,70 @@ impl Pipeline {
         Ok(())
     }
 
+    /// Push a DMA-buf frame to the pipeline (zero-copy)
+    ///
+    /// This method wraps a DMA-buf file descriptor in a GStreamer buffer
+    /// without copying the data, enabling true zero-copy frame capture.
+    ///
+    /// # Arguments
+    /// * `fd` - Raw file descriptor of the DMA-buf
+    /// * `size` - Size of the buffer in bytes
+    /// * `timestamp` - Frame timestamp in nanoseconds
+    ///
+    /// # Safety
+    /// The caller must ensure the DMA-buf fd remains valid until the buffer
+    /// is consumed by the pipeline.
+    pub fn push_dmabuf_frame(&self, fd: RawFd, size: usize, timestamp: u64) -> Result<()> {
+        let allocator = self.dmabuf_allocator.as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Pipeline not configured for DMA-buf mode"))?;
+
+        // Wrap the DMA-buf fd in GStreamer memory
+        // Note: We dup the fd so GStreamer can take ownership
+        let dup_fd = unsafe { libc::dup(fd) };
+        if dup_fd < 0 {
+            return Err(anyhow::anyhow!("Failed to duplicate DMA-buf fd"));
+        }
+
+        // SAFETY: The dup_fd is a valid file descriptor that we just created,
+        // and GStreamer will take ownership of it.
+        let memory = unsafe {
+            allocator.alloc(dup_fd, size)
+                .map_err(|_| anyhow::anyhow!("Failed to allocate DMA-buf GStreamer memory"))?
+        };
+
+        // Create buffer from memory
+        let mut buffer = gst::Buffer::new();
+        {
+            let buffer_mut = buffer.get_mut().unwrap();
+            buffer_mut.set_pts(gst::ClockTime::from_nseconds(timestamp));
+            buffer_mut.append_memory(memory);
+        }
+
+        self.appsrc
+            .push_buffer(buffer)
+            .map_err(|_| anyhow::anyhow!("Failed to push DMA-buf buffer to pipeline"))?;
+
+        Ok(())
+    }
+
     /// Signal end of stream and finalize the video file
     pub fn finish(&self) -> Result<()> {
+        log::info!("Sending EOS signal to pipeline...");
         self.appsrc.end_of_stream()
             .map_err(|_| anyhow::anyhow!("Failed to send EOS"))?;
 
-        // Wait for EOS to propagate through pipeline
+        // Wait for EOS to propagate through pipeline (30 seconds for long recordings)
+        log::info!("Waiting for pipeline to finish (up to 30 seconds)...");
         let bus = self.pipeline.bus().unwrap();
-        for msg in bus.iter_timed(gst::ClockTime::from_seconds(5)) {
+        let mut eos_received = false;
+        for msg in bus.iter_timed(gst::ClockTime::from_seconds(30)) {
             use gst::MessageView;
             match msg.view() {
-                MessageView::Eos(..) => break,
+                MessageView::Eos(..) => {
+                    log::info!("EOS received, finalizing...");
+                    eos_received = true;
+                    break;
+                }
                 MessageView::Error(err) => {
                     return Err(anyhow::anyhow!(
                         "Pipeline error: {} ({})",
@@ -141,12 +317,56 @@ impl Pipeline {
                         err.debug().unwrap_or_default()
                     ));
                 }
+                MessageView::StateChanged(state_change) => {
+                    if state_change.src().map(|s| s.name().as_str() == "pipeline0").unwrap_or(false) {
+                        log::debug!(
+                            "Pipeline state changed: {:?} -> {:?}",
+                            state_change.old(),
+                            state_change.current()
+                        );
+                    }
+                }
                 _ => {}
             }
         }
 
+        if !eos_received {
+            log::warn!("EOS timeout reached, forcing pipeline shutdown");
+        }
+
         self.pipeline.set_state(gst::State::Null)
             .context("Failed to stop pipeline")?;
+
+        // Verify output file exists and has data
+        self.verify_output()?;
+
+        Ok(())
+    }
+
+    /// Verify that the output file exists and has data
+    fn verify_output(&self) -> Result<()> {
+        if !self.output_path.exists() {
+            return Err(anyhow::anyhow!(
+                "Output file was not created: {}",
+                self.output_path.display()
+            ));
+        }
+
+        let metadata = std::fs::metadata(&self.output_path)
+            .with_context(|| format!("Failed to read output file metadata: {}", self.output_path.display()))?;
+
+        if metadata.len() == 0 {
+            return Err(anyhow::anyhow!(
+                "Output file is empty: {}",
+                self.output_path.display()
+            ));
+        }
+
+        log::info!(
+            "Output file verified: {} ({} bytes)",
+            self.output_path.display(),
+            metadata.len()
+        );
 
         Ok(())
     }
