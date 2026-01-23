@@ -4,7 +4,8 @@ use std::rc::Rc;
 
 use cosmic::iced::Length;
 use cosmic::iced_core::{layout, widget::Tree, Background, Border, Layout, Size};
-use cosmic::iced_widget::{column, container, row};
+use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
+use cosmic::iced_widget::{canvas, column, container, row};
 use cosmic::widget::{button, icon, tooltip};
 use cosmic::Element;
 
@@ -25,6 +26,376 @@ pub struct HoverOpacity<'a, Msg> {
     force_opaque: bool,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HatPlacement {
+    HeaderTop,
+    HeaderBottom,
+    HeaderLeft,
+    HeaderRight,
+}
+
+/// A wrapper widget that renders a connected header + body "hat" background.
+pub struct HatContainer<'a, Msg> {
+    header: Element<'a, Msg>,
+    body: Element<'a, Msg>,
+    placement: HatPlacement,
+    unhovered_opacity: f32,
+    force_opaque: bool,
+}
+
+const HAT_HIT_RADIUS_FALLBACK: f32 = 8.0;
+
+fn rounded_rect_contains(
+    rect: cosmic::iced_core::Rectangle,
+    radii: [f32; 4],
+    point: cosmic::iced_core::Point,
+) -> bool {
+    let right = rect.x + rect.width;
+    let bottom = rect.y + rect.height;
+
+    if point.x < rect.x || point.x > right || point.y < rect.y || point.y > bottom {
+        return false;
+    }
+
+    let corners = [
+        (rect.x, rect.y, radii[0]),
+        (right, rect.y, radii[1]),
+        (right, bottom, radii[2]),
+        (rect.x, bottom, radii[3]),
+    ];
+
+    for (cx, cy, radius) in corners {
+        if radius <= 0.0 {
+            continue;
+        }
+
+        let (corner_x, corner_y) = match (cx == rect.x, cy == rect.y) {
+            (true, true) => (rect.x + radius, rect.y + radius),
+            (false, true) => (right - radius, rect.y + radius),
+            (false, false) => (right - radius, bottom - radius),
+            (true, false) => (rect.x + radius, bottom - radius),
+        };
+
+        let within_corner_x = if cx == rect.x {
+            point.x < rect.x + radius
+        } else {
+            point.x > right - radius
+        };
+        let within_corner_y = if cy == rect.y {
+            point.y < rect.y + radius
+        } else {
+            point.y > bottom - radius
+        };
+
+        if within_corner_x && within_corner_y {
+            let dx = point.x - corner_x;
+            let dy = point.y - corner_y;
+            if dx * dx + dy * dy > radius * radius {
+                return false;
+            }
+        }
+    }
+
+    true
+}
+
+fn hat_contains(
+    placement: HatPlacement,
+    header_bounds: cosmic::iced_core::Rectangle,
+    body_bounds: cosmic::iced_core::Rectangle,
+    radius: f32,
+    point: cosmic::iced_core::Point,
+) -> bool {
+    let body_radius: [f32; 4] = match placement {
+        HatPlacement::HeaderTop => [0.0, 0.0, radius, radius],
+        HatPlacement::HeaderBottom => [radius, radius, 0.0, 0.0],
+        HatPlacement::HeaderLeft => [0.0, radius, radius, 0.0],
+        HatPlacement::HeaderRight => [radius, 0.0, 0.0, radius],
+    };
+
+    let header_radius: [f32; 4] = match placement {
+        HatPlacement::HeaderTop => [radius, radius, 0.0, 0.0],
+        HatPlacement::HeaderBottom => [0.0, 0.0, radius, radius],
+        HatPlacement::HeaderLeft => [radius, 0.0, 0.0, radius],
+        HatPlacement::HeaderRight => [0.0, radius, radius, 0.0],
+    };
+
+    if rounded_rect_contains(body_bounds, body_radius, point)
+        || rounded_rect_contains(header_bounds, header_radius, point)
+    {
+        return true;
+    }
+
+    if radius <= 0.0 {
+        return false;
+    }
+
+    let centers = match placement {
+        HatPlacement::HeaderTop => [
+            cosmic::iced_core::Point::new(header_bounds.x, header_bounds.y + header_bounds.height),
+            cosmic::iced_core::Point::new(
+                header_bounds.x + header_bounds.width,
+                header_bounds.y + header_bounds.height,
+            ),
+        ],
+        HatPlacement::HeaderBottom => [
+            cosmic::iced_core::Point::new(header_bounds.x, header_bounds.y),
+            cosmic::iced_core::Point::new(header_bounds.x + header_bounds.width, header_bounds.y),
+        ],
+        HatPlacement::HeaderLeft => [
+            cosmic::iced_core::Point::new(header_bounds.x + header_bounds.width, header_bounds.y),
+            cosmic::iced_core::Point::new(
+                header_bounds.x + header_bounds.width,
+                header_bounds.y + header_bounds.height,
+            ),
+        ],
+        HatPlacement::HeaderRight => [
+            cosmic::iced_core::Point::new(header_bounds.x, header_bounds.y),
+            cosmic::iced_core::Point::new(header_bounds.x, header_bounds.y + header_bounds.height),
+        ],
+    };
+
+    centers.iter().any(|center| {
+        let dx = point.x - center.x;
+        let dy = point.y - center.y;
+        dx * dx + dy * dy <= radius * radius
+    })
+}
+
+fn build_hat_path(
+    placement: HatPlacement,
+    header_bounds: cosmic::iced_core::Rectangle,
+    body_bounds: cosmic::iced_core::Rectangle,
+    radius: f32,
+) -> canvas::Path {
+    let r = radius
+        .min(header_bounds.width / 2.0)
+        .min(header_bounds.height / 2.0)
+        .min(body_bounds.width / 2.0)
+        .min(body_bounds.height / 2.0);
+
+    let h_left = header_bounds.x;
+    let h_right = header_bounds.x + header_bounds.width;
+    let h_top = header_bounds.y;
+    let h_bottom = header_bounds.y + header_bounds.height;
+
+    let b_left = body_bounds.x;
+    let b_right = body_bounds.x + body_bounds.width;
+    let b_top = body_bounds.y;
+    let b_bottom = body_bounds.y + body_bounds.height;
+
+    canvas::Path::new(|builder| match placement {
+        HatPlacement::HeaderTop => {
+            builder.move_to(cosmic::iced_core::Point::new(h_left + r, h_top));
+            builder.line_to(cosmic::iced_core::Point::new(h_right - r, h_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, h_top),
+                cosmic::iced_core::Point::new(h_right, h_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_right, h_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, b_top),
+                cosmic::iced_core::Point::new(h_right + r, b_top),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right - r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_top),
+                cosmic::iced_core::Point::new(b_right, b_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right, b_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_bottom),
+                cosmic::iced_core::Point::new(b_right - r, b_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left + r, b_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_bottom),
+                cosmic::iced_core::Point::new(b_left, b_bottom - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left, b_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_top),
+                cosmic::iced_core::Point::new(b_left + r, b_top),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left - r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, b_top),
+                cosmic::iced_core::Point::new(h_left, b_top - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left, h_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, h_top),
+                cosmic::iced_core::Point::new(h_left + r, h_top),
+                r,
+            );
+            builder.close();
+        }
+        HatPlacement::HeaderBottom => {
+            builder.move_to(cosmic::iced_core::Point::new(b_left + r, b_top));
+            builder.line_to(cosmic::iced_core::Point::new(b_right - r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_top),
+                cosmic::iced_core::Point::new(b_right, b_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right, b_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_bottom),
+                cosmic::iced_core::Point::new(b_right - r, b_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_right + r, b_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, b_bottom),
+                cosmic::iced_core::Point::new(h_right, b_bottom + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_right, h_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, h_bottom),
+                cosmic::iced_core::Point::new(h_right - r, h_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left + r, h_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, h_bottom),
+                cosmic::iced_core::Point::new(h_left, h_bottom - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left, h_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, h_top),
+                cosmic::iced_core::Point::new(h_left - r, h_top),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left + r, h_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, h_top),
+                cosmic::iced_core::Point::new(b_left, h_top - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left, b_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_top),
+                cosmic::iced_core::Point::new(b_left + r, b_top),
+                r,
+            );
+            builder.close();
+        }
+        HatPlacement::HeaderLeft => {
+            builder.move_to(cosmic::iced_core::Point::new(b_left + r, b_top));
+            builder.line_to(cosmic::iced_core::Point::new(b_right - r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_top),
+                cosmic::iced_core::Point::new(b_right, b_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right, b_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_bottom),
+                cosmic::iced_core::Point::new(b_right - r, b_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left + r, b_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_bottom),
+                cosmic::iced_core::Point::new(b_left, b_bottom - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left, h_bottom + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, h_bottom),
+                cosmic::iced_core::Point::new(b_left - r, h_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left + r, h_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, h_bottom),
+                cosmic::iced_core::Point::new(h_left, h_bottom - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_left, h_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_left, h_top),
+                cosmic::iced_core::Point::new(h_left + r, h_top),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left - r, h_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, h_top),
+                cosmic::iced_core::Point::new(b_left, h_top - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left + r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_top),
+                cosmic::iced_core::Point::new(b_left + r, b_top),
+                r,
+            );
+            builder.close();
+        }
+        HatPlacement::HeaderRight => {
+            builder.move_to(cosmic::iced_core::Point::new(b_left + r, b_top));
+            builder.line_to(cosmic::iced_core::Point::new(b_right - r, b_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_top),
+                cosmic::iced_core::Point::new(b_right, b_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right, h_top - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, h_top),
+                cosmic::iced_core::Point::new(b_right + r, h_top),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_right - r, h_top));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, h_top),
+                cosmic::iced_core::Point::new(h_right, h_top + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(h_right, h_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(h_right, h_bottom),
+                cosmic::iced_core::Point::new(h_right - r, h_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right + r, h_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, h_bottom),
+                cosmic::iced_core::Point::new(b_right, h_bottom + r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_right, b_bottom - r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_right, b_bottom),
+                cosmic::iced_core::Point::new(b_right - r, b_bottom),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left + r, b_bottom));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_bottom),
+                cosmic::iced_core::Point::new(b_left, b_bottom - r),
+                r,
+            );
+            builder.line_to(cosmic::iced_core::Point::new(b_left, b_top + r));
+            builder.arc_to(
+                cosmic::iced_core::Point::new(b_left, b_top),
+                cosmic::iced_core::Point::new(b_left + r, b_top),
+                r,
+            );
+            builder.close();
+        }
+    })
+}
+
 impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
     pub fn new(content: impl Into<Element<'a, Msg>>) -> Self {
         Self {
@@ -35,6 +406,28 @@ impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
     }
 
     /// Force full opacity regardless of hover state
+    pub fn force_opaque(mut self, force: bool) -> Self {
+        self.force_opaque = force;
+        self
+    }
+}
+
+impl<'a, Msg: 'static + Clone> HatContainer<'a, Msg> {
+    pub fn new(header: impl Into<Element<'a, Msg>>, body: impl Into<Element<'a, Msg>>) -> Self {
+        Self {
+            header: header.into(),
+            body: body.into(),
+            placement: HatPlacement::HeaderTop,
+            unhovered_opacity: 0.5,
+            force_opaque: false,
+        }
+    }
+
+    pub fn placement(mut self, placement: HatPlacement) -> Self {
+        self.placement = placement;
+        self
+    }
+
     pub fn force_opaque(mut self, force: bool) -> Self {
         self.force_opaque = force;
         self
@@ -187,6 +580,341 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         self.content
             .as_widget_mut()
             .overlay(&mut tree.children[0], layout, renderer, translation)
+    }
+}
+
+impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
+    for HatContainer<'a, Msg>
+{
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Shrink, Length::Shrink)
+    }
+
+    fn layout(
+        &self,
+        tree: &mut Tree,
+        renderer: &cosmic::Renderer,
+        limits: &cosmic::iced::Limits,
+    ) -> layout::Node {
+        let header_node = self
+            .header
+            .as_widget()
+            .layout(&mut tree.children[0], renderer, limits);
+        let body_node = self
+            .body
+            .as_widget()
+            .layout(&mut tree.children[1], renderer, limits);
+
+        let header_bounds = header_node.bounds();
+        let body_bounds = body_node.bounds();
+
+        let (width, height) = match self.placement {
+            HatPlacement::HeaderTop | HatPlacement::HeaderBottom => (
+                header_bounds.width.max(body_bounds.width),
+                header_bounds.height + body_bounds.height,
+            ),
+            HatPlacement::HeaderLeft | HatPlacement::HeaderRight => (
+                header_bounds.width + body_bounds.width,
+                header_bounds.height.max(body_bounds.height),
+            ),
+        };
+
+        let (header_pos, body_pos) = match self.placement {
+            HatPlacement::HeaderTop => (
+                cosmic::iced::Point::new((width - header_bounds.width) / 2.0, 0.0),
+                cosmic::iced::Point::new((width - body_bounds.width) / 2.0, header_bounds.height),
+            ),
+            HatPlacement::HeaderBottom => (
+                cosmic::iced::Point::new((width - header_bounds.width) / 2.0, body_bounds.height),
+                cosmic::iced::Point::new((width - body_bounds.width) / 2.0, 0.0),
+            ),
+            HatPlacement::HeaderLeft => (
+                cosmic::iced::Point::new(0.0, (height - header_bounds.height) / 2.0),
+                cosmic::iced::Point::new(header_bounds.width, (height - body_bounds.height) / 2.0),
+            ),
+            HatPlacement::HeaderRight => (
+                cosmic::iced::Point::new(body_bounds.width, (height - header_bounds.height) / 2.0),
+                cosmic::iced::Point::new(0.0, (height - body_bounds.height) / 2.0),
+            ),
+        };
+
+        let header_node = header_node.move_to(header_pos);
+        let body_node = body_node.move_to(body_pos);
+
+        layout::Node::with_children(Size::new(width, height), vec![header_node, body_node])
+    }
+
+    fn children(&self) -> Vec<Tree> {
+        vec![Tree::new(&self.header), Tree::new(&self.body)]
+    }
+
+    fn diff(&mut self, tree: &mut Tree) {
+        let mut children = [&mut self.header, &mut self.body];
+        tree.diff_children(&mut children);
+    }
+
+    fn draw(
+        &self,
+        tree: &Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        style: &cosmic::iced_core::renderer::Style,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &cosmic::iced_core::Rectangle,
+    ) {
+        use cosmic::iced_core::Renderer as _;
+
+        let cosmic_theme = theme.cosmic();
+        let radius = cosmic_theme.corner_radii.radius_s[0];
+
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
+        let header_bounds = header_layout.as_ref().map(|layout| layout.bounds());
+        let body_bounds = body_layout.as_ref().map(|layout| layout.bounds());
+
+        let is_hovered = if let (Some(header_bounds), Some(body_bounds), Some(position)) =
+            (header_bounds, body_bounds, cursor.position())
+        {
+            hat_contains(self.placement, header_bounds, body_bounds, radius, position)
+        } else {
+            false
+        };
+        let opacity = if self.force_opaque || is_hovered {
+            1.0
+        } else {
+            self.unhovered_opacity
+        };
+
+        let mut bg_color: cosmic::iced::Color = cosmic_theme.background.component.base.into();
+        bg_color.a *= opacity;
+
+        let mut draw_style = *style;
+        draw_style.text_color.a *= opacity;
+
+        if let (Some(header_bounds), Some(body_bounds)) = (header_bounds, body_bounds) {
+            let bounds = layout.bounds();
+            let header_bounds = cosmic::iced_core::Rectangle {
+                x: header_bounds.x - bounds.x,
+                y: header_bounds.y - bounds.y,
+                width: header_bounds.width,
+                height: header_bounds.height,
+            };
+            let body_bounds = cosmic::iced_core::Rectangle {
+                x: body_bounds.x - bounds.x,
+                y: body_bounds.y - bounds.y,
+                width: body_bounds.width,
+                height: body_bounds.height,
+            };
+            let hat_path = build_hat_path(self.placement, header_bounds, body_bounds, radius);
+
+            renderer.with_translation(cosmic::iced::Vector::new(bounds.x, bounds.y), |renderer| {
+                let mut frame = canvas::Frame::new(renderer, bounds.size());
+                frame.fill(&hat_path, bg_color);
+                renderer.draw_geometry(frame.into_geometry());
+            });
+        }
+
+        renderer.with_layer(layout.bounds(), |renderer| {
+            if let Some(header_layout) = header_layout {
+                self.header.as_widget().draw(
+                    &tree.children[0],
+                    renderer,
+                    theme,
+                    &draw_style,
+                    header_layout,
+                    cursor,
+                    viewport,
+                );
+            }
+
+            if let Some(body_layout) = body_layout {
+                self.body.as_widget().draw(
+                    &tree.children[1],
+                    renderer,
+                    theme,
+                    &draw_style,
+                    body_layout,
+                    cursor,
+                    viewport,
+                );
+            }
+        });
+    }
+
+    fn operate(
+        &self,
+        tree: &mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+    ) {
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
+        if let Some(header_layout) = header_layout {
+            self.header.as_widget().operate(
+                &mut tree.children[0],
+                header_layout,
+                renderer,
+                operation,
+            );
+        }
+
+        if let Some(body_layout) = body_layout {
+            self.body
+                .as_widget()
+                .operate(&mut tree.children[1], body_layout, renderer, operation);
+        }
+    }
+
+    fn on_event(
+        &mut self,
+        tree: &mut Tree,
+        event: cosmic::iced_core::Event,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        renderer: &cosmic::Renderer,
+        clipboard: &mut dyn cosmic::iced_core::Clipboard,
+        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
+        viewport: &cosmic::iced_core::Rectangle,
+    ) -> cosmic::iced_core::event::Status {
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
+        if matches!(event, cosmic::iced_core::Event::Mouse(_)) {
+            if let (Some(header_layout), Some(body_layout), Some(position)) =
+                (header_layout, body_layout, cursor.position())
+            {
+                let header_bounds = header_layout.bounds();
+                let body_bounds = body_layout.bounds();
+                let radius = HAT_HIT_RADIUS_FALLBACK;
+
+                if !hat_contains(self.placement, header_bounds, body_bounds, radius, position) {
+                    return cosmic::iced_core::event::Status::Ignored;
+                }
+            }
+        }
+
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
+        if let Some(header_layout) = header_layout {
+            let status = self.header.as_widget_mut().on_event(
+                &mut tree.children[0],
+                event.clone(),
+                header_layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+
+            if status == cosmic::iced_core::event::Status::Captured {
+                return status;
+            }
+        }
+
+        if let Some(body_layout) = body_layout {
+            return self.body.as_widget_mut().on_event(
+                &mut tree.children[1],
+                event,
+                body_layout,
+                cursor,
+                renderer,
+                clipboard,
+                shell,
+                viewport,
+            );
+        }
+
+        cosmic::iced_core::event::Status::Ignored
+    }
+
+    fn mouse_interaction(
+        &self,
+        tree: &Tree,
+        layout: Layout<'_>,
+        cursor: cosmic::iced_core::mouse::Cursor,
+        viewport: &cosmic::iced_core::Rectangle,
+        renderer: &cosmic::Renderer,
+    ) -> cosmic::iced_core::mouse::Interaction {
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
+        if let (Some(header_layout), Some(body_layout), Some(position)) =
+            (header_layout, body_layout, cursor.position())
+        {
+            let radius = HAT_HIT_RADIUS_FALLBACK;
+            if !hat_contains(
+                self.placement,
+                header_layout.bounds(),
+                body_layout.bounds(),
+                radius,
+                position,
+            ) {
+                return cosmic::iced_core::mouse::Interaction::Idle;
+            }
+        }
+
+        let header_interaction = header_layout.map_or(
+            cosmic::iced_core::mouse::Interaction::Idle,
+            |header_layout| {
+                self.header.as_widget().mouse_interaction(
+                    &tree.children[0],
+                    header_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            },
+        );
+        let body_interaction =
+            body_layout.map_or(cosmic::iced_core::mouse::Interaction::Idle, |body_layout| {
+                self.body.as_widget().mouse_interaction(
+                    &tree.children[1],
+                    body_layout,
+                    cursor,
+                    viewport,
+                    renderer,
+                )
+            });
+
+        header_interaction.max(body_interaction)
+    }
+
+    fn overlay<'b>(
+        &'b mut self,
+        tree: &'b mut Tree,
+        layout: Layout<'_>,
+        renderer: &cosmic::Renderer,
+        translation: cosmic::iced::Vector,
+    ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
+        let (header_tree, body_tree) = tree.children.split_at_mut(1);
+        let header_overlay =
+            self.header
+                .as_widget_mut()
+                .overlay(&mut header_tree[0], layout, renderer, translation);
+        if header_overlay.is_some() {
+            return header_overlay;
+        }
+
+        self.body
+            .as_widget_mut()
+            .overlay(&mut body_tree[0], layout, renderer, translation)
+    }
+}
+
+impl<'a, Msg: Clone + 'static> From<HatContainer<'a, Msg>> for Element<'a, Msg> {
+    fn from(widget: HatContainer<'a, Msg>) -> Self {
+        Element::new(widget)
     }
 }
 
@@ -722,12 +1450,11 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         }
     };
 
-    // Use transparent background - HoverOpacity handles the background drawing
     let toolbar_body = cosmic::widget::container(toolbar_body_content).class(
         cosmic::theme::Container::Custom(Box::new(|theme| {
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
-                background: None, // HoverOpacity draws the background with opacity
+                background: None, // HatContainer draws the background with opacity
                 text_color: Some(theme.background.component.on.into()),
                 border: Border::default(),
                 ..Default::default()
@@ -735,47 +1462,27 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })),
     );
 
-    let toolbar_body: Element<'_, Msg> = HoverOpacity::new(toolbar_body)
-        .force_opaque(force_toolbar_opaque)
-        .into();
-
     let toolbar_toggle = cosmic::widget::container(mode_toggle)
         .padding(space_xxs)
         .class(cosmic::theme::Container::Custom(Box::new(|theme| {
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
-                background: None, // HoverOpacity draws the background with opacity
+                background: None, // HatContainer draws the background with opacity
                 text_color: Some(theme.background.component.on.into()),
                 border: Border::default(),
                 ..Default::default()
             }
         })));
 
-    let toolbar_toggle: Element<'_, Msg> = HoverOpacity::new(toolbar_toggle)
-        .force_opaque(force_toolbar_opaque)
-        .into();
-
-    let toolbar_content: Element<'_, Msg> = if is_vertical {
-        let content = match toolbar_position {
-            ToolbarPosition::Right => row![toolbar_toggle, toolbar_body],
-            _ => row![toolbar_body, toolbar_toggle],
-        };
-
-        content
-            .align_y(cosmic::iced_core::Alignment::Center)
-            .spacing(space_xxs)
-            .into()
-    } else {
-        let content = match toolbar_position {
-            ToolbarPosition::Top => column![toolbar_body, toolbar_toggle],
-            _ => column![toolbar_toggle, toolbar_body],
-        };
-
-        content
-            .align_x(cosmic::iced_core::Alignment::Center)
-            .spacing(space_xxs)
-            .into()
+    let placement = match toolbar_position {
+        ToolbarPosition::Top => HatPlacement::HeaderBottom,
+        ToolbarPosition::Bottom => HatPlacement::HeaderTop,
+        ToolbarPosition::Left => HatPlacement::HeaderRight,
+        ToolbarPosition::Right => HatPlacement::HeaderLeft,
     };
 
-    toolbar_content
+    HatContainer::new(toolbar_toggle, toolbar_body)
+        .placement(placement)
+        .force_opaque(force_toolbar_opaque)
+        .into()
 }
