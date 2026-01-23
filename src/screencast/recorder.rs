@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use crate::wayland::{CaptureSource, Rect, WaylandHelper};
-use super::dmabuf::{DmabufContext, DmabufBuffer, TripleBufferPool, select_best_format, drm_format_to_gst_format};
+use super::dmabuf::{DmabufContext, TripleBufferPool, select_best_format, drm_format_to_gst_format};
 use super::pipeline::{Pipeline, CropRegion};
 use super::encoder::{detect_encoders, EncoderInfo};
 
@@ -460,28 +460,27 @@ fn select_dmabuf_format(
     result
 }
 
-/// Capture a frame using DMA-buf zero-copy path
+/// Capture a frame using DMA-buf zero-copy path with triple buffering
 ///
-/// This captures directly into a DMA-buf, which can then be passed to GStreamer
-/// without any CPU copies. The flow is:
-/// 1. Create wl_buffer from DMA-buf fd
-/// 2. Screencopy captures into the DMA-buf (GPU operation)
-/// 3. Pass same DMA-buf fd to GStreamer (GPU encodes directly)
-fn capture_frame_dmabuf(
+/// Uses a rotating pool of 3 buffers to avoid blocking:
+/// - Buffer N: Being captured by compositor
+/// - Buffer N-1: Being encoded by GStreamer
+/// - Buffer N-2: Ready for next capture
+///
+/// This allows the compositor and encoder to work in parallel.
+fn capture_frame_dmabuf_triple(
     wayland_helper: &WaylandHelper,
     session: &crate::wayland::Session,
-    dmabuf: &DmabufBuffer,
+    pool: &mut TripleBufferPool,
     pipeline: &Pipeline,
     timestamp: u64,
 ) -> Result<()> {
+    // Get current buffer from the pool
+    let dmabuf = pool.current();
+
     // Create wl_buffer from DMA-buf fd using linux-dmabuf protocol
     let fourcc = dmabuf.format as u32;
     let modifier = u64::from(dmabuf.modifier);
-
-    log::debug!(
-        "Creating wl_buffer from DMA-buf: {}x{}, format=0x{:08x}, modifier=0x{:016x}, stride={}",
-        dmabuf.width, dmabuf.height, fourcc, modifier, dmabuf.stride
-    );
 
     let wl_buffer = wayland_helper
         .create_dmabuf_buffer(
@@ -512,6 +511,9 @@ fn capture_frame_dmabuf(
     // Push DMA-buf fd to GStreamer (zero-copy to encoder)
     use std::os::fd::AsRawFd;
     pipeline.push_dmabuf_frame(dmabuf.fd.as_raw_fd(), dmabuf.size, timestamp)?;
+
+    // Advance to next buffer for next frame
+    pool.advance();
 
     Ok(())
 }
