@@ -371,11 +371,13 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
             // Draw a red border rectangle OUTSIDE the recording region
             // so it's not captured in the recording
             let border_width = 4.0;
-            // Position the path so the inner edge of the stroke aligns with the region boundary
-            let x = self.region.0 as f32 - border_width / 2.0;
-            let y = self.region.1 as f32 - border_width / 2.0;
-            let w = self.region.2 as f32 + border_width;
-            let h = self.region.3 as f32 + border_width;
+            // Add safety margin to account for rounding/scaling errors
+            let margin = 2.0;
+            // Position the path so the border is entirely outside the region
+            let x = self.region.0 as f32 - border_width - margin;
+            let y = self.region.1 as f32 - border_width - margin;
+            let w = self.region.2 as f32 + (border_width + margin) * 2.0;
+            let h = self.region.3 as f32 + (border_width + margin) * 2.0;
 
             let path = Path::rectangle(
                 cosmic::iced_core::Point::new(x, y),
