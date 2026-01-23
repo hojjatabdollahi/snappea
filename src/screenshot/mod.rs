@@ -970,7 +970,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                             id: indicator_id,
                             layer: Layer::Overlay,
                             keyboard_interactivity: KeyboardInteractivity::None,
-                            input_zone: None, // Fully transparent to input
+                            input_zone: Some(vec![]), // Empty input region = fully transparent to input
                             anchor: Anchor::all(), // Cover full output
                             output: IcedOutput::Output(wl_output),
                             namespace: "snappea-indicator".to_string(),
