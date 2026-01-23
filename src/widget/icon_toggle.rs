@@ -7,15 +7,16 @@
 
 use cosmic::iced::Size;
 use cosmic::iced_core::{
-    Background, Border, Color, Layout, Length, Rectangle, layout,
+    layout,
     mouse::{self, Cursor},
     renderer::Quad,
     widget::Tree,
+    Background, Border, Color, Layout, Length, Rectangle,
 };
 use cosmic::widget::icon;
 use cosmic::Element;
-use cosmic_time::{chain, Duration, Ease, Exponential, lazy, toggler, Timeline};
 use cosmic_time::once_cell::sync::Lazy;
+use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
 use std::rc::Rc;
 
 /// Animation ID for the capture mode toggle
@@ -29,7 +30,9 @@ const TOGGLE_ANIM_DURATION_MS: u64 = 180;
 pub fn get_toggle_percent(timeline: &Timeline, is_video_mode: bool) -> f32 {
     timeline
         .get(&CAPTURE_MODE_TOGGLE_ID.clone().into(), 0)
-        .map_or(if is_video_mode { 1.0 } else { 0.0 }, |interped| interped.value)
+        .map_or(if is_video_mode { 1.0 } else { 0.0 }, |interped| {
+            interped.value
+        })
 }
 
 /// Create an animation chain for toggling to video mode (A -> B)
@@ -55,10 +58,10 @@ pub fn toggle_to_screenshot() -> cosmic_time::chain::Toggler {
 }
 
 // Layout constants
-const PILL_THICKNESS: f32 = 56.0; // Slightly larger than toolbar buttons
-const CIRCLE_SIZE: f32 = 44.0; // Selection circle inside the pill
-const ICON_SIZE: f32 = 28.0; // Larger icons for better visibility
-const PILL_LENGTH: f32 = 100.0; // Length of the pill (width if horizontal, height if vertical)
+const PILL_THICKNESS: f32 = 28.0; // Slightly larger than toolbar buttons
+const CIRCLE_SIZE: f32 = 22.0; // Selection circle inside the pill
+const ICON_SIZE: f32 = 14.0; // Larger icons for better visibility
+const PILL_LENGTH: f32 = 50.0; // Length of the pill (width if horizontal, height if vertical)
 
 /// A toggle widget that switches between two icons with a pill + circle design
 pub struct IconToggle<'a, Msg> {
@@ -78,11 +81,7 @@ pub struct IconToggle<'a, Msg> {
 
 impl<'a, Msg> IconToggle<'a, Msg> {
     /// Create a new icon toggle widget (horizontal by default, no callback)
-    pub fn new(
-        icon_a: &'a str,
-        icon_b: &'a str,
-        is_b_selected: bool,
-    ) -> Self {
+    pub fn new(icon_a: &'a str, icon_b: &'a str, is_b_selected: bool) -> Self {
         Self {
             icon_a_name: icon_a,
             icon_b_name: icon_b,
@@ -114,7 +113,8 @@ impl<'a, Msg> IconToggle<'a, Msg> {
 
     /// Get the effective animation percent for rendering
     fn effective_percent(&self) -> f32 {
-        self.animation_percent.unwrap_or(if self.is_b_selected { 1.0 } else { 0.0 })
+        self.animation_percent
+            .unwrap_or(if self.is_b_selected { 1.0 } else { 0.0 })
     }
 
     /// Calculate the total widget width
@@ -232,17 +232,18 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         let hover_color = Color::from_rgba(accent_color.r, accent_color.g, accent_color.b, 0.3);
 
         // Calculate icon center positions based on orientation
-        let (icon_a_center_x, icon_a_center_y, icon_b_center_x, icon_b_center_y) = if self.is_vertical {
-            let center_x = bounds.x + PILL_THICKNESS / 2.0;
-            let icon_a_y = bounds.y + PILL_LENGTH / 4.0;
-            let icon_b_y = bounds.y + PILL_LENGTH * 3.0 / 4.0;
-            (center_x, icon_a_y, center_x, icon_b_y)
-        } else {
-            let center_y = bounds.y + PILL_THICKNESS / 2.0;
-            let icon_a_x = bounds.x + PILL_LENGTH / 4.0;
-            let icon_b_x = bounds.x + PILL_LENGTH * 3.0 / 4.0;
-            (icon_a_x, center_y, icon_b_x, center_y)
-        };
+        let (icon_a_center_x, icon_a_center_y, icon_b_center_x, icon_b_center_y) =
+            if self.is_vertical {
+                let center_x = bounds.x + PILL_THICKNESS / 2.0;
+                let icon_a_y = bounds.y + PILL_LENGTH / 4.0;
+                let icon_b_y = bounds.y + PILL_LENGTH * 3.0 / 4.0;
+                (center_x, icon_a_y, center_x, icon_b_y)
+            } else {
+                let center_y = bounds.y + PILL_THICKNESS / 2.0;
+                let icon_a_x = bounds.x + PILL_LENGTH / 4.0;
+                let icon_b_x = bounds.x + PILL_LENGTH * 3.0 / 4.0;
+                (icon_a_x, center_y, icon_b_x, center_y)
+            };
 
         // Check hover state
         let icon_a_bounds = self.icon_a_bounds(bounds);
@@ -336,11 +337,10 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         let icon_a_selected = percent < 0.5;
         let icon_b_selected = percent >= 0.5;
 
-        let selected_icon_class = cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
-            cosmic::iced_widget::svg::Style {
+        let selected_icon_class =
+            cosmic::theme::Svg::Custom(Rc::new(move |_theme| cosmic::iced_widget::svg::Style {
                 color: Some(Color::WHITE),
-            }
-        }));
+            }));
 
         // Draw icon A
         let icon_a_class = if icon_a_selected {
@@ -349,19 +349,17 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
             cosmic::theme::Svg::Default
         };
 
-        let icon_a_widget = icon::Icon::from(
-            icon::from_name(self.icon_a_name).size(ICON_SIZE as u16),
-        )
-        .width(Length::Fixed(ICON_SIZE))
-        .height(Length::Fixed(ICON_SIZE))
-        .class(icon_a_class);
+        let icon_a_widget =
+            icon::Icon::from(icon::from_name(self.icon_a_name).size(ICON_SIZE as u16))
+                .width(Length::Fixed(ICON_SIZE))
+                .height(Length::Fixed(ICON_SIZE))
+                .class(icon_a_class);
 
-        let icon_a_layout = layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(
-            cosmic::iced::Point::new(
+        let icon_a_layout =
+            layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(cosmic::iced::Point::new(
                 icon_a_center_x - ICON_SIZE / 2.0,
                 icon_a_center_y - ICON_SIZE / 2.0,
-            ),
-        );
+            ));
 
         // Convert Icon to Element, then get the widget to draw
         let icon_a_element: Element<'_, Msg> = icon_a_widget.into();
@@ -382,19 +380,17 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
             cosmic::theme::Svg::Default
         };
 
-        let icon_b_widget = icon::Icon::from(
-            icon::from_name(self.icon_b_name).size(ICON_SIZE as u16),
-        )
-        .width(Length::Fixed(ICON_SIZE))
-        .height(Length::Fixed(ICON_SIZE))
-        .class(icon_b_class);
+        let icon_b_widget =
+            icon::Icon::from(icon::from_name(self.icon_b_name).size(ICON_SIZE as u16))
+                .width(Length::Fixed(ICON_SIZE))
+                .height(Length::Fixed(ICON_SIZE))
+                .class(icon_b_class);
 
-        let icon_b_layout = layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(
-            cosmic::iced::Point::new(
+        let icon_b_layout =
+            layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(cosmic::iced::Point::new(
                 icon_b_center_x - ICON_SIZE / 2.0,
                 icon_b_center_y - ICON_SIZE / 2.0,
-            ),
-        );
+            ));
 
         let icon_b_element: Element<'_, Msg> = icon_b_widget.into();
         icon_b_element.as_widget().draw(
