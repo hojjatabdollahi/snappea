@@ -419,14 +419,8 @@ impl Screenshot {
                 detection: DetectionState::default(),
                 annotations: AnnotationState::default(),
                 ui: {
-                    // Detect available encoders
-                    use crate::screencast::encoder::detect_encoders;
-                    let available_encoders = detect_encoders().unwrap_or_default();
-                    let encoder_displays: Vec<(String, String)> = available_encoders
-                        .iter()
-                        .map(|e| (e.display_name(), e.gst_element.clone()))
-                        .collect();
-
+                    // Start with empty encoders - they will be detected asynchronously
+                    // This allows the UI to show immediately without waiting for GStreamer
                     UiState {
                         toolbar_position: config.toolbar_position,
                         settings_drawer_open: false,
@@ -441,8 +435,8 @@ impl Screenshot {
                         save_location_setting: config.save_location,
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         tesseract_available: is_tesseract_available(),
-                        available_encoders,
-                        encoder_displays,
+                        available_encoders: Vec::new(),
+                        encoder_displays: Vec::new(),
                         selected_encoder: config.video_encoder.clone(),
                         video_container: config.video_container,
                         video_framerate: config.video_framerate,
@@ -624,6 +618,17 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             }
             SettingsMsg::SetVideoFramerate(framerate) => {
                 settings_handlers::handle_set_video_framerate(args, framerate)
+            }
+            SettingsMsg::EncodersDetected(encoders) => {
+                // Update UI with detected encoders
+                let encoder_displays: Vec<(String, String)> = encoders
+                    .iter()
+                    .map(|e| (e.display_name(), e.gst_element.clone()))
+                    .collect();
+                log::debug!("Encoders detected: {} available", encoders.len());
+                args.ui.available_encoders = encoders;
+                args.ui.encoder_displays = encoder_displays;
+                cosmic::Task::none()
             }
         }
     })
@@ -2041,7 +2046,28 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
                 },
             )
             .collect();
-        cosmic::Task::batch(cmds)
+
+        // Detect encoders asynchronously so UI appears immediately
+        let encoder_task = cosmic::Task::perform(
+            async {
+                // Run encoder detection in a blocking task to not block the async runtime
+                tokio::task::spawn_blocking(|| {
+                    use crate::screencast::encoder::detect_encoders;
+                    detect_encoders().unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default()
+            },
+            |encoders| {
+                crate::core::app::Msg::Screenshot(
+                    crate::session::messages::Msg::Settings(
+                        crate::session::messages::SettingsMsg::EncodersDetected(encoders)
+                    )
+                )
+            },
+        );
+
+        cosmic::Task::batch(cmds).chain(encoder_task)
     } else {
         log::info!("Existing screenshot args updated");
         cosmic::Task::none()

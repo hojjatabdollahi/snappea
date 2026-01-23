@@ -218,6 +218,8 @@ pub enum SettingsMsg {
     SetVideoContainer(Container),
     /// Set video framerate
     SetVideoFramerate(u32),
+    /// Encoders have been detected asynchronously
+    EncodersDetected(Vec<crate::screencast::encoder::EncoderInfo>),
 }
 
 // ============================================================================

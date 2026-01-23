@@ -3,6 +3,8 @@
 //! Manages the state file that tracks active recording sessions
 
 use anyhow::{Context, Result};
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
@@ -90,53 +92,82 @@ pub fn is_recording() -> bool {
     }
 }
 
-/// Stop the currently active recording
+/// Stop the currently active recording (non-blocking)
+///
+/// Sends SIGTERM to the recorder process and spawns a background thread
+/// to handle cleanup. Returns immediately so the UI can appear fast.
 pub fn stop_recording() -> Result<()> {
     let state = RecordingState::load()?
         .context("No active recording found")?;
 
+    let pid = Pid::from_raw(state.pid as i32);
+
     // Send SIGTERM to recorder process
     if process_alive(state.pid) {
-        log::info!("Stopping recorder process {} gracefully...", state.pid);
-        unsafe {
-            libc::kill(state.pid as i32, libc::SIGTERM);
+        log::info!("Sending SIGTERM to recorder process {}...", state.pid);
+        if let Err(e) = signal::kill(pid, Signal::SIGTERM) {
+            log::error!("Failed to send SIGTERM to process {}: {}", state.pid, e);
         }
 
-        // Wait up to 5 seconds for graceful shutdown
-        for _ in 0..50 {
-            if !process_alive(state.pid) {
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-
-        // Force kill if still alive
-        if process_alive(state.pid) {
-            log::warn!(
-                "Recorder process {} did not terminate gracefully, force killing",
-                state.pid
-            );
-            unsafe {
-                libc::kill(state.pid as i32, libc::SIGKILL);
-            }
-        }
+        // Spawn background thread to wait and cleanup
+        // This allows the UI to appear immediately
+        let output_file = state.output_file.clone();
+        std::thread::spawn(move || {
+            cleanup_recording(state.pid, output_file);
+        });
     } else {
         log::warn!(
             "Recorder process {} is already dead, cleaning up state",
             state.pid
         );
+        RecordingState::delete().ok();
     }
 
-    RecordingState::delete()?;
-    log::info!("Recording stopped, saved to: {}", state.output_file.display());
-    // TODO: Show success notification to user when cosmic notification API is available
     Ok(())
+}
+
+/// Background cleanup after stopping recording
+fn cleanup_recording(pid: u32, output_file: PathBuf) {
+    let nix_pid = Pid::from_raw(pid as i32);
+
+    // Wait up to 5 seconds for graceful shutdown
+    for _ in 0..50 {
+        if !process_alive(pid) {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+
+    // Force kill if still alive
+    if process_alive(pid) {
+        log::warn!(
+            "Recorder process {} did not terminate gracefully, force killing",
+            pid
+        );
+        if let Err(e) = signal::kill(nix_pid, Signal::SIGKILL) {
+            log::error!("Failed to send SIGKILL to process {}: {}", pid, e);
+        }
+
+        // Wait a bit more for the kill to take effect
+        for _ in 0..10 {
+            if !process_alive(pid) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+    }
+
+    // Clean up state file
+    if let Err(e) = RecordingState::delete() {
+        log::error!("Failed to delete recording state: {}", e);
+    }
+
+    log::info!("Recording stopped, saved to: {}", output_file.display());
+    // TODO: Show success notification to user when cosmic notification API is available
 }
 
 /// Check if a process is alive
 fn process_alive(pid: u32) -> bool {
-    unsafe {
-        // Signal 0 checks if process exists without sending a signal
-        libc::kill(pid as i32, 0) == 0
-    }
+    // Signal 0 checks if process exists without sending a signal
+    signal::kill(Pid::from_raw(pid as i32), None).is_ok()
 }
