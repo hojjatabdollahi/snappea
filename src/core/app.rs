@@ -27,6 +27,21 @@ pub struct App {
     pub wayland_helper: crate::wayland::WaylandHelper,
     pub outputs: Vec<OutputState>,
     pub active_output: Option<WlOutput>,
+    /// Recording indicator overlay state
+    pub recording_indicator: Option<RecordingIndicator>,
+}
+
+/// State for the recording indicator overlay
+#[derive(Debug, Clone)]
+pub struct RecordingIndicator {
+    /// Window ID for the layer surface
+    pub window_id: window::Id,
+    /// Output name where recording is happening
+    pub output_name: String,
+    /// Recording region in output-local logical coordinates
+    pub region: (i32, i32, u32, u32),
+    /// Current blink state (true = visible border)
+    pub blink_visible: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -48,6 +63,10 @@ pub enum Msg {
     Portal(screenshot::Event),
     Output(OutputEvent, WlOutput),
     Keyboard(cosmic::iced::keyboard::Event),
+    /// Toggle recording indicator blink state
+    RecordingBlink,
+    /// Recording has stopped
+    RecordingStopped,
 }
 
 impl cosmic::Application for App {
@@ -82,6 +101,7 @@ impl cosmic::Application for App {
                 active_output: Default::default(),
                 wayland_helper,
                 tx: None,
+                recording_indicator: None,
             },
             cosmic::iced::Task::none(),
         )
@@ -94,6 +114,15 @@ impl cosmic::Application for App {
     fn view_window(&self, id: window::Id) -> cosmic::Element<'_, Self::Message> {
         if self.outputs.iter().any(|o| o.id == id) {
             screenshot::view(self, id).map(Msg::Screenshot)
+        } else if let Some(indicator) = &self.recording_indicator {
+            if indicator.window_id == id {
+                // Render the blinking recording indicator
+                render_recording_indicator(indicator)
+            } else {
+                cosmic::widget::horizontal_space()
+                    .width(cosmic::iced_core::Length::Fixed(1.0))
+                    .into()
+            }
         } else {
             cosmic::widget::horizontal_space()
                 .width(cosmic::iced_core::Length::Fixed(1.0))
@@ -130,6 +159,21 @@ impl cosmic::Application for App {
                 }
             },
             Msg::Screenshot(m) => screenshot::update_msg(self, m).map(cosmic::Action::App),
+            Msg::RecordingBlink => {
+                if let Some(indicator) = &mut self.recording_indicator {
+                    indicator.blink_visible = !indicator.blink_visible;
+                }
+                cosmic::iced::Task::none()
+            }
+            Msg::RecordingStopped => {
+                if let Some(indicator) = self.recording_indicator.take() {
+                    log::info!("Recording stopped, destroying indicator overlay");
+                    return cosmic::iced_winit::commands::layer_surface::destroy_layer_surface(
+                        indicator.window_id,
+                    );
+                }
+                cosmic::iced::Task::none()
+            }
             Msg::Output(o_event, wl_output) => {
                 match o_event {
                     OutputEvent::Created(Some(info))
@@ -194,7 +238,7 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> cosmic::iced_futures::Subscription<Self::Message> {
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             portal_subscription(self.wayland_helper.clone()).map(Msg::Portal),
             listen_with(|e, _, _| match e {
                 cosmic::iced_core::Event::PlatformSpecific(
@@ -208,6 +252,25 @@ impl cosmic::Application for App {
                 _ => None,
             }),
         ];
+
+        // Add blink timer when recording indicator is active
+        if self.recording_indicator.is_some() {
+            subscriptions.push(
+                cosmic::iced::time::every(std::time::Duration::from_millis(500))
+                    .map(|_| Msg::RecordingBlink),
+            );
+            // Check if recording is still active (every second)
+            subscriptions.push(
+                cosmic::iced::time::every(std::time::Duration::from_millis(1000)).map(|_| {
+                    if crate::screencast::is_recording() {
+                        Msg::RecordingBlink // Keep indicator alive (noop blink)
+                    } else {
+                        Msg::RecordingStopped
+                    }
+                }),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 }
@@ -272,4 +335,66 @@ pub(crate) async fn process_changes(
         }
     };
     Ok(())
+}
+
+/// Render the recording indicator overlay - a blinking red border
+fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element<'static, Msg> {
+    use cosmic::iced_core::Length;
+    use cosmic::iced_widget::canvas::{self, Geometry, Path, Stroke};
+
+    // We need to store region info to use in the closure
+    let region = indicator.region;
+    let visible = indicator.blink_visible;
+
+    struct RecordingBorder {
+        region: (i32, i32, u32, u32),
+        visible: bool,
+    }
+
+    impl canvas::Program<Msg, cosmic::Theme, cosmic::Renderer> for RecordingBorder {
+        type State = ();
+
+        fn draw(
+            &self,
+            _state: &Self::State,
+            renderer: &cosmic::Renderer,
+            _theme: &cosmic::Theme,
+            bounds: cosmic::iced_core::Rectangle,
+            _cursor: cosmic::iced_core::mouse::Cursor,
+        ) -> Vec<Geometry> {
+            if !self.visible {
+                return vec![];
+            }
+
+            let mut frame = canvas::Frame::new(renderer, bounds.size());
+
+            // Draw a red border rectangle at the recording region position
+            let border_width = 4.0;
+            let x = self.region.0 as f32 + border_width / 2.0;
+            let y = self.region.1 as f32 + border_width / 2.0;
+            let w = self.region.2 as f32 - border_width;
+            let h = self.region.3 as f32 - border_width;
+
+            let path = Path::rectangle(
+                cosmic::iced_core::Point::new(x, y),
+                cosmic::iced_core::Size::new(w, h),
+            );
+
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_color(cosmic::iced_core::Color::from_rgb(1.0, 0.0, 0.0))
+                    .with_width(border_width),
+            );
+
+            vec![frame.into_geometry()]
+        }
+    }
+
+    let program = RecordingBorder { region, visible };
+
+    canvas::Canvas::new(program)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
 }

@@ -27,7 +27,7 @@ use crate::capture::qr::{DetectedQrCode, detect_qr_codes_at_resolution, is_dupli
 use crate::config::{
     SnapPeaConfig, SaveLocation,
 };
-use crate::core::app::{App, OutputState};
+use crate::core::app::{App, OutputState, RecordingIndicator};
 use crate::core::portal::PortalResponse;
 use crate::render::image::draw_annotations_in_order;
 use crate::session::messages::{
@@ -860,6 +860,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
 
             // Spawn subprocess with --record args
             // Pass logical region and logical output size - recorder will scale to physical
+            let output_name_for_indicator = output_name.clone();
             let mut args_vec = vec![
                 "--record".to_string(),
                 "--output".to_string(),
@@ -941,8 +942,51 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                         }
                     });
 
-                    // Close UI - same as Cancel
-                    handle_cancel_inner(app)
+                    // Create recording indicator overlay
+                    let indicator_id = window::Id::unique();
+                    let indicator_output = selected_output
+                        .map(|o| o.output.clone())
+                        .or_else(|| app.outputs.first().map(|o| o.output.clone()));
+
+                    let indicator_task = if let Some(wl_output) = indicator_output {
+                        // Store the indicator state
+                        app.recording_indicator = Some(RecordingIndicator {
+                            window_id: indicator_id,
+                            output_name: output_name_for_indicator,
+                            region: local_region,
+                            blink_visible: true,
+                        });
+
+                        log::info!(
+                            "Creating recording indicator overlay: id={:?}, region={:?}",
+                            indicator_id,
+                            local_region
+                        );
+
+                        // Create layer surface for the indicator on the Overlay layer
+                        // Overlay layer is NOT captured by screencopy
+                        // Note: We cover the full output and render the indicator at the correct position
+                        get_layer_surface(SctkLayerSurfaceSettings {
+                            id: indicator_id,
+                            layer: Layer::Overlay,
+                            keyboard_interactivity: KeyboardInteractivity::None,
+                            input_zone: None, // Fully transparent to input
+                            anchor: Anchor::all(), // Cover full output
+                            output: IcedOutput::Output(wl_output),
+                            namespace: "snappea-indicator".to_string(),
+                            size: Some((None, None)), // Full output size
+                            exclusive_zone: -1,
+                            size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                            ..Default::default()
+                        })
+                    } else {
+                        cosmic::Task::none()
+                    };
+
+                    // Close screenshot UI surfaces
+                    let cancel_task = handle_cancel_inner(app);
+
+                    cosmic::Task::batch([indicator_task, cancel_task])
                 }
                 Err(e) => {
                     log::error!(
