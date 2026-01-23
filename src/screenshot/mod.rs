@@ -652,6 +652,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 return cosmic::Task::none();
             };
 
+            // Track if we're recording a specific window (toplevel)
+            let mut toplevel_index: Option<usize> = None;
+
             let region = match &args.session.choice {
                 Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
                     (rect.left, rect.top, rect.width() as u32, rect.height() as u32)
@@ -670,11 +673,14 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                         return cosmic::Task::none();
                     }
                 }
-                Choice::Window(output_name, Some(_window_index)) => {
-                    // For window recording, record the full output containing the window
-                    // Wayland screencopy doesn't support per-window capture directly
+                Choice::Window(output_name, Some(window_index)) => {
+                    // For window recording, use toplevel screencopy (same as screenshots)
+                    // Store the window index for passing to the recorder subprocess
+                    toplevel_index = Some(*window_index);
+
                     if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
-                        log::info!("Recording full output '{}' for window selection", output_name);
+                        log::info!("Recording window {} on output '{}'", window_index, output_name);
+                        // Pass output region - recorder will use toplevel capture and skip cropping
                         (
                             output.logical_pos.0,
                             output.logical_pos.1,
@@ -782,7 +788,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
 
             // Spawn subprocess with --record args
             // Pass logical region and logical output size - recorder will scale to physical
-            let args_vec = vec![
+            let mut args_vec = vec![
                 "--record".to_string(),
                 "--output".to_string(),
                 output_file.display().to_string(),
@@ -799,6 +805,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 "--framerate".to_string(),
                 framerate.to_string(),
             ];
+
+            // Add toplevel index for window recording
+            if let Some(idx) = toplevel_index {
+                args_vec.push("--toplevel-index".to_string());
+                args_vec.push(idx.to_string());
+                log::info!("Adding --toplevel-index {} for window recording", idx);
+            }
 
             let exe = match std::env::current_exe() {
                 Ok(exe) => exe,

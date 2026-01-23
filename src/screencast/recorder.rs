@@ -27,6 +27,7 @@ static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// * `encoder` - Encoder element name
 /// * `container` - Container format
 /// * `framerate` - Frames per second
+/// * `toplevel_index` - Optional index of toplevel (window) to capture instead of region
 pub fn start_recording(
     output_file: PathBuf,
     output_name: String,
@@ -35,14 +36,25 @@ pub fn start_recording(
     encoder: String,
     container: crate::config::Container,
     framerate: u32,
+    toplevel_index: Option<usize>,
 ) -> Result<()> {
-    log::info!(
-        "Starting recording: output={}, region={:?}, encoder={}, fps={}",
-        output_file.display(),
-        region,
-        encoder,
-        framerate
-    );
+    if let Some(idx) = toplevel_index {
+        log::info!(
+            "Starting window recording: output={}, toplevel_index={}, encoder={}, fps={}",
+            output_file.display(),
+            idx,
+            encoder,
+            framerate
+        );
+    } else {
+        log::info!(
+            "Starting region recording: output={}, region={:?}, encoder={}, fps={}",
+            output_file.display(),
+            region,
+            encoder,
+            framerate
+        );
+    }
 
     // Set up SIGTERM handler for graceful shutdown
     setup_signal_handler()?;
@@ -84,10 +96,30 @@ pub fn start_recording(
 
     log::info!("Found output: {}", output_name);
 
-    // Create screencopy session for the output
-    let capture_source = CaptureSource::Output(output);
+    // Determine capture source: toplevel (window) or output (screen/region)
+    let capture_source = if let Some(idx) = toplevel_index {
+        // Get toplevels for this output
+        let toplevels = wayland_helper.output_toplevels(&output);
+        log::info!("Output '{}' has {} toplevels", output_name, toplevels.len());
+
+        if idx >= toplevels.len() {
+            anyhow::bail!(
+                "Toplevel index {} out of range. Output '{}' has {} toplevels.",
+                idx,
+                output_name,
+                toplevels.len()
+            );
+        }
+
+        let toplevel = toplevels[idx].clone();
+        log::info!("Using toplevel at index {} for recording", idx);
+        CaptureSource::Toplevel(toplevel)
+    } else {
+        CaptureSource::Output(output.clone())
+    };
+
     let overlay_cursor = false; // Don't capture cursor in recordings
-    let session = wayland_helper.capture_source_session(capture_source, overlay_cursor);
+    let session = wayland_helper.capture_source_session(capture_source.clone(), overlay_cursor);
 
     // Wait for formats to be negotiated
     log::info!("Waiting for screencopy formats...");
@@ -191,7 +223,11 @@ pub fn start_recording(
     );
 
     // Calculate crop region if recording a subset of the screen
-    let crop = if physical_x != 0 || physical_y != 0
+    // For toplevel capture, we record the entire window (no crop)
+    let crop = if toplevel_index.is_some() {
+        log::info!("Toplevel capture: recording entire window ({}x{})", buffer_width, buffer_height);
+        None
+    } else if physical_x != 0 || physical_y != 0
         || physical_width != buffer_width || physical_height != buffer_height
     {
         log::info!(
@@ -319,7 +355,24 @@ pub fn start_recording(
                 }
             };
 
-            let session = helper.capture_source_session(CaptureSource::Output(output), false);
+            // Determine capture source: toplevel or output
+            let capture_source = if let Some(idx) = toplevel_index {
+                let toplevels = helper.output_toplevels(&output);
+                if idx >= toplevels.len() {
+                    log::error!(
+                        "Capture thread: toplevel index {} out of range (only {} toplevels)",
+                        idx,
+                        toplevels.len()
+                    );
+                    return;
+                }
+                log::info!("Capture thread: using toplevel at index {}", idx);
+                CaptureSource::Toplevel(toplevels[idx].clone())
+            } else {
+                CaptureSource::Output(output)
+            };
+
+            let session = helper.capture_source_session(capture_source, false);
 
             while !stop_capture_clone.load(Ordering::Relaxed) {
                 match capture_frame_shm(&helper, &session, &formats_clone) {

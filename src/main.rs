@@ -29,6 +29,7 @@ fn main() -> cosmic::iced::Result {
         let mut encoder = None;
         let mut container = config::Container::Mp4;
         let mut framerate = 60;
+        let mut toplevel_index: Option<usize> = None;
 
         let mut i = 2;
         while i < args.len() {
@@ -112,6 +113,14 @@ fn main() -> cosmic::iced::Result {
                         i += 1;
                     }
                 }
+                "--toplevel-index" => {
+                    if i + 1 < args.len() {
+                        toplevel_index = args[i + 1].parse().ok();
+                        i += 2;
+                    } else {
+                        i += 1;
+                    }
+                }
                 _ => i += 1,
             }
         }
@@ -140,6 +149,7 @@ fn main() -> cosmic::iced::Result {
                 encoder,
                 container,
                 framerate,
+                toplevel_index,
             ) {
                 log::error!("Recording failed: {}", e);
                 let _ = screencast::RecordingState::delete();
@@ -153,7 +163,7 @@ fn main() -> cosmic::iced::Result {
         } else {
             log::error!("Missing required arguments for --record");
             log::error!(
-                "Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS]"
+                "Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS] [--toplevel-index IDX]"
             );
             std::process::exit(1);
         }

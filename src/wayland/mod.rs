@@ -280,6 +280,17 @@ impl WaylandHelper {
         self.inner.output_infos.lock().unwrap().get(output).cloned()
     }
 
+    /// Get the toplevels (windows) visible on a specific output
+    pub fn output_toplevels(&self, output: &wl_output::WlOutput) -> Vec<ExtForeignToplevelHandleV1> {
+        self.inner
+            .output_toplevels
+            .lock()
+            .unwrap()
+            .get(output)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     fn set_output_info(&self, output: &wl_output::WlOutput, output_info_opt: Option<OutputInfo>) {
         let mut output_infos = self.inner.output_infos.lock().unwrap();
         match output_info_opt {
