@@ -424,6 +424,10 @@ impl Screenshot {
                     UiState {
                         toolbar_position: config.toolbar_position,
                         settings_drawer_open: false,
+                        settings_tab: crate::session::state::SettingsTab::General,
+                        settings_tab_model: crate::session::state::SettingsTabModel::new(
+                            crate::session::state::SettingsTab::General,
+                        ),
                         primary_shape_tool: config.primary_shape_tool,
                         shape_popup_open: false,
                         shape_color: config.shape_color,
@@ -434,6 +438,7 @@ impl Screenshot {
                         magnifier_enabled: config.magnifier_enabled,
                         save_location_setting: config.save_location,
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+                        toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
                         tesseract_available: is_tesseract_available(),
                         available_encoders: Vec::new(),
                         encoder_displays: Vec::new(),
@@ -613,6 +618,12 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 }
             },
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
+            SettingsMsg::SetSettingsTab(tab) => {
+                settings_handlers::handle_set_settings_tab(args, tab)
+            }
+            SettingsMsg::SetToolbarOpacity(opacity) => {
+                settings_handlers::handle_set_toolbar_opacity(args, opacity)
+            }
             SettingsMsg::SetVideoEncoder(encoder) => {
                 settings_handlers::handle_set_video_encoder(args, encoder)
             }

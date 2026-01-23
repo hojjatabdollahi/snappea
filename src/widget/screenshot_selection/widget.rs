@@ -394,6 +394,7 @@ where
             on_event(ScreenshotEvent::settings_drawer_toggle()),
             ui.settings_drawer_open,
             ui.settings_drawer_open || ui.shape_popup_open || ui.redact_popup_open,
+            ui.toolbar_unhovered_opacity,
             output_ctx.output_count,
             ui.tesseract_available,
             ui.is_video_mode,
@@ -458,6 +459,16 @@ where
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
+                &ui.settings_tab_model,
+                {
+                    let on_event = on_event.clone();
+                    move |tab| on_event(ScreenshotEvent::settings_tab_selected(tab))
+                },
+                ui.toolbar_unhovered_opacity,
+                {
+                    let on_event = on_event.clone();
+                    move |opacity| on_event(ScreenshotEvent::toolbar_opacity_changed(opacity))
+                },
                 // Recording settings
                 ui.encoder_displays.clone(),
                 ui.selected_encoder.clone(),

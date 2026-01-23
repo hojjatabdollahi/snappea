@@ -432,6 +432,11 @@ impl<'a, Msg: 'static + Clone> HatContainer<'a, Msg> {
         self.force_opaque = force;
         self
     }
+
+    pub fn unhovered_opacity(mut self, opacity: f32) -> Self {
+        self.unhovered_opacity = opacity.clamp(0.1, 1.0);
+        self
+    }
 }
 
 impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
@@ -959,6 +964,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_settings_toggle: Msg,
     settings_drawer_open: bool,
     force_toolbar_opaque: bool,
+    toolbar_unhovered_opacity: f32,
     output_count: usize,
     tesseract_available: bool,
     is_video_mode: bool,
@@ -1483,6 +1489,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
     HatContainer::new(toolbar_toggle, toolbar_body)
         .placement(placement)
+        .unhovered_opacity(toolbar_unhovered_opacity)
         .force_opaque(force_toolbar_opaque)
         .into()
 }

@@ -1,20 +1,19 @@
-use std::collections::HashMap;
-use tokio::sync::mpsc::Sender;
-use zbus::zvariant;
 use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{OcrStatus, OcrTextOverlay};
 use crate::capture::qr::DetectedQrCode;
-use crate::config::{
-    Container, RedactTool, SaveLocation, ShapeColor, ShapeTool, ToolbarPosition,
-};
-use crate::core::portal::{PortalResponse};
+use crate::config::{Container, RedactTool, SaveLocation, ShapeColor, ShapeTool, ToolbarPosition};
+use crate::core::portal::PortalResponse;
 use crate::domain::{
-    Action, Annotation, ArrowAnnotation, Choice, CircleOutlineAnnotation,
-    ImageSaveLocation, PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
+    Action, Annotation, ArrowAnnotation, Choice, CircleOutlineAnnotation, ImageSaveLocation,
+    PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
 };
-use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
 use crate::screencast::encoder::EncoderInfo;
+use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
+use cosmic::widget::segmented_button;
 use cosmic_time::Timeline;
+use std::collections::HashMap;
+use tokio::sync::mpsc::Sender;
+use zbus::zvariant;
 
 #[derive(Clone, Debug)]
 pub struct PortalContext {
@@ -195,10 +194,96 @@ pub struct SessionState {
     pub also_copy_to_clipboard: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SettingsTab {
+    General,
+    Picture,
+    Video,
+}
+
+#[derive(Debug)]
+pub struct SettingsTabModel {
+    pub model: segmented_button::SingleSelectModel,
+    pub general_id: segmented_button::Entity,
+    pub picture_id: segmented_button::Entity,
+    pub video_id: segmented_button::Entity,
+    pub active_tab: SettingsTab,
+}
+
+unsafe impl Send for SettingsTabModel {}
+unsafe impl Sync for SettingsTabModel {}
+
+impl SettingsTabModel {
+    pub fn new(active_tab: SettingsTab) -> Self {
+        let mut general_id = None;
+        let mut picture_id = None;
+        let mut video_id = None;
+
+        let mut model = segmented_button::Model::builder()
+            .insert(|b| {
+                b.text("General")
+                    .with_id(|id| general_id = Some(id))
+                    .data(SettingsTab::General)
+            })
+            .insert(|b| {
+                b.text("Picture")
+                    .with_id(|id| picture_id = Some(id))
+                    .data(SettingsTab::Picture)
+            })
+            .insert(|b| {
+                b.text("Video")
+                    .with_id(|id| video_id = Some(id))
+                    .data(SettingsTab::Video)
+            })
+            .build();
+
+        let general_id = general_id.expect("General tab id missing");
+        let picture_id = picture_id.expect("Picture tab id missing");
+        let video_id = video_id.expect("Video tab id missing");
+
+        let active_id = match active_tab {
+            SettingsTab::General => general_id,
+            SettingsTab::Picture => picture_id,
+            SettingsTab::Video => video_id,
+        };
+        model.activate(active_id);
+
+        Self {
+            model,
+            general_id,
+            picture_id,
+            video_id,
+            active_tab,
+        }
+    }
+
+    pub fn activate_tab(&mut self, tab: SettingsTab) {
+        if self.active_tab == tab {
+            return;
+        }
+
+        let id = match tab {
+            SettingsTab::General => self.general_id,
+            SettingsTab::Picture => self.picture_id,
+            SettingsTab::Video => self.video_id,
+        };
+        self.model.activate(id);
+        self.active_tab = tab;
+    }
+}
+
+impl Clone for SettingsTabModel {
+    fn clone(&self) -> Self {
+        Self::new(self.active_tab)
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct UiState {
     pub toolbar_position: ToolbarPosition,
     pub settings_drawer_open: bool,
+    pub settings_tab: SettingsTab,
+    pub settings_tab_model: SettingsTabModel,
     pub primary_shape_tool: ShapeTool,
     pub shape_popup_open: bool,
     pub shape_color: ShapeColor,
@@ -209,6 +294,7 @@ pub struct UiState {
     pub magnifier_enabled: bool,
     pub save_location_setting: SaveLocation,
     pub copy_to_clipboard_on_save: bool,
+    pub toolbar_unhovered_opacity: f32,
     pub tesseract_available: bool,
     // Recording settings
     pub available_encoders: Vec<EncoderInfo>,

@@ -10,6 +10,7 @@ use crate::capture::ocr::OcrStatus;
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
+use crate::session::state::SettingsTab;
 use cosmic::iced::time::Instant;
 use cosmic::iced::window;
 
@@ -216,6 +217,10 @@ pub enum SettingsMsg {
     SetSaveLocation(SaveLocationChoice),
     /// Toggle copy to clipboard on save
     ToggleCopyOnSave,
+    /// Select active settings tab
+    SetSettingsTab(SettingsTab),
+    /// Set toolbar opacity when not hovered
+    SetToolbarOpacity(f32),
     /// Set video encoder (gst_element name)
     SetVideoEncoder(String),
     /// Set video container format
@@ -458,6 +463,12 @@ impl Msg {
     }
     pub fn toggle_copy_on_save() -> Self {
         Self::Settings(SettingsMsg::ToggleCopyOnSave)
+    }
+    pub fn set_settings_tab(tab: SettingsTab) -> Self {
+        Self::Settings(SettingsMsg::SetSettingsTab(tab))
+    }
+    pub fn set_toolbar_opacity(opacity: f32) -> Self {
+        Self::Settings(SettingsMsg::SetToolbarOpacity(opacity))
     }
     pub fn set_video_encoder(encoder: String) -> Self {
         Self::Settings(SettingsMsg::SetVideoEncoder(encoder))

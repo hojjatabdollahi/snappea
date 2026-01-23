@@ -1,6 +1,6 @@
 //! Configuration persistence for snappea settings
 
-use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
+use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
 use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
 
@@ -200,6 +200,9 @@ pub struct SnapPeaConfig {
     pub pixelation_block_size: u32,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
+    /// Toolbar opacity when not hovered (0.0-1.0)
+    #[serde(default = "default_toolbar_unhovered_opacity")]
+    pub toolbar_unhovered_opacity: f32,
     /// Video encoder to use (None = auto-detect hardware encoder)
     pub video_encoder: Option<String>,
     /// Video container format
@@ -208,6 +211,10 @@ pub struct SnapPeaConfig {
     pub video_framerate: u32,
     /// Whether to show cursor in recordings
     pub video_show_cursor: bool,
+}
+
+fn default_toolbar_unhovered_opacity() -> f32 {
+    0.5
 }
 
 impl SnapPeaConfig {
@@ -267,6 +274,8 @@ impl Default for SnapPeaConfig {
             pixelation_block_size: 16,
             // Default toolbar position at the bottom
             toolbar_position: ToolbarPosition::Bottom,
+            // Default toolbar opacity when idle
+            toolbar_unhovered_opacity: default_toolbar_unhovered_opacity(),
             // Recording defaults
             video_encoder: None, // Auto-detect
             video_container: Container::Mp4,

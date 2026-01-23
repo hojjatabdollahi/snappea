@@ -1,13 +1,14 @@
 //! Settings drawer widget that opens relative to the toolbar
 
-use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
-use cosmic::widget::{container, radio, text};
+use cosmic::widget::{container, radio, tab_bar, text};
+use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
+use crate::session::state::{SettingsTab, SettingsTabModel};
 
 /// Build the settings drawer element
 #[allow(clippy::too_many_arguments)]
@@ -21,6 +22,10 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     copy_to_clipboard_on_save: bool,
     on_copy_on_save_toggle: Msg,
     on_github_click: Msg,
+    settings_tab_model: &'a SettingsTabModel,
+    on_settings_tab_select: impl Fn(SettingsTab) -> Msg + Clone + 'a,
+    toolbar_unhovered_opacity: f32,
+    on_toolbar_opacity_change: impl Fn(f32) -> Msg + Clone + 'a,
     // Recording settings
     available_encoders: Vec<(String, String)>, // (display_name, gst_element)
     selected_encoder: Option<String>,
@@ -39,6 +44,30 @@ where
     G: Fn(Container) -> Msg + Clone + 'a,
     H: Fn(u32) -> Msg + Clone + 'a,
 {
+    let general_msg = on_settings_tab_select.clone()(SettingsTab::General);
+    let picture_msg = on_settings_tab_select.clone()(SettingsTab::Picture);
+    let video_msg = on_settings_tab_select.clone()(SettingsTab::Video);
+
+    let general_id = settings_tab_model.general_id;
+    let picture_id = settings_tab_model.picture_id;
+    let video_id = settings_tab_model.video_id;
+
+    let tabs_row: Element<'_, Msg> = container(
+        tab_bar::horizontal(&settings_tab_model.model).on_activate(move |entity| {
+            if entity == general_id {
+                general_msg.clone()
+            } else if entity == picture_id {
+                picture_msg.clone()
+            } else if entity == video_id {
+                video_msg.clone()
+            } else {
+                general_msg.clone()
+            }
+        }),
+    )
+    .width(Length::Fill)
+    .into();
+
     // Magnifier toggle row
     let magnifier_row = row![
         text::body("Magnifier"),
@@ -83,6 +112,17 @@ where
     .spacing(space_s)
     .align_y(cosmic::iced_core::Alignment::Center)
     .width(Length::Fill);
+
+    let opacity_percent = (toolbar_unhovered_opacity.clamp(0.1, 1.0) * 100.0).round() as i32;
+    let toolbar_opacity_label = text::body(format!("Toolbar opacity (idle): {}%", opacity_percent));
+    let toolbar_opacity_slider = cosmic::widget::slider(20..=100, opacity_percent, move |v| {
+        on_toolbar_opacity_change(v as f32 / 100.0)
+    })
+    .step(5)
+    .width(Length::Fill);
+    let toolbar_opacity_section = column![toolbar_opacity_label, toolbar_opacity_slider]
+        .spacing(space_xs)
+        .width(Length::Fill);
 
     // Recording settings section
     let recording_label = text::body("Recording:");
@@ -175,9 +215,12 @@ where
     let about_section = row![
         snappea_logo,
         column![
-            row![text::title4("SnapPea"), text::caption(format!("v{}", version)),]
-                .spacing(space_xs)
-                .align_y(cosmic::iced_core::Alignment::Center),
+            row![
+                text::title4("SnapPea"),
+                text::caption(format!("v{}", version)),
+            ]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
             row![
                 text::caption("by Hojjat Abdollahi"),
                 cosmic::widget::button::icon(
@@ -194,14 +237,18 @@ where
     .spacing(space_s)
     .align_y(cosmic::iced_core::Alignment::Center);
 
-    let drawer_content: Element<'_, Msg> = column![
+    let picture_tab_content: Element<'_, Msg> = column![
         magnifier_row,
         cosmic::widget::divider::horizontal::light(),
         save_location_label,
         save_location_row,
         cosmic::widget::divider::horizontal::light(),
         copy_on_save_row,
-        cosmic::widget::divider::horizontal::light(),
+    ]
+    .spacing(space_xs)
+    .into();
+
+    let video_tab_content: Element<'_, Msg> = column![
         recording_label,
         encoder_label,
         encoder_column_items,
@@ -210,8 +257,28 @@ where
         framerate_label,
         framerate_row,
         show_cursor_row,
+    ]
+    .spacing(space_xs)
+    .into();
+
+    let general_tab_content: Element<'_, Msg> = column![
+        toolbar_opacity_section,
         cosmic::widget::divider::horizontal::light(),
         about_section,
+    ]
+    .spacing(space_xs)
+    .into();
+
+    let tab_content: Element<'_, Msg> = match settings_tab_model.active_tab {
+        SettingsTab::General => general_tab_content,
+        SettingsTab::Picture => picture_tab_content,
+        SettingsTab::Video => video_tab_content,
+    };
+
+    let drawer_content: Element<'_, Msg> = column![
+        tabs_row,
+        cosmic::widget::divider::horizontal::light(),
+        tab_content,
     ]
     .spacing(space_xs)
     .padding(space_s)

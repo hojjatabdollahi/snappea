@@ -6,6 +6,7 @@
 
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
+use crate::session::state::SettingsTab;
 use wayland_client::protocol::wl_output::WlOutput;
 
 /// Point in widget coordinates
@@ -124,6 +125,10 @@ pub enum SettingsEvent {
     SaveLocationDocuments,
     /// Copy on save toggled
     CopyOnSaveToggle,
+    /// Settings tab selected
+    TabSelected(SettingsTab),
+    /// Toolbar opacity updated
+    ToolbarOpacityChanged(f32),
     /// Video encoder selected (gst_element name)
     VideoEncoderSet(String),
     /// Video container format selected
@@ -394,6 +399,14 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::CopyOnSaveToggle)
     }
 
+    pub fn settings_tab_selected(tab: SettingsTab) -> Self {
+        Self::Settings(SettingsEvent::TabSelected(tab))
+    }
+
+    pub fn toolbar_opacity_changed(opacity: f32) -> Self {
+        Self::Settings(SettingsEvent::ToolbarOpacityChanged(opacity))
+    }
+
     pub fn video_encoder_set(encoder: String) -> Self {
         Self::Settings(SettingsEvent::VideoEncoderSet(encoder))
     }
@@ -538,6 +551,10 @@ impl ScreenshotEvent {
                 Msg::set_save_location_documents()
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
+            Self::Settings(SettingsEvent::TabSelected(tab)) => Msg::set_settings_tab(tab),
+            Self::Settings(SettingsEvent::ToolbarOpacityChanged(opacity)) => {
+                Msg::set_toolbar_opacity(opacity)
+            }
             Self::Settings(SettingsEvent::VideoEncoderSet(encoder)) => {
                 Msg::set_video_encoder(encoder)
             }
@@ -554,9 +571,9 @@ impl ScreenshotEvent {
             Self::Capture(CaptureEvent::SaveToPictures) => Msg::save_to_pictures(),
             Self::Capture(CaptureEvent::RecordRegion) => Msg::record_region(),
             Self::Capture(CaptureEvent::Cancel) => Msg::cancel(),
-            Self::Capture(CaptureEvent::CaptureModeToggle(is_video)) => {
-                Msg::Capture(crate::session::messages::CaptureMsg::ToggleCaptureMode(is_video))
-            }
+            Self::Capture(CaptureEvent::CaptureModeToggle(is_video)) => Msg::Capture(
+                crate::session::messages::CaptureMsg::ToggleCaptureMode(is_video),
+            ),
         }
     }
 }
