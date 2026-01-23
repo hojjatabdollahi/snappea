@@ -5,18 +5,17 @@
 //! Supports both horizontal and vertical orientations.
 //! Supports smooth animation via cosmic-time.
 
+use cosmic::Element;
 use cosmic::iced::Size;
 use cosmic::iced_core::{
-    layout,
+    Background, Border, Color, Layout, Length, Rectangle, layout,
     mouse::{self, Cursor},
     renderer::Quad,
     widget::Tree,
-    Background, Border, Color, Layout, Length, Rectangle,
 };
 use cosmic::widget::icon;
-use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
+use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
 use std::rc::Rc;
 
 /// Animation ID for the capture mode toggle
@@ -58,10 +57,10 @@ pub fn toggle_to_screenshot() -> cosmic_time::chain::Toggler {
 }
 
 // Layout constants
-const PILL_THICKNESS: f32 = 28.0; // Slightly larger than toolbar buttons
-const CIRCLE_SIZE: f32 = 22.0; // Selection circle inside the pill
-const ICON_SIZE: f32 = 14.0; // Larger icons for better visibility
-const PILL_LENGTH: f32 = 50.0; // Length of the pill (width if horizontal, height if vertical)
+const PILL_THICKNESS: f32 = 38.0; // Slightly larger than toolbar buttons
+const CIRCLE_SIZE: f32 = 32.0; // Selection circle inside the pill
+const ICON_SIZE: f32 = 24.0; // Larger icons for better visibility
+const PILL_LENGTH: f32 = 80.0; // Length of the pill (width if horizontal, height if vertical)
 
 /// A toggle widget that switches between two icons with a pill + circle design
 pub struct IconToggle<'a, Msg> {

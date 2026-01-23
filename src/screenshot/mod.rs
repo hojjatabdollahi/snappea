@@ -425,9 +425,6 @@ impl Screenshot {
                         toolbar_position: config.toolbar_position,
                         settings_drawer_open: false,
                         settings_tab: crate::session::state::SettingsTab::General,
-                        settings_tab_model: crate::session::state::SettingsTabModel::new(
-                            crate::session::state::SettingsTab::General,
-                        ),
                         primary_shape_tool: config.primary_shape_tool,
                         shape_popup_open: false,
                         shape_color: config.shape_color,
@@ -528,6 +525,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         &args.annotations,
         &args.detection,
         &args.ui,
+        &app.settings_tab_model,
         output_ctx,
         has_any_annotations,
         has_any_redactions,
@@ -600,7 +598,27 @@ fn handle_select_msg(app: &mut App, msg: SelectMsg) -> cosmic::Task<crate::core:
 
 /// Handle Settings messages (UI and config)
 fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::core::app::Msg> {
+    use crate::session::state::SettingsTab;
     use crate::widget::settings_handlers;
+
+    // Handle SettingsTabActivated specially - we need access to app.settings_tab_model
+    if let SettingsMsg::SettingsTabActivated(entity) = msg {
+        // Look up the SettingsTab data from the entity
+        let tab = app
+            .settings_tab_model
+            .data::<SettingsTab>(entity)
+            .copied()
+            .unwrap_or(SettingsTab::General);
+
+        // Activate the entity in the model
+        app.settings_tab_model.activate(entity);
+
+        // Update args.ui.settings_tab
+        if let Some(args) = app.screenshot_args.as_mut() {
+            args.ui.settings_tab = tab;
+        }
+        return cosmic::Task::none();
+    }
 
     with_args!(app, |args| {
         match msg {
@@ -618,8 +636,9 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 }
             },
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
-            SettingsMsg::SetSettingsTab(tab) => {
-                settings_handlers::handle_set_settings_tab(args, tab)
+            SettingsMsg::SettingsTabActivated(_) => {
+                // Already handled above
+                cosmic::Task::none()
             }
             SettingsMsg::SetToolbarOpacity(opacity) => {
                 settings_handlers::handle_set_toolbar_opacity(args, opacity)

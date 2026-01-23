@@ -1,8 +1,10 @@
 use crate::core::portal::{DBUS_NAME, DBUS_PATH};
 use crate::screenshot;
 use crate::session::messages;
+use crate::session::state::SettingsTab;
 use cosmic::Task;
 use cosmic::iced_core::event::wayland::OutputEvent;
+use cosmic::widget::segmented_button;
 use cosmic::{
     app,
     iced::window,
@@ -19,6 +21,15 @@ pub(crate) fn run() -> cosmic::iced::Result {
     cosmic::app::run::<App>(settings, ())
 }
 
+/// Create a new settings tab segmented button model
+pub fn create_settings_tab_model() -> segmented_button::SingleSelectModel {
+    segmented_button::Model::builder()
+        .insert(|b| b.text("General").data(SettingsTab::General).activate())
+        .insert(|b| b.text("Picture").data(SettingsTab::Picture))
+        .insert(|b| b.text("Video").data(SettingsTab::Video))
+        .build()
+}
+
 pub struct App {
     pub core: app::Core,
     pub tx: Option<tokio::sync::mpsc::Sender<screenshot::Event>>,
@@ -29,6 +40,8 @@ pub struct App {
     pub active_output: Option<WlOutput>,
     /// Recording indicator overlay state
     pub recording_indicator: Option<RecordingIndicator>,
+    /// Settings tab segmented button model (stored here since it's not Send)
+    pub settings_tab_model: segmented_button::SingleSelectModel,
 }
 
 /// A single annotation stroke with fade state
@@ -147,6 +160,7 @@ impl cosmic::Application for App {
                 wayland_helper,
                 tx: None,
                 recording_indicator: None,
+                settings_tab_model: create_settings_tab_model(),
             },
             cosmic::iced::Task::none(),
         )

@@ -18,6 +18,8 @@ use cosmic::{
 };
 use cosmic_bg_config::Source;
 
+use cosmic::widget::segmented_button;
+
 use crate::{
     capture::image::ScreenshotImage,
     config::{ShapeTool, ToolbarPosition},
@@ -98,6 +100,7 @@ where
     pub annotations: &'a AnnotationState,
     pub detection: &'a DetectionState,
     pub ui: &'a UiState,
+    pub settings_tab_model: &'a segmented_button::SingleSelectModel,
 
     // Output context
     pub output_ctx: OutputContext,
@@ -147,6 +150,7 @@ where
         annotations: &'a AnnotationState,
         detection: &'a DetectionState,
         ui: &'a UiState,
+        settings_tab_model: &'a segmented_button::SingleSelectModel,
         output_ctx: OutputContext,
         has_any_annotations: bool,
         has_any_redactions: bool,
@@ -459,10 +463,11 @@ where
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
-                &ui.settings_tab_model,
+                ui.settings_tab,
+                settings_tab_model,
                 {
                     let on_event = on_event.clone();
-                    move |tab| on_event(ScreenshotEvent::settings_tab_selected(tab))
+                    move |entity| on_event(ScreenshotEvent::settings_tab_activated(entity))
                 },
                 ui.toolbar_unhovered_opacity,
                 {
@@ -542,6 +547,7 @@ where
             annotations,
             detection,
             ui,
+            settings_tab_model,
             output_ctx,
             has_any_annotations,
             has_any_redactions,

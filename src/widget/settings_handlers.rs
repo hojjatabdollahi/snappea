@@ -7,7 +7,6 @@
 use crate::config::{Container, SaveLocation, SnapPeaConfig, ToolbarPosition};
 use crate::screenshot::handlers::HandlerResult;
 use crate::screenshot::Args;
-use crate::session::state::SettingsTab;
 
 /// Handle ToolbarPositionChange message
 pub fn handle_toolbar_position_change(args: &mut Args, position: ToolbarPosition) -> HandlerResult {
@@ -68,12 +67,8 @@ pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {
     cosmic::Task::none()
 }
 
-/// Handle SetSettingsTab message
-pub fn handle_set_settings_tab(args: &mut Args, tab: SettingsTab) -> HandlerResult {
-    args.ui.settings_tab = tab;
-    args.ui.settings_tab_model.activate_tab(tab);
-    cosmic::Task::none()
-}
+// Note: SettingsTab activation is handled directly in screenshot/mod.rs
+// because it needs access to app.settings_tab_model
 
 /// Handle SetToolbarOpacity message
 pub fn handle_set_toolbar_opacity(args: &mut Args, opacity: f32) -> HandlerResult {

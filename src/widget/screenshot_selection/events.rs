@@ -6,7 +6,7 @@
 
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
-use crate::session::state::SettingsTab;
+use cosmic::widget::segmented_button;
 use wayland_client::protocol::wl_output::WlOutput;
 
 /// Point in widget coordinates
@@ -125,8 +125,8 @@ pub enum SettingsEvent {
     SaveLocationDocuments,
     /// Copy on save toggled
     CopyOnSaveToggle,
-    /// Settings tab selected
-    TabSelected(SettingsTab),
+    /// Settings tab activated (by entity from segmented button)
+    TabActivated(segmented_button::Entity),
     /// Toolbar opacity updated
     ToolbarOpacityChanged(f32),
     /// Video encoder selected (gst_element name)
@@ -399,8 +399,8 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::CopyOnSaveToggle)
     }
 
-    pub fn settings_tab_selected(tab: SettingsTab) -> Self {
-        Self::Settings(SettingsEvent::TabSelected(tab))
+    pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
+        Self::Settings(SettingsEvent::TabActivated(entity))
     }
 
     pub fn toolbar_opacity_changed(opacity: f32) -> Self {
@@ -551,7 +551,9 @@ impl ScreenshotEvent {
                 Msg::set_save_location_documents()
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
-            Self::Settings(SettingsEvent::TabSelected(tab)) => Msg::set_settings_tab(tab),
+            Self::Settings(SettingsEvent::TabActivated(entity)) => {
+                Msg::settings_tab_activated(entity)
+            }
             Self::Settings(SettingsEvent::ToolbarOpacityChanged(opacity)) => {
                 Msg::set_toolbar_opacity(opacity)
             }

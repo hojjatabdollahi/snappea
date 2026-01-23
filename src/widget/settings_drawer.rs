@@ -3,12 +3,12 @@
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
-use cosmic::widget::{container, radio, tab_bar, text};
+use cosmic::widget::{container, radio, segmented_button, segmented_control, text};
 use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
-use crate::session::state::{SettingsTab, SettingsTabModel};
+use crate::session::state::SettingsTab;
 
 /// Build the settings drawer element
 #[allow(clippy::too_many_arguments)]
@@ -22,8 +22,9 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     copy_to_clipboard_on_save: bool,
     on_copy_on_save_toggle: Msg,
     on_github_click: Msg,
-    settings_tab_model: &'a SettingsTabModel,
-    on_settings_tab_select: impl Fn(SettingsTab) -> Msg + Clone + 'a,
+    settings_tab: SettingsTab,
+    settings_tab_model: &'a segmented_button::SingleSelectModel,
+    on_settings_tab_activate: impl Fn(segmented_button::Entity) -> Msg + 'static,
     toolbar_unhovered_opacity: f32,
     on_toolbar_opacity_change: impl Fn(f32) -> Msg + Clone + 'a,
     // Recording settings
@@ -44,29 +45,11 @@ where
     G: Fn(Container) -> Msg + Clone + 'a,
     H: Fn(u32) -> Msg + Clone + 'a,
 {
-    let general_msg = on_settings_tab_select.clone()(SettingsTab::General);
-    let picture_msg = on_settings_tab_select.clone()(SettingsTab::Picture);
-    let video_msg = on_settings_tab_select.clone()(SettingsTab::Video);
-
-    let general_id = settings_tab_model.general_id;
-    let picture_id = settings_tab_model.picture_id;
-    let video_id = settings_tab_model.video_id;
-
-    let tabs_row: Element<'_, Msg> = container(
-        tab_bar::horizontal(&settings_tab_model.model).on_activate(move |entity| {
-            if entity == general_id {
-                general_msg.clone()
-            } else if entity == picture_id {
-                picture_msg.clone()
-            } else if entity == video_id {
-                video_msg.clone()
-            } else {
-                general_msg.clone()
-            }
-        }),
-    )
-    .width(Length::Fill)
-    .into();
+    // Build tab row using segmented control
+    // The callback receives the Entity, and the handler will look up the SettingsTab data
+    let tabs_row: Element<'_, Msg> = segmented_control::horizontal(settings_tab_model)
+        .on_activate(on_settings_tab_activate)
+        .into();
 
     // Magnifier toggle row
     let magnifier_row = row![
@@ -269,7 +252,7 @@ where
     .spacing(space_xs)
     .into();
 
-    let tab_content: Element<'_, Msg> = match settings_tab_model.active_tab {
+    let tab_content: Element<'_, Msg> = match settings_tab {
         SettingsTab::General => general_tab_content,
         SettingsTab::Picture => picture_tab_content,
         SettingsTab::Video => video_tab_content,

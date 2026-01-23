@@ -10,9 +10,9 @@ use crate::capture::ocr::OcrStatus;
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
-use crate::session::state::SettingsTab;
 use cosmic::iced::time::Instant;
 use cosmic::iced::window;
+use cosmic::widget::segmented_button;
 
 // ============================================================================
 // Drawing Action Types
@@ -217,8 +217,8 @@ pub enum SettingsMsg {
     SetSaveLocation(SaveLocationChoice),
     /// Toggle copy to clipboard on save
     ToggleCopyOnSave,
-    /// Select active settings tab
-    SetSettingsTab(SettingsTab),
+    /// Settings tab activated (by segmented button entity)
+    SettingsTabActivated(segmented_button::Entity),
     /// Set toolbar opacity when not hovered
     SetToolbarOpacity(f32),
     /// Set video encoder (gst_element name)
@@ -464,8 +464,8 @@ impl Msg {
     pub fn toggle_copy_on_save() -> Self {
         Self::Settings(SettingsMsg::ToggleCopyOnSave)
     }
-    pub fn set_settings_tab(tab: SettingsTab) -> Self {
-        Self::Settings(SettingsMsg::SetSettingsTab(tab))
+    pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
+        Self::Settings(SettingsMsg::SettingsTabActivated(entity))
     }
     pub fn set_toolbar_opacity(opacity: f32) -> Self {
         Self::Settings(SettingsMsg::SetToolbarOpacity(opacity))
