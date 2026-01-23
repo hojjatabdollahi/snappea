@@ -670,55 +670,19 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                         return cosmic::Task::none();
                     }
                 }
-                Choice::Window(output_name, Some(window_index)) => {
-                    // Get window dimensions from toplevel images
-                    if let Some(imgs) = args.capture.toplevel_images.get(output_name) {
-                        if let Some(img) = imgs.get(*window_index) {
-                            if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
-                                let orig_width = img.rgba.width() as f32;
-                                let orig_height = img.rgba.height() as f32;
-                                let output_width = output.logical_size.0 as f32;
-                                let output_height = output.logical_size.1 as f32;
-
-                                // Calculate display bounds (matching capture logic)
-                                let max_width = output_width * 0.85;
-                                let max_height = output_height * 0.85;
-                                let (thumb_width, thumb_height) =
-                                    if orig_width > max_width || orig_height > max_height {
-                                        let pre_scale =
-                                            (max_width / orig_width).min(max_height / orig_height);
-                                        (orig_width * pre_scale, orig_height * pre_scale)
-                                    } else {
-                                        (orig_width, orig_height)
-                                    };
-
-                                let available_width = output_width - 20.0;
-                                let available_height = output_height - 20.0;
-                                let scale_x = available_width / thumb_width;
-                                let scale_y = available_height / thumb_height;
-                                let display_scale = scale_x.min(scale_y).min(1.0);
-
-                                let display_width = thumb_width * display_scale;
-                                let display_height = thumb_height * display_scale;
-                                let sel_x = (output_width - display_width) / 2.0;
-                                let sel_y = (output_height - display_height) / 2.0;
-
-                                (
-                                    (output.logical_pos.0 as f32 + sel_x) as i32,
-                                    (output.logical_pos.1 as f32 + sel_y) as i32,
-                                    display_width as u32,
-                                    display_height as u32,
-                                )
-                            } else {
-                                log::warn!("Record clicked but output not found: {}", output_name);
-                                return cosmic::Task::none();
-                            }
-                        } else {
-                            log::warn!("Record clicked but window index {} not found", window_index);
-                            return cosmic::Task::none();
-                        }
+                Choice::Window(output_name, Some(_window_index)) => {
+                    // For window recording, record the full output containing the window
+                    // Wayland screencopy doesn't support per-window capture directly
+                    if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
+                        log::info!("Recording full output '{}' for window selection", output_name);
+                        (
+                            output.logical_pos.0,
+                            output.logical_pos.1,
+                            output.logical_size.0,
+                            output.logical_size.1,
+                        )
                     } else {
-                        log::warn!("Record clicked but no windows found for output: {}", output_name);
+                        log::warn!("Record clicked but output not found: {}", output_name);
                         return cosmic::Task::none();
                     }
                 }

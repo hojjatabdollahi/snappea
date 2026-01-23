@@ -377,7 +377,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press_maybe(has_selection.then_some(on_record_region))
         .padding(space_xs),
-        "Record selected region (Shift+R)",
+        "Record selection (Shift+R)",
         tooltip::Position::Bottom,
     );
 
