@@ -10,6 +10,8 @@ use crate::capture::ocr::OcrStatus;
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
+use cosmic::iced::time::Instant;
+use cosmic::iced::window;
 
 // ============================================================================
 // Drawing Action Types
@@ -224,6 +226,8 @@ pub enum SettingsMsg {
     ToggleShowCursor,
     /// Encoders have been detected asynchronously
     EncodersDetected(Vec<crate::screencast::encoder::EncoderInfo>),
+    /// Animation timeline tick (window_id, instant)
+    TimelineTick(window::Id, Instant),
 }
 
 // ============================================================================
@@ -466,5 +470,8 @@ impl Msg {
     }
     pub fn toggle_show_cursor() -> Self {
         Self::Settings(SettingsMsg::ToggleShowCursor)
+    }
+    pub fn timeline_tick(window_id: window::Id, instant: Instant) -> Self {
+        Self::Settings(SettingsMsg::TimelineTick(window_id, instant))
     }
 }

@@ -3,6 +3,7 @@
 //! Shows a pill-shaped background with two icons at either end.
 //! The selected icon has a circle behind it inside the pill.
 //! Supports both horizontal and vertical orientations.
+//! Supports smooth animation via cosmic-time.
 
 use cosmic::iced::Size;
 use cosmic::iced_core::{
@@ -13,7 +14,45 @@ use cosmic::iced_core::{
 };
 use cosmic::widget::icon;
 use cosmic::Element;
+use cosmic_time::{chain, Duration, Ease, Exponential, lazy, toggler, Timeline};
+use cosmic_time::once_cell::sync::Lazy;
 use std::rc::Rc;
+
+/// Animation ID for the capture mode toggle
+pub static CAPTURE_MODE_TOGGLE_ID: Lazy<cosmic_time::id::Toggler> =
+    Lazy::new(cosmic_time::id::Toggler::unique);
+
+/// Animation duration for the toggle in milliseconds
+const TOGGLE_ANIM_DURATION_MS: u64 = 180;
+
+/// Get the current animation percent for the capture mode toggle from the timeline
+pub fn get_toggle_percent(timeline: &Timeline, is_video_mode: bool) -> f32 {
+    timeline
+        .get(&CAPTURE_MODE_TOGGLE_ID.clone().into(), 0)
+        .map_or(if is_video_mode { 1.0 } else { 0.0 }, |interped| interped.value)
+}
+
+/// Create an animation chain for toggling to video mode (A -> B)
+pub fn toggle_to_video() -> cosmic_time::chain::Toggler {
+    chain!(
+        CAPTURE_MODE_TOGGLE_ID.clone(),
+        lazy::toggler(Duration::ZERO),
+        toggler(Duration::from_millis(TOGGLE_ANIM_DURATION_MS))
+            .percent(1.0)
+            .ease(Ease::Exponential(Exponential::In)),
+    )
+}
+
+/// Create an animation chain for toggling to screenshot mode (B -> A)
+pub fn toggle_to_screenshot() -> cosmic_time::chain::Toggler {
+    chain!(
+        CAPTURE_MODE_TOGGLE_ID.clone(),
+        lazy::toggler(Duration::ZERO),
+        toggler(Duration::from_millis(TOGGLE_ANIM_DURATION_MS))
+            .percent(0.0)
+            .ease(Ease::Exponential(Exponential::In)),
+    )
+}
 
 // Layout constants
 const PILL_THICKNESS: f32 = 56.0; // Slightly larger than toolbar buttons
@@ -32,6 +71,9 @@ pub struct IconToggle<'a, Msg> {
     is_vertical: bool,
     /// Message to emit when toggled (None = no-op)
     on_toggle: Option<Box<dyn Fn(bool) -> Msg + 'a>>,
+    /// Animation percent (0.0 = A selected, 1.0 = B selected)
+    /// If None, uses is_b_selected directly (no animation)
+    animation_percent: Option<f32>,
 }
 
 impl<'a, Msg> IconToggle<'a, Msg> {
@@ -47,6 +89,7 @@ impl<'a, Msg> IconToggle<'a, Msg> {
             is_b_selected,
             is_vertical: false,
             on_toggle: None,
+            animation_percent: None,
         }
     }
 
@@ -60,6 +103,18 @@ impl<'a, Msg> IconToggle<'a, Msg> {
     pub fn vertical(mut self) -> Self {
         self.is_vertical = true;
         self
+    }
+
+    /// Set the animation percent (0.0 = A, 1.0 = B)
+    /// This is used for smooth animation transitions
+    pub fn percent(mut self, percent: f32) -> Self {
+        self.animation_percent = Some(percent.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Get the effective animation percent for rendering
+    fn effective_percent(&self) -> f32 {
+        self.animation_percent.unwrap_or(if self.is_b_selected { 1.0 } else { 0.0 })
     }
 
     /// Calculate the total widget width
@@ -215,18 +270,25 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
             Background::Color(pill_color),
         );
 
-        // 2. Draw selection circle for the selected icon (inside the pill)
-        let (selected_center_x, selected_center_y) = if self.is_b_selected {
-            (icon_b_center_x, icon_b_center_y)
+        // 2. Draw selection circle - ANIMATED position using percent
+        let percent = self.effective_percent();
+
+        // Interpolate circle position based on animation percent
+        let (circle_center_x, circle_center_y) = if self.is_vertical {
+            // Interpolate Y position
+            let y = icon_a_center_y + (icon_b_center_y - icon_a_center_y) * percent;
+            (icon_a_center_x, y)
         } else {
-            (icon_a_center_x, icon_a_center_y)
+            // Interpolate X position
+            let x = icon_a_center_x + (icon_b_center_x - icon_a_center_x) * percent;
+            (x, icon_a_center_y)
         };
 
         renderer.fill_quad(
             Quad {
                 bounds: Rectangle {
-                    x: selected_center_x - CIRCLE_SIZE / 2.0,
-                    y: selected_center_y - CIRCLE_SIZE / 2.0,
+                    x: circle_center_x - CIRCLE_SIZE / 2.0,
+                    y: circle_center_y - CIRCLE_SIZE / 2.0,
                     width: CIRCLE_SIZE,
                     height: CIRCLE_SIZE,
                 },
@@ -269,7 +331,11 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
             );
         }
 
-        // 4. Draw icons (same size, different colors based on selection)
+        // 4. Draw icons - color based on proximity to selection circle
+        // When animating, both icons should transition their colors smoothly
+        let icon_a_selected = percent < 0.5;
+        let icon_b_selected = percent >= 0.5;
+
         let selected_icon_class = cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
             cosmic::iced_widget::svg::Style {
                 color: Some(Color::WHITE),
@@ -277,7 +343,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         }));
 
         // Draw icon A
-        let icon_a_class = if !self.is_b_selected {
+        let icon_a_class = if icon_a_selected {
             selected_icon_class.clone()
         } else {
             cosmic::theme::Svg::Default
@@ -310,7 +376,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         );
 
         // Draw icon B
-        let icon_b_class = if self.is_b_selected {
+        let icon_b_class = if icon_b_selected {
             selected_icon_class
         } else {
             cosmic::theme::Svg::Default
@@ -433,18 +499,18 @@ impl<'a, Msg: Clone + 'a> From<IconToggle<'a, Msg>> for Element<'a, Msg> {
 ///
 /// Visual design (horizontal):
 /// ```text
-/// ┌────────────────────────┐
-/// │  (A)            B      │  ← A selected
-/// └────────────────────────┘
+/// +------------------------+
+/// |  (A)            B      |  <- A selected
+/// +------------------------+
 /// ```
 ///
 /// Visual design (vertical):
 /// ```text
-/// ┌──────┐
-/// │ (A)  │  ← A selected
-/// │      │
-/// │  B   │
-/// └──────┘
+/// +------+
+/// | (A)  |  <- A selected
+/// |      |
+/// |  B   |
+/// +------+
 /// ```
 ///
 /// # Example
@@ -456,12 +522,14 @@ impl<'a, Msg: Clone + 'a> From<IconToggle<'a, Msg>> for Element<'a, Msg> {
 ///     is_video_mode,
 /// ).on_toggle(Message::ToggleMode)
 ///
-/// // Vertical toggle (no callback - display only)
+/// // Animated toggle with cosmic-time
 /// icon_toggle(
 ///     "camera-photo-symbolic",
 ///     "camera-video-symbolic",
 ///     is_video_mode,
-/// ).vertical()
+/// )
+/// .percent(animation_percent) // 0.0 to 1.0
+/// .on_toggle(Message::ToggleMode)
 /// ```
 pub fn icon_toggle<'a, Msg: Clone + 'a>(
     icon_a: &'a str,

@@ -2,11 +2,11 @@
 
 use std::rc::Rc;
 
-use cosmic::Element;
 use cosmic::iced::Length;
-use cosmic::iced_core::{Background, Border, Layout, Size, layout, widget::Tree};
+use cosmic::iced_core::{layout, widget::Tree, Background, Border, Layout, Size};
 use cosmic::iced_widget::{column, container, row};
 use cosmic::widget::{button, icon, tooltip};
+use cosmic::Element;
 
 use super::icon_toggle::icon_toggle;
 use super::tool_button::{build_shape_button, build_tool_button};
@@ -234,6 +234,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     output_count: usize,
     tesseract_available: bool,
     is_video_mode: bool,
+    toggle_animation_percent: f32,
     on_capture_mode_toggle: impl Fn(bool) -> Msg + 'a,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
@@ -263,12 +264,13 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     )
     .into();
 
-    // Mode toggle - switch between screenshot and video recording
+    // Mode toggle - switch between screenshot and video recording (animated)
     let toggle_widget = icon_toggle(
         "camera-photo-symbolic",
         "camera-video-symbolic",
         is_video_mode,
     )
+    .percent(toggle_animation_percent)
     .on_toggle(on_capture_mode_toggle);
     let mode_toggle: Element<'_, Msg> = tooltip(
         if is_vertical {
@@ -582,7 +584,28 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     let toolbar_content: Element<'_, Msg> = if is_vertical {
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
-        if has_selection {
+        if is_video_mode {
+            column![
+                position_selector,
+                mode_toggle,
+                horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_region, btn_screen]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+                horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_record]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+                horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+            ]
+            .align_x(cosmic::iced_core::Alignment::Center)
+            .spacing(space_s)
+            .padding([space_s, space_xxs, space_s, space_xxs])
+            .into()
+        } else if has_selection {
             let tool_buttons = column![btn_shapes, btn_redact, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_x(cosmic::iced_core::Alignment::Center);
@@ -597,7 +620,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 horizontal::light().width(Length::Fixed(64.0)),
                 tool_buttons,
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save, btn_record]
+                column![btn_copy, btn_save]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -618,7 +641,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save, btn_record]
+                column![btn_copy, btn_save]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -633,7 +656,28 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         }
     } else {
         // Horizontal layout for top/bottom positions
-        if has_selection {
+        if is_video_mode {
+            row![
+                position_selector,
+                mode_toggle,
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_region, btn_screen]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_record]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_settings, btn_close]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+            ]
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .spacing(space_s)
+            .padding([space_xxs, space_s, space_xxs, space_s])
+            .into()
+        } else if has_selection {
             let tool_buttons = row![btn_shapes, btn_redact, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_y(cosmic::iced_core::Alignment::Center);
@@ -648,7 +692,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 vertical::light().height(Length::Fixed(64.0)),
                 tool_buttons,
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save, btn_record]
+                row![btn_copy, btn_save]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
@@ -669,7 +713,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save, btn_record]
+                row![btn_copy, btn_save]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),

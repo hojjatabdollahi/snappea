@@ -397,6 +397,7 @@ where
             output_ctx.output_count,
             ui.tesseract_available,
             ui.is_video_mode,
+            crate::widget::icon_toggle::get_toggle_percent(&ui.timeline, ui.is_video_mode),
             {
                 let on_event = on_event.clone();
                 move |is_video| on_event(ScreenshotEvent::capture_mode_toggle(is_video))

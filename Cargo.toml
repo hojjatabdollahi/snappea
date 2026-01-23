@@ -60,6 +60,10 @@ git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
 
+[dependencies.cosmic-time]
+git = "https://github.com/pop-os/cosmic-time"
+features = ["once_cell"]
+
 [profile.release]
 opt-level = 3
 lto = "thin"

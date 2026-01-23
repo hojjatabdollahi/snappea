@@ -532,6 +532,15 @@ impl cosmic::Application for App {
             );
         }
 
+        // Add timeline subscription for UI animations when screenshot UI is active
+        if let Some(args) = &self.screenshot_args {
+            subscriptions.push(
+                args.ui.timeline.as_subscription().map(|(window_id, instant)| {
+                    Msg::Screenshot(crate::session::messages::Msg::timeline_tick(window_id, instant))
+                }),
+            );
+        }
+
         Subscription::batch(subscriptions)
     }
 }

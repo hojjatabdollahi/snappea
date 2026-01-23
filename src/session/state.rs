@@ -14,6 +14,7 @@ use crate::domain::{
 };
 use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
 use crate::screencast::encoder::EncoderInfo;
+use cosmic_time::Timeline;
 
 #[derive(Clone, Debug)]
 pub struct PortalContext {
@@ -218,6 +219,8 @@ pub struct UiState {
     pub video_show_cursor: bool,
     /// Whether video mode is selected (false = screenshot, true = video)
     pub is_video_mode: bool,
+    /// Animation timeline for UI animations
+    pub timeline: Timeline,
 }
 
 impl UiState {

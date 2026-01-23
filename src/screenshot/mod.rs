@@ -442,6 +442,7 @@ impl Screenshot {
                         video_framerate: config.video_framerate,
                         video_show_cursor: config.video_show_cursor,
                         is_video_mode: false,
+                        timeline: cosmic_time::Timeline::new(),
                     }
                 },
             }))
@@ -638,6 +639,11 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 log::debug!("Encoders detected: {} available", encoders.len());
                 args.ui.available_encoders = encoders;
                 args.ui.encoder_displays = encoder_displays;
+                cosmic::Task::none()
+            }
+            SettingsMsg::TimelineTick(_window_id, instant) => {
+                // Update the timeline's current time for animation interpolation
+                args.ui.timeline.now(instant);
                 cosmic::Task::none()
             }
         }
@@ -1046,6 +1052,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             log::info!("Capture mode toggled: is_video_mode = {}", is_video);
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.is_video_mode = is_video;
+                // Set up the animation chain
+                let chain = if is_video {
+                    crate::widget::icon_toggle::toggle_to_video()
+                } else {
+                    crate::widget::icon_toggle::toggle_to_screenshot()
+                };
+                args.ui.timeline.set_chain(chain).start();
             }
             cosmic::Task::none()
         }
