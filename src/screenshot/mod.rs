@@ -949,28 +949,61 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                         .or_else(|| app.outputs.first().map(|o| o.output.clone()));
 
                     let indicator_task = if let Some(wl_output) = indicator_output {
+                        // Toolbar dimensions - must match constants in render_recording_indicator
+                        let toolbar_width = 140.0f32;
+                        let toolbar_height = 56.0f32;
+                        let toolbar_margin = 8.0f32;
+
+                        // Initial toolbar position: OUTSIDE recording area (above it, right-aligned)
+                        // If no room above, fall back to inside at top-right
+                        let toolbar_x = local_region.0 as f32 + local_region.2 as f32 - toolbar_width;
+                        let toolbar_y = if local_region.1 as f32 >= toolbar_height + toolbar_margin {
+                            // Room above - position outside
+                            local_region.1 as f32 - toolbar_height - toolbar_margin
+                        } else {
+                            // No room above - position inside at top with margin
+                            local_region.1 as f32 + toolbar_margin
+                        };
+
                         // Store the indicator state
                         app.recording_indicator = Some(RecordingIndicator {
                             window_id: indicator_id,
                             output_name: output_name_for_indicator,
+                            output: wl_output.clone(),
                             region: local_region,
                             blink_visible: true,
+                            annotations: Vec::new(),
+                            current_stroke: None,
+                            super_pressed: false,
+                            ctrl_pressed: false,
+                            annotation_mode: false,
+                            toolbar_pos: (toolbar_x, toolbar_y),
+                            toolbar_dragging: false,
+                            drag_offset: (0.0, 0.0),
                         });
 
                         log::info!(
-                            "Creating recording indicator overlay: id={:?}, region={:?}",
+                            "Creating recording indicator overlay: id={:?}, region={:?}, toolbar at ({}, {})",
                             indicator_id,
-                            local_region
+                            local_region,
+                            toolbar_x,
+                            toolbar_y
                         );
 
                         // Create layer surface for the indicator on the Overlay layer
                         // Overlay layer is NOT captured by screencopy
-                        // Note: We cover the full output and render the indicator at the correct position
+                        // Initially, only the toolbar captures input (rest is click-through)
+                        // When annotation mode is activated, full input capture is enabled
                         get_layer_surface(SctkLayerSurfaceSettings {
                             id: indicator_id,
                             layer: Layer::Overlay,
                             keyboard_interactivity: KeyboardInteractivity::None,
-                            input_zone: Some(vec![]), // Empty input region = fully transparent to input
+                            input_zone: Some(vec![cosmic::iced_core::Rectangle {
+                                x: toolbar_x,
+                                y: toolbar_y,
+                                width: toolbar_width,
+                                height: toolbar_height,
+                            }]), // Only toolbar captures input initially
                             anchor: Anchor::all(), // Cover full output
                             output: IcedOutput::Output(wl_output),
                             namespace: "snappea-indicator".to_string(),
