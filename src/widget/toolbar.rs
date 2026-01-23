@@ -581,13 +581,12 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
-    let toolbar_content: Element<'_, Msg> = if is_vertical {
+    let toolbar_body_content: Element<'_, Msg> = if is_vertical {
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
         if is_video_mode {
             column![
                 position_selector,
-                mode_toggle,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_screen]
                     .spacing(space_s)
@@ -612,7 +611,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
             column![
                 position_selector,
-                mode_toggle,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -635,7 +633,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             column![
                 position_selector,
-                mode_toggle,
                 horizontal::light().width(Length::Fixed(64.0)),
                 column![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -659,7 +656,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         if is_video_mode {
             row![
                 position_selector,
-                mode_toggle,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_screen]
                     .spacing(space_s)
@@ -684,7 +680,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
             row![
                 position_selector,
-                mode_toggle,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -707,7 +702,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             row![
                 position_selector,
-                mode_toggle,
                 vertical::light().height(Length::Fixed(64.0)),
                 row![btn_region, btn_window, btn_screen]
                     .spacing(space_s)
@@ -729,7 +723,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     };
 
     // Use transparent background - HoverOpacity handles the background drawing
-    let toolbar = cosmic::widget::container(toolbar_content).class(
+    let toolbar_body = cosmic::widget::container(toolbar_body_content).class(
         cosmic::theme::Container::Custom(Box::new(|theme| {
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
@@ -741,7 +735,47 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })),
     );
 
-    HoverOpacity::new(toolbar)
+    let toolbar_body: Element<'_, Msg> = HoverOpacity::new(toolbar_body)
         .force_opaque(force_toolbar_opaque)
-        .into()
+        .into();
+
+    let toolbar_toggle = cosmic::widget::container(mode_toggle)
+        .padding(space_xxs)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: None, // HoverOpacity draws the background with opacity
+                text_color: Some(theme.background.component.on.into()),
+                border: Border::default(),
+                ..Default::default()
+            }
+        })));
+
+    let toolbar_toggle: Element<'_, Msg> = HoverOpacity::new(toolbar_toggle)
+        .force_opaque(force_toolbar_opaque)
+        .into();
+
+    let toolbar_content: Element<'_, Msg> = if is_vertical {
+        let content = match toolbar_position {
+            ToolbarPosition::Right => row![toolbar_toggle, toolbar_body],
+            _ => row![toolbar_body, toolbar_toggle],
+        };
+
+        content
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .spacing(space_xxs)
+            .into()
+    } else {
+        let content = match toolbar_position {
+            ToolbarPosition::Top => column![toolbar_body, toolbar_toggle],
+            _ => column![toolbar_toggle, toolbar_body],
+        };
+
+        content
+            .align_x(cosmic::iced_core::Alignment::Center)
+            .spacing(space_xxs)
+            .into()
+    };
+
+    toolbar_content
 }
