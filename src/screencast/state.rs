@@ -1,18 +1,63 @@
-//! Recording state persistence
+//! Recording state management
 //!
-//! Manages the state file that tracks active recording sessions
+//! Manages active recording sessions with thread-based control
 
 use anyhow::{Context, Result};
-use nix::sys::signal::{self, Signal};
-use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
-/// Recording state persisted to disk
+/// Global recording handle - only one recording can be active at a time
+static RECORDING_HANDLE: Mutex<Option<RecordingHandle>> = Mutex::new(None);
+
+/// Handle to control an active recording
+pub struct RecordingHandle {
+    /// Flag to signal the recording thread to stop
+    pub stop_flag: Arc<AtomicBool>,
+    /// Thread handle for joining
+    thread_handle: Option<JoinHandle<Result<()>>>,
+    /// Recording metadata
+    pub state: RecordingState,
+}
+
+impl RecordingHandle {
+    /// Create a new recording handle
+    pub fn new(
+        stop_flag: Arc<AtomicBool>,
+        thread_handle: JoinHandle<Result<()>>,
+        state: RecordingState,
+    ) -> Self {
+        Self {
+            stop_flag,
+            thread_handle: Some(thread_handle),
+            state,
+        }
+    }
+
+    /// Signal the recording to stop
+    pub fn request_stop(&self) {
+        log::info!("Requesting recording stop...");
+        self.stop_flag.store(true, Ordering::SeqCst);
+    }
+
+    /// Wait for the recording thread to finish
+    pub fn join(mut self) -> Result<()> {
+        if let Some(handle) = self.thread_handle.take() {
+            match handle.join() {
+                Ok(result) => result,
+                Err(_) => Err(anyhow::anyhow!("Recording thread panicked")),
+            }
+        } else {
+            Ok(())
+        }
+    }
+}
+
+/// Recording state metadata
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecordingState {
-    /// Process ID of the recorder subprocess
-    pub pid: u32,
     /// Output file path
     pub output_file: PathBuf,
     /// Recording region (x, y, width, height)
@@ -24,33 +69,20 @@ pub struct RecordingState {
 }
 
 impl RecordingState {
-    /// Get the path to the state file
+    /// Get the path to the state file (for compatibility with external tools)
     fn state_file_path() -> Result<PathBuf> {
         let runtime_dir = std::env::var("XDG_RUNTIME_DIR")
             .context("XDG_RUNTIME_DIR not set")?;
         Ok(PathBuf::from(runtime_dir).join("snappea-recording.json"))
     }
 
-    /// Save state to disk
+    /// Save state to disk (for external tools to detect active recording)
     pub fn save(&self) -> Result<()> {
         let path = Self::state_file_path()?;
         let json = serde_json::to_string_pretty(self)?;
         std::fs::write(&path, json)
             .with_context(|| format!("Failed to write state file: {}", path.display()))?;
         Ok(())
-    }
-
-    /// Load state from disk if it exists
-    pub fn load() -> Result<Option<Self>> {
-        let path = Self::state_file_path()?;
-        if !path.exists() {
-            return Ok(None);
-        }
-
-        let json = std::fs::read_to_string(&path)
-            .with_context(|| format!("Failed to read state file: {}", path.display()))?;
-        let state: RecordingState = serde_json::from_str(&json)?;
-        Ok(Some(state))
     }
 
     /// Delete state file
@@ -64,110 +96,54 @@ impl RecordingState {
     }
 }
 
+/// Register an active recording
+pub fn set_recording(handle: RecordingHandle) {
+    let mut guard = RECORDING_HANDLE.lock().unwrap();
+    *guard = Some(handle);
+}
+
 /// Check if a recording is currently active
-///
-/// Automatically cleans up stale state files if the process is dead
 pub fn is_recording() -> bool {
-    match RecordingState::load() {
-        Ok(Some(state)) => {
-            if process_alive(state.pid) {
-                true
-            } else {
-                // Process is dead, clean up stale state file
-                log::warn!(
-                    "Found stale recording state (PID {} is dead), cleaning up",
-                    state.pid
-                );
-                if let Err(e) = RecordingState::delete() {
-                    log::error!("Failed to clean up stale state file: {}", e);
-                }
-                false
-            }
-        }
-        Ok(None) => false,
-        Err(e) => {
-            log::error!("Failed to load recording state: {}", e);
-            false
-        }
-    }
+    let guard = RECORDING_HANDLE.lock().unwrap();
+    guard.is_some()
 }
 
-/// Stop the currently active recording (non-blocking)
-///
-/// Sends SIGTERM to the recorder process and spawns a background thread
-/// to handle cleanup. Returns immediately so the UI can appear fast.
+/// Stop the currently active recording
 pub fn stop_recording() -> Result<()> {
-    let state = RecordingState::load()?
-        .context("No active recording found")?;
+    let handle = {
+        let mut guard = RECORDING_HANDLE.lock().unwrap();
+        guard.take()
+    };
 
-    let pid = Pid::from_raw(state.pid as i32);
+    if let Some(handle) = handle {
+        log::info!("Stopping recording...");
+        handle.request_stop();
 
-    // Send SIGTERM to recorder process
-    if process_alive(state.pid) {
-        log::info!("Sending SIGTERM to recorder process {}...", state.pid);
-        if let Err(e) = signal::kill(pid, Signal::SIGTERM) {
-            log::error!("Failed to send SIGTERM to process {}: {}", state.pid, e);
-        }
-
-        // Spawn background thread to wait and cleanup
-        // This allows the UI to appear immediately
-        let output_file = state.output_file.clone();
+        // Spawn a thread to wait for cleanup (don't block the caller)
+        let output_file = handle.state.output_file.clone();
         std::thread::spawn(move || {
-            cleanup_recording(state.pid, output_file);
-        });
-    } else {
-        log::warn!(
-            "Recorder process {} is already dead, cleaning up state",
-            state.pid
-        );
-        RecordingState::delete().ok();
-    }
-
-    Ok(())
-}
-
-/// Background cleanup after stopping recording
-fn cleanup_recording(pid: u32, output_file: PathBuf) {
-    let nix_pid = Pid::from_raw(pid as i32);
-
-    // Wait up to 5 seconds for graceful shutdown
-    for _ in 0..50 {
-        if !process_alive(pid) {
-            break;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(100));
-    }
-
-    // Force kill if still alive
-    if process_alive(pid) {
-        log::warn!(
-            "Recorder process {} did not terminate gracefully, force killing",
-            pid
-        );
-        if let Err(e) = signal::kill(nix_pid, Signal::SIGKILL) {
-            log::error!("Failed to send SIGKILL to process {}: {}", pid, e);
-        }
-
-        // Wait a bit more for the kill to take effect
-        for _ in 0..10 {
-            if !process_alive(pid) {
-                break;
+            match handle.join() {
+                Ok(_) => {
+                    log::info!("Recording saved to: {}", output_file.display());
+                }
+                Err(e) => {
+                    log::error!("Recording thread error: {}", e);
+                }
             }
-            std::thread::sleep(std::time::Duration::from_millis(100));
-        }
-    }
+            // Clean up state file
+            if let Err(e) = RecordingState::delete() {
+                log::error!("Failed to delete recording state file: {}", e);
+            }
+        });
 
-    // Clean up state file
-    if let Err(e) = RecordingState::delete() {
-        log::error!("Failed to delete recording state: {}", e);
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("No active recording"))
     }
-
-    log::info!("Recording stopped, saved to: {}", output_file.display());
-    // TODO: Show success notification to user when cosmic notification API is available
 }
 
-/// Check if a process is alive
-fn process_alive(pid: u32) -> bool {
-    // Signal 0 checks if process exists without sending a signal
-    signal::kill(Pid::from_raw(pid as i32), None).is_ok()
+/// Get the current recording state (if any)
+pub fn get_recording_state() -> Option<RecordingState> {
+    let guard = RECORDING_HANDLE.lock().unwrap();
+    guard.as_ref().map(|h| h.state.clone())
 }

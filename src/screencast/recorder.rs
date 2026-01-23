@@ -365,32 +365,109 @@ pub fn start_recording(
 
             // Determine capture source: toplevel or output
             let capture_source = if let Some(idx) = toplevel_index {
-                let toplevels = helper.output_toplevels(&output);
-                if idx >= toplevels.len() {
-                    log::error!(
-                        "Capture thread: toplevel index {} out of range (only {} toplevels)",
-                        idx,
-                        toplevels.len()
-                    );
+                // Wait for toplevels to be discovered (up to 2 seconds)
+                if !helper.wait_for_toplevels(std::time::Duration::from_secs(2)) {
+                    log::error!("Capture thread: timeout waiting for toplevels");
                     return;
                 }
-                log::info!("Capture thread: using toplevel at index {}", idx);
-                CaptureSource::Toplevel(toplevels[idx].clone())
+
+                let toplevels = helper.output_toplevels(&output);
+                if idx >= toplevels.len() {
+                    // Try getting all toplevels as fallback
+                    let all_toplevels = helper.all_toplevels();
+                    log::warn!(
+                        "Capture thread: toplevel index {} out of range for output (only {} on output, {} total)",
+                        idx,
+                        toplevels.len(),
+                        all_toplevels.len()
+                    );
+                    if idx >= all_toplevels.len() {
+                        log::error!(
+                            "Capture thread: toplevel index {} out of range (only {} total toplevels)",
+                            idx,
+                            all_toplevels.len()
+                        );
+                        return;
+                    }
+                    log::info!("Capture thread: using toplevel at global index {}", idx);
+                    CaptureSource::Toplevel(all_toplevels[idx].clone())
+                } else {
+                    log::info!("Capture thread: using toplevel at output index {}", idx);
+                    CaptureSource::Toplevel(toplevels[idx].clone())
+                }
             } else {
                 CaptureSource::Output(output)
             };
 
-            let session = helper.capture_source_session(capture_source, show_cursor_clone);
+            let mut session = helper.capture_source_session(capture_source.clone(), show_cursor_clone);
+
+            let mut consecutive_failures = 0u32;
+            let mut last_error_log = std::time::Instant::now();
+            let max_consecutive_failures = 100;
+            let mut fell_back_to_output = false;
 
             while !stop_capture_clone.load(Ordering::Relaxed) {
                 match capture_frame_shm(&helper, &session, &formats_clone) {
                     Ok(frame_data) => {
+                        // Reset failure counter on success
+                        if consecutive_failures > 0 {
+                            log::debug!("Capture thread: recovered after {} failures", consecutive_failures);
+                            consecutive_failures = 0;
+                        }
                         // Non-blocking send - if main thread is behind, we'll drop frames
                         let _ = frame_tx.send(frame_data);
                     }
                     Err(e) => {
-                        log::warn!("Capture thread: frame capture failed: {}", e);
-                        std::thread::sleep(Duration::from_millis(10));
+                        consecutive_failures += 1;
+
+                        // Only log errors periodically to avoid spam
+                        if last_error_log.elapsed() > Duration::from_secs(2) {
+                            log::warn!(
+                                "Capture thread: frame capture failed ({} consecutive failures): {}",
+                                consecutive_failures, e
+                            );
+                            last_error_log = std::time::Instant::now();
+                        }
+
+                        // If toplevel capture is failing, try falling back to output capture
+                        if !fell_back_to_output && consecutive_failures >= 10 {
+                            if let CaptureSource::Toplevel(_) = &capture_source {
+                                log::warn!(
+                                    "Capture thread: toplevel capture not working, falling back to output capture"
+                                );
+                                // Find the output again
+                                let outputs = helper.outputs();
+                                if let Some(fallback_output) = outputs.into_iter().find(|o| {
+                                    helper.output_info(o)
+                                        .and_then(|info| info.name.as_ref().map(|n| n == &output_name))
+                                        .unwrap_or(false)
+                                }) {
+                                    session = helper.capture_source_session(
+                                        CaptureSource::Output(fallback_output),
+                                        show_cursor_clone
+                                    );
+                                    fell_back_to_output = true;
+                                    consecutive_failures = 0;
+                                    log::info!("Capture thread: switched to output capture");
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // Give up after too many consecutive failures
+                        if consecutive_failures >= max_consecutive_failures {
+                            log::error!(
+                                "Capture thread: giving up after {} consecutive failures",
+                                consecutive_failures
+                            );
+                            break;
+                        }
+
+                        // Exponential backoff: 10ms, 20ms, 40ms, ... up to 500ms
+                        let backoff = Duration::from_millis(
+                            (10 * (1 << consecutive_failures.min(6))).min(500)
+                        );
+                        std::thread::sleep(backoff);
                     }
                 }
             }
@@ -703,4 +780,312 @@ fn setup_signal_handler() -> Result<()> {
 extern "C" fn sigterm_handler(_: libc::c_int) {
     log::info!("Received stop signal");
     STOP_REQUESTED.store(true, Ordering::Relaxed);
+}
+
+/// Start recording in a thread (for in-process recording)
+///
+/// Unlike `start_recording`, this function:
+/// - Runs in a thread instead of a subprocess
+/// - Takes a WaylandHelper and CaptureSource directly (allowing toplevel capture to work)
+/// - Uses a provided stop_flag for graceful shutdown
+///
+/// # Arguments
+/// * `wayland_helper` - Wayland helper from the main app
+/// * `capture_source` - What to capture (output or toplevel)
+/// * `output_file` - Path to save video
+/// * `region` - (x, y, width, height) for cropping (ignored for toplevel capture)
+/// * `logical_size` - (width, height) of the output in logical coordinates
+/// * `encoder` - Encoder element name
+/// * `container` - Container format
+/// * `framerate` - Frames per second
+/// * `show_cursor` - Whether to capture the cursor in the recording
+/// * `stop_flag` - Atomic flag to signal recording to stop
+pub fn start_recording_thread(
+    wayland_helper: WaylandHelper,
+    capture_source: CaptureSource,
+    output_file: PathBuf,
+    region: (i32, i32, u32, u32),
+    logical_size: (u32, u32),
+    encoder: String,
+    container: crate::config::Container,
+    framerate: u32,
+    show_cursor: bool,
+    stop_flag: std::sync::Arc<AtomicBool>,
+) -> Result<()> {
+    let is_toplevel = matches!(capture_source, CaptureSource::Toplevel(_));
+
+    if is_toplevel {
+        log::info!(
+            "Starting toplevel recording: output={}, encoder={}, fps={}",
+            output_file.display(),
+            encoder,
+            framerate
+        );
+    } else {
+        log::info!(
+            "Starting region recording: output={}, region={:?}, encoder={}, fps={}",
+            output_file.display(),
+            region,
+            encoder,
+            framerate
+        );
+    }
+
+    log::info!("Cursor visibility in recording: {}", show_cursor);
+
+    // Log capture source details
+    match &capture_source {
+        CaptureSource::Toplevel(handle) => {
+            log::info!("Creating screencopy session for TOPLEVEL (handle: {:?})", handle);
+        }
+        CaptureSource::Output(output) => {
+            log::info!("Creating screencopy session for OUTPUT (output: {:?})", output);
+        }
+        _ => {
+            log::info!("Creating screencopy session for OTHER source");
+        }
+    }
+
+    let session = wayland_helper.capture_source_session(capture_source.clone(), show_cursor);
+
+    // Wait for formats to be negotiated
+    log::info!("Waiting for screencopy formats...");
+    let formats = block_on(session.wait_for_formats(|formats| formats.clone()))
+        .context("Failed to get screencopy formats")?;
+
+    let (buffer_width, buffer_height) = formats.buffer_size;
+    log::info!(
+        "Screencopy formats: {}x{}, {:?} SHM formats, {:?} DMA-buf formats",
+        buffer_width,
+        buffer_height,
+        formats.shm_formats.len(),
+        formats.dmabuf_formats.len()
+    );
+
+    // Find encoder by name
+    let encoders = detect_encoders()
+        .context("Failed to detect available video encoders. Is GStreamer installed?")?;
+
+    let encoder_info = encoders
+        .into_iter()
+        .find(|e| e.gst_element == encoder)
+        .with_context(|| format!("Encoder '{}' not available.", encoder))?;
+
+    log::info!("Using encoder: {} ({:?})", encoder_info.gst_element, encoder_info.codec);
+
+    // Calculate crop region if needed
+    let (region_x, region_y, record_width, record_height) = region;
+    let (logical_width, logical_height) = logical_size;
+
+    let scale_x = if logical_width > 0 {
+        buffer_width as f64 / logical_width as f64
+    } else {
+        1.0
+    };
+    let scale_y = if logical_height > 0 {
+        buffer_height as f64 / logical_height as f64
+    } else {
+        1.0
+    };
+
+    let physical_x = (region_x as f64 * scale_x).round() as u32;
+    let physical_y = (region_y as f64 * scale_y).round() as u32;
+    let physical_width = (record_width as f64 * scale_x).round() as u32;
+    let physical_height = (record_height as f64 * scale_y).round() as u32;
+
+    // For toplevel capture, record entire window (no crop)
+    let crop = if is_toplevel {
+        log::info!("Toplevel capture: recording entire window ({}x{})", buffer_width, buffer_height);
+        None
+    } else if physical_x != 0 || physical_y != 0
+        || physical_width != buffer_width || physical_height != buffer_height
+    {
+        Some(CropRegion {
+            left: physical_x,
+            top: physical_y,
+            width: physical_width,
+            height: physical_height,
+        })
+    } else {
+        None
+    };
+
+    // Create GStreamer pipeline
+    log::info!("Creating GStreamer pipeline...");
+    let pipeline = Pipeline::new(
+        &encoder_info,
+        container,
+        &output_file,
+        buffer_width,
+        buffer_height,
+        crop,
+        framerate,
+    )
+    .context("Failed to create GStreamer pipeline")?;
+
+    pipeline.start()
+        .context("Failed to start GStreamer pipeline")?;
+    log::info!("Recording started successfully!");
+
+    // Main recording loop using SHM capture
+    let frame_duration = Duration::from_secs_f64(1.0 / framerate as f64);
+    let mut frame_count = 0u64;
+    let mut consecutive_errors = 0u32;
+    const MAX_CONSECUTIVE_ERRORS: u32 = 10;
+    let start_time = Instant::now();
+
+    // Channel for passing captured frames from capture thread to main thread
+    let (frame_tx, frame_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+    let stop_capture = std::sync::Arc::new(AtomicBool::new(false));
+    let stop_capture_clone = stop_capture.clone();
+
+    // Clone what we need for the capture thread
+    let formats_clone = formats.clone();
+
+    // Spawn capture thread - captures as fast as compositor allows
+    // Note: We pass the session directly since we're in the same process
+    let is_toplevel_capture = is_toplevel;
+    let capture_thread = std::thread::spawn(move || {
+        let mut consecutive_failures = 0u32;
+        let mut last_error_log = std::time::Instant::now();
+        let max_consecutive_failures = 100;
+        let mut frame_count = 0u64;
+        let mut last_checksum: Option<u32> = None;
+        let mut same_frame_count = 0u32;
+
+        while !stop_capture_clone.load(Ordering::Relaxed) {
+            match capture_frame_shm(&wayland_helper, &session, &formats_clone) {
+                Ok(frame_data) => {
+                    if consecutive_failures > 0 {
+                        log::debug!("Capture thread: recovered after {} failures", consecutive_failures);
+                        consecutive_failures = 0;
+                    }
+
+                    // For toplevel capture, track if frames are changing
+                    if is_toplevel_capture {
+                        // Simple checksum of first 1KB to detect changes
+                        let checksum: u32 = frame_data.iter().take(1024).fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
+                        if let Some(prev) = last_checksum {
+                            if prev == checksum {
+                                same_frame_count += 1;
+                            } else {
+                                if same_frame_count > 0 {
+                                    log::debug!("Capture thread: frame changed after {} identical frames", same_frame_count);
+                                }
+                                same_frame_count = 0;
+                            }
+                        }
+                        last_checksum = Some(checksum);
+
+                        frame_count += 1;
+                        if frame_count % 60 == 0 {
+                            log::debug!("Capture thread: {} frames captured, {} currently identical", frame_count, same_frame_count);
+                        }
+                    }
+
+                    let _ = frame_tx.send(frame_data);
+                }
+                Err(e) => {
+                    consecutive_failures += 1;
+
+                    if last_error_log.elapsed() > Duration::from_secs(2) {
+                        log::warn!(
+                            "Capture thread: frame capture failed ({} consecutive failures): {}",
+                            consecutive_failures, e
+                        );
+                        last_error_log = std::time::Instant::now();
+                    }
+
+                    if consecutive_failures >= max_consecutive_failures {
+                        log::error!(
+                            "Capture thread: giving up after {} consecutive failures",
+                            consecutive_failures
+                        );
+                        break;
+                    }
+
+                    let backoff = Duration::from_millis(
+                        (10 * (1 << consecutive_failures.min(6))).min(500)
+                    );
+                    std::thread::sleep(backoff);
+                }
+            }
+        }
+        log::debug!("Capture thread exiting");
+    });
+
+    // Main encoding loop - maintains constant framerate
+    let mut last_frame: Option<Vec<u8>> = None;
+    let mut new_frames = 0u64;
+    let mut repeated_frames = 0u64;
+
+    while !stop_flag.load(Ordering::Relaxed) {
+        let frame_start = Instant::now();
+        // Use real elapsed time for timestamps to ensure correct playback speed
+        // (frame_count-based timestamps cause slow motion when capture is faster than target fps)
+        let timestamp = start_time.elapsed().as_nanos() as u64;
+
+        // Try to get a new frame (non-blocking)
+        let frame_data = match frame_rx.try_recv() {
+            Ok(data) => {
+                last_frame = Some(data.clone());
+                new_frames += 1;
+                data
+            }
+            Err(_) => {
+                match &last_frame {
+                    Some(data) => {
+                        repeated_frames += 1;
+                        data.clone()
+                    }
+                    None => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                }
+            }
+        };
+
+        // Push frame to pipeline
+        match pipeline.push_frame(&frame_data, timestamp) {
+            Ok(()) => {
+                consecutive_errors = 0;
+                frame_count += 1;
+
+                if frame_count % 60 == 0 {
+                    let elapsed = start_time.elapsed();
+                    let fps = frame_count as f64 / elapsed.as_secs_f64();
+                    let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
+                    log::info!(
+                        "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
+                        frame_count, fps, capture_fps, repeated_frames
+                    );
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to push frame: {}", e);
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    break;
+                }
+            }
+        }
+
+        // Maintain target framerate
+        let frame_elapsed = frame_start.elapsed();
+        if frame_elapsed < frame_duration {
+            std::thread::sleep(frame_duration - frame_elapsed);
+        }
+    }
+
+    // Stop capture thread
+    stop_capture.store(true, Ordering::Relaxed);
+    let _ = capture_thread.join();
+
+    // Graceful shutdown
+    log::info!("Stopping recording... ({} frames captured)", frame_count);
+    pipeline.finish()?;
+    log::info!("Recording finished: {}", output_file.display());
+
+    Ok(())
 }

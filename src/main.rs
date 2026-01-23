@@ -136,11 +136,10 @@ fn main() -> cosmic::iced::Result {
         {
             // Save state before starting
             let state = screencast::RecordingState {
-                pid: std::process::id(),
                 output_file: output_file.clone(),
                 region,
                 output_name: output_name.clone(),
-                started_at: chrono::Local::now().to_rfc3339(),
+                started_at: chrono::Utc::now().to_rfc3339(),
             };
             if let Err(e) = state.save() {
                 log::error!("Failed to save recording state: {}", e);

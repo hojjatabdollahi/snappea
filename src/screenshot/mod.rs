@@ -857,182 +857,184 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 .unwrap_or_else(|| "x264enc".to_string());
 
             let framerate = config.video_framerate;
+            let show_cursor = args.ui.video_show_cursor;
+            log::info!("Cursor visibility setting: {}", show_cursor);
 
-            // Spawn subprocess with --record args
-            // Pass logical region and logical output size - recorder will scale to physical
+            // Build CaptureSource for thread-based recording
+            // IMPORTANT: We must look up objects in app.wayland_helper's connection,
+            // NOT use the WlOutput/toplevel objects from cosmic-iced's connection
+            // (they are different Wayland connections with different object IDs)
             let output_name_for_indicator = output_name.clone();
-            let mut args_vec = vec![
-                "--record".to_string(),
-                "--output".to_string(),
-                output_file.display().to_string(),
-                "--output-name".to_string(),
-                output_name,
-                "--region".to_string(),
-                format!("{},{},{},{}", local_region.0, local_region.1, local_region.2, local_region.3),
-                "--logical-size".to_string(),
-                format!("{},{}", output_logical_size.0, output_logical_size.1),
-                "--encoder".to_string(),
-                encoder,
-                "--container".to_string(),
-                format!("{:?}", container),
-                "--framerate".to_string(),
-                framerate.to_string(),
-            ];
-
-            // Add toplevel index for window recording
-            if let Some(idx) = toplevel_index {
-                args_vec.push("--toplevel-index".to_string());
-                args_vec.push(idx.to_string());
-                log::info!("Adding --toplevel-index {} for window recording", idx);
-            }
-
-            // Add cursor visibility flag
-            log::info!("Cursor visibility setting: {}", args.ui.video_show_cursor);
-            if args.ui.video_show_cursor {
-                args_vec.push("--show-cursor".to_string());
-                log::info!("Adding --show-cursor flag to recording subprocess");
-            }
-
-            let exe = match std::env::current_exe() {
-                Ok(exe) => {
-                    // Canonicalize to resolve symlinks and get absolute path
-                    match exe.canonicalize() {
-                        Ok(canonical) => {
-                            log::debug!("Recording executable: {}", canonical.display());
-                            canonical
-                        }
-                        Err(e) => {
-                            log::warn!("Failed to canonicalize exe path '{}': {}, using original", exe.display(), e);
-                            exe
-                        }
-                    }
-                }
-                Err(e) => {
-                    log::error!("Failed to get current executable: {}", e);
+            let capture_source = if let Some(idx) = toplevel_index {
+                // Get the actual toplevel handle from the wayland_helper by index
+                let toplevels = app.wayland_helper.all_toplevels();
+                if idx < toplevels.len() {
+                    log::info!(
+                        "Recording window (toplevel index {}) - using direct toplevel capture",
+                        idx
+                    );
+                    CaptureSource::Toplevel(toplevels[idx].clone())
+                } else {
+                    log::error!(
+                        "Toplevel index {} out of range (only {} toplevels available)",
+                        idx,
+                        toplevels.len()
+                    );
                     return cosmic::Task::none();
+                }
+            } else {
+                // Use output capture with region cropping
+                // Look up output by NAME in wayland_helper's connection
+                let wl_output = app.wayland_helper.outputs()
+                    .into_iter()
+                    .find(|o| {
+                        app.wayland_helper.output_info(o)
+                            .and_then(|info| info.name)
+                            .as_deref() == Some(&output_name)
+                    });
+
+                match wl_output {
+                    Some(output) => {
+                        log::info!("Recording output '{}' region: {:?}", output_name, local_region);
+                        CaptureSource::Output(output)
+                    }
+                    None => {
+                        log::error!("Output '{}' not found in wayland_helper", output_name);
+                        return cosmic::Task::none();
+                    }
                 }
             };
 
-            // Verify executable exists before spawning
-            if !exe.exists() {
-                log::error!("Recording executable does not exist: {}", exe.display());
-                return cosmic::Task::none();
+            // Clone wayland_helper for the recording thread
+            let wayland_helper = app.wayland_helper.clone();
+
+            // Create stop flag for graceful shutdown
+            let stop_flag = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let stop_flag_clone = stop_flag.clone();
+
+            // Create recording state
+            let recording_state = crate::screencast::RecordingState {
+                output_file: output_file.clone(),
+                region: local_region,
+                output_name: output_name.clone(),
+                started_at: chrono::Utc::now().to_rfc3339(),
+            };
+
+            // Save recording state to disk for external tools
+            if let Err(e) = recording_state.save() {
+                log::warn!("Failed to save recording state: {}", e);
             }
 
-            match std::process::Command::new(&exe).args(&args_vec).spawn() {
-                Ok(mut child) => {
-                    let pid = child.id();
-                    log::info!(
-                        "Recording started: PID {}, output: {}, local_region: {:?}",
-                        pid,
-                        output_file.display(),
-                        local_region
-                    );
+            // Spawn recording thread
+            let output_file_for_thread = output_file.clone();
+            let encoder_clone = encoder.clone();
+            let thread_handle = std::thread::spawn(move || {
+                crate::screencast::start_recording_thread(
+                    wayland_helper,
+                    capture_source,
+                    output_file_for_thread,
+                    local_region,
+                    output_logical_size,
+                    encoder_clone,
+                    container,
+                    framerate,
+                    show_cursor,
+                    stop_flag_clone,
+                )
+            });
 
-                    // Spawn a thread to wait for the child process to prevent zombies
-                    // This thread will reap the process when it exits
-                    std::thread::spawn(move || {
-                        match child.wait() {
-                            Ok(status) => {
-                                log::info!("Recording process {} exited with status: {}", pid, status);
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to wait for recording process {}: {}", pid, e);
-                            }
-                        }
-                    });
+            // Register the recording handle
+            let recording_handle = crate::screencast::RecordingHandle::new(
+                stop_flag,
+                thread_handle,
+                recording_state,
+            );
+            crate::screencast::set_recording(recording_handle);
 
-                    // Create recording indicator overlay
-                    let indicator_id = window::Id::unique();
-                    let indicator_output = selected_output
-                        .map(|o| o.output.clone())
-                        .or_else(|| app.outputs.first().map(|o| o.output.clone()));
+            log::info!(
+                "Recording started: output: {}, local_region: {:?}",
+                output_file.display(),
+                local_region
+            );
 
-                    let indicator_task = if let Some(wl_output) = indicator_output {
-                        // Toolbar dimensions - must match constants in render_recording_indicator
-                        let toolbar_width = 140.0f32;
-                        let toolbar_height = 56.0f32;
-                        let toolbar_margin = 8.0f32;
+            // Create recording indicator overlay
+            let indicator_id = window::Id::unique();
+            let indicator_output = selected_output
+                .map(|o| o.output.clone())
+                .or_else(|| app.outputs.first().map(|o| o.output.clone()));
 
-                        // Initial toolbar position: OUTSIDE recording area (above it, right-aligned)
-                        // If no room above, fall back to inside at top-right
-                        let toolbar_x = local_region.0 as f32 + local_region.2 as f32 - toolbar_width;
-                        let toolbar_y = if local_region.1 as f32 >= toolbar_height + toolbar_margin {
-                            // Room above - position outside
-                            local_region.1 as f32 - toolbar_height - toolbar_margin
-                        } else {
-                            // No room above - position inside at top with margin
-                            local_region.1 as f32 + toolbar_margin
-                        };
+            let indicator_task = if let Some(wl_output) = indicator_output {
+                // Toolbar dimensions - must match constants in render_recording_indicator
+                let toolbar_width = 140.0f32;
+                let toolbar_height = 56.0f32;
+                let toolbar_margin = 8.0f32;
 
-                        // Store the indicator state
-                        app.recording_indicator = Some(RecordingIndicator {
-                            window_id: indicator_id,
-                            output_name: output_name_for_indicator,
-                            output: wl_output.clone(),
-                            region: local_region,
-                            blink_visible: true,
-                            annotations: Vec::new(),
-                            current_stroke: None,
-                            super_pressed: false,
-                            ctrl_pressed: false,
-                            annotation_mode: false,
-                            toolbar_pos: (toolbar_x, toolbar_y),
-                            toolbar_dragging: false,
-                            drag_offset: (0.0, 0.0),
-                        });
+                // Initial toolbar position: OUTSIDE recording area (above it, right-aligned)
+                // If no room above, fall back to inside at top-right
+                let toolbar_x = local_region.0 as f32 + local_region.2 as f32 - toolbar_width;
+                let toolbar_y = if local_region.1 as f32 >= toolbar_height + toolbar_margin {
+                    // Room above - position outside
+                    local_region.1 as f32 - toolbar_height - toolbar_margin
+                } else {
+                    // No room above - position inside at top with margin
+                    local_region.1 as f32 + toolbar_margin
+                };
 
-                        log::info!(
-                            "Creating recording indicator overlay: id={:?}, region={:?}, toolbar at ({}, {})",
-                            indicator_id,
-                            local_region,
-                            toolbar_x,
-                            toolbar_y
-                        );
+                // Store the indicator state
+                app.recording_indicator = Some(RecordingIndicator {
+                    window_id: indicator_id,
+                    output_name: output_name_for_indicator,
+                    output: wl_output.clone(),
+                    region: local_region,
+                    blink_visible: true,
+                    annotations: Vec::new(),
+                    current_stroke: None,
+                    super_pressed: false,
+                    ctrl_pressed: false,
+                    annotation_mode: false,
+                    toolbar_pos: (toolbar_x, toolbar_y),
+                    toolbar_dragging: false,
+                    drag_offset: (0.0, 0.0),
+                });
 
-                        // Create layer surface for the indicator on the Overlay layer
-                        // Overlay layer is NOT captured by screencopy
-                        // Initially, only the toolbar captures input (rest is click-through)
-                        // When annotation mode is activated, full input capture is enabled
-                        get_layer_surface(SctkLayerSurfaceSettings {
-                            id: indicator_id,
-                            layer: Layer::Overlay,
-                            keyboard_interactivity: KeyboardInteractivity::None,
-                            input_zone: Some(vec![cosmic::iced_core::Rectangle {
-                                x: toolbar_x,
-                                y: toolbar_y,
-                                width: toolbar_width,
-                                height: toolbar_height,
-                            }]), // Only toolbar captures input initially
-                            anchor: Anchor::all(), // Cover full output
-                            output: IcedOutput::Output(wl_output),
-                            namespace: "snappea-indicator".to_string(),
-                            size: Some((None, None)), // Full output size
-                            exclusive_zone: -1,
-                            size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
-                            ..Default::default()
-                        })
-                    } else {
-                        cosmic::Task::none()
-                    };
+                log::info!(
+                    "Creating recording indicator overlay: id={:?}, region={:?}, toolbar at ({}, {})",
+                    indicator_id,
+                    local_region,
+                    toolbar_x,
+                    toolbar_y
+                );
 
-                    // Close screenshot UI surfaces
-                    let cancel_task = handle_cancel_inner(app);
+                // Create layer surface for the indicator on the Overlay layer
+                // Overlay layer is NOT captured by screencopy
+                // Initially, only the toolbar captures input (rest is click-through)
+                // When annotation mode is activated, full input capture is enabled
+                get_layer_surface(SctkLayerSurfaceSettings {
+                    id: indicator_id,
+                    layer: Layer::Overlay,
+                    keyboard_interactivity: KeyboardInteractivity::None,
+                    input_zone: Some(vec![cosmic::iced_core::Rectangle {
+                        x: toolbar_x,
+                        y: toolbar_y,
+                        width: toolbar_width,
+                        height: toolbar_height,
+                    }]), // Only toolbar captures input initially
+                    anchor: Anchor::all(), // Cover full output
+                    output: IcedOutput::Output(wl_output),
+                    namespace: "snappea-indicator".to_string(),
+                    size: Some((None, None)), // Full output size
+                    exclusive_zone: -1,
+                    size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                    ..Default::default()
+                })
+            } else {
+                cosmic::Task::none()
+            };
 
-                    cosmic::Task::batch([indicator_task, cancel_task])
-                }
-                Err(e) => {
-                    log::error!(
-                        "Failed to start recording: {} (exe: {}, output: {}, local_region: {:?})",
-                        e,
-                        exe.display(),
-                        output_file.display(),
-                        local_region
-                    );
-                    // TODO: Show notification to user when cosmic notification API is available
-                    cosmic::Task::none()
-                }
-            }
+            // Close screenshot UI surfaces
+            let cancel_task = handle_cancel_inner(app);
+
+            cosmic::Task::batch([indicator_task, cancel_task])
         }
         CaptureMsg::Choice(c) => handle_choice_inner(app, c),
         CaptureMsg::Location(loc) => handle_location_inner(app, loc),
