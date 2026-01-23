@@ -150,7 +150,10 @@ pub fn start_recording(
     };
 
     // Determine if we can use full zero-copy DMA-buf path
-    let use_dmabuf = dmabuf_format.is_some() && dmabuf_context.is_some() && wayland_dmabuf_supported;
+    // TODO: DMA-buf path doesn't support frame repetition yet, disable until implemented
+    // Frame repetition is needed to maintain constant framerate when compositor is slow
+    let use_dmabuf = false;
+    // let use_dmabuf = dmabuf_format.is_some() && dmabuf_context.is_some() && wayland_dmabuf_supported;
 
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
@@ -278,55 +281,163 @@ pub fn start_recording(
         log::info!("Using SHM capture path");
     }
 
-    while !STOP_REQUESTED.load(Ordering::Relaxed) {
-        let frame_start = Instant::now();
+    // For SHM mode: use async capture with frame repetition
+    // Capture runs in background thread, main loop maintains constant framerate
+    if !actual_dmabuf {
+        // Channel for passing captured frames from capture thread to main thread
+        let (frame_tx, frame_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let stop_capture = std::sync::Arc::new(AtomicBool::new(false));
+        let stop_capture_clone = stop_capture.clone();
 
-        // Calculate timestamp (in nanoseconds)
-        let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+        // Clone what we need for the capture thread
+        let formats_clone = formats.clone();
 
-        // Capture and push frame
-        let capture_result = if actual_dmabuf {
-            let pool = buffer_pool.as_mut().unwrap();
-            capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
-        } else {
-            capture_frame_shm(&wayland_helper, &session, &formats)
-                .and_then(|frame_data| pipeline.push_frame(&frame_data, timestamp))
-        };
+        // Spawn capture thread - captures as fast as compositor allows
+        let capture_thread = std::thread::spawn(move || {
+            let conn = match Connection::connect_to_env() {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!("Capture thread: failed to connect to Wayland: {}", e);
+                    return;
+                }
+            };
+            let helper = WaylandHelper::new(conn);
 
-        match capture_result {
-            Ok(()) => {
-                consecutive_errors = 0;
-                frame_count += 1;
+            // Find output again in this thread
+            let outputs = helper.outputs();
+            let output = outputs.into_iter().find(|o| {
+                helper.output_info(o)
+                    .and_then(|info| info.name.as_ref().map(|n| n == &output_name))
+                    .unwrap_or(false)
+            });
 
-                // Log progress every 60 frames
-                if frame_count % 60 == 0 {
-                    let elapsed = start_time.elapsed();
-                    let fps = frame_count as f64 / elapsed.as_secs_f64();
-                    log::info!(
-                        "Recording: {} frames captured ({:.1} fps, {})",
-                        frame_count,
-                        fps,
-                        if actual_dmabuf { "DMA-buf" } else { "SHM" }
-                    );
+            let output = match output {
+                Some(o) => o,
+                None => {
+                    log::error!("Capture thread: output not found");
+                    return;
+                }
+            };
+
+            let session = helper.capture_source_session(CaptureSource::Output(output), false);
+
+            while !stop_capture_clone.load(Ordering::Relaxed) {
+                match capture_frame_shm(&helper, &session, &formats_clone) {
+                    Ok(frame_data) => {
+                        // Non-blocking send - if main thread is behind, we'll drop frames
+                        let _ = frame_tx.send(frame_data);
+                    }
+                    Err(e) => {
+                        log::warn!("Capture thread: frame capture failed: {}", e);
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
                 }
             }
-            Err(e) => {
-                log::error!("Failed to capture/push frame: {}", e);
-                consecutive_errors += 1;
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                    log::error!(
-                        "Too many consecutive errors ({}), stopping recording",
-                        consecutive_errors
-                    );
-                    break;
+            log::debug!("Capture thread exiting");
+        });
+
+        // Main encoding loop - maintains constant framerate
+        let mut last_frame: Option<Vec<u8>> = None;
+        let mut new_frames = 0u64;
+        let mut repeated_frames = 0u64;
+
+        while !STOP_REQUESTED.load(Ordering::Relaxed) {
+            let frame_start = Instant::now();
+            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+
+            // Try to get a new frame (non-blocking)
+            let frame_data = match frame_rx.try_recv() {
+                Ok(data) => {
+                    last_frame = Some(data.clone());
+                    new_frames += 1;
+                    data
                 }
+                Err(_) => {
+                    // No new frame available, repeat last frame
+                    match &last_frame {
+                        Some(data) => {
+                            repeated_frames += 1;
+                            data.clone()
+                        }
+                        None => {
+                            // No frame yet, wait a bit
+                            std::thread::sleep(Duration::from_millis(1));
+                            continue;
+                        }
+                    }
+                }
+            };
+
+            // Push frame to pipeline
+            match pipeline.push_frame(&frame_data, timestamp) {
+                Ok(()) => {
+                    consecutive_errors = 0;
+                    frame_count += 1;
+
+                    if frame_count % 60 == 0 {
+                        let elapsed = start_time.elapsed();
+                        let fps = frame_count as f64 / elapsed.as_secs_f64();
+                        let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
+                        log::info!(
+                            "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
+                            frame_count, fps, capture_fps, repeated_frames
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to push frame: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        break;
+                    }
+                }
+            }
+
+            // Maintain target framerate
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < frame_duration {
+                std::thread::sleep(frame_duration - frame_elapsed);
             }
         }
 
-        // Frame rate limiting
-        let frame_elapsed = frame_start.elapsed();
-        if frame_elapsed < frame_duration {
-            std::thread::sleep(frame_duration - frame_elapsed);
+        // Stop capture thread
+        stop_capture.store(true, Ordering::Relaxed);
+        let _ = capture_thread.join();
+    } else {
+        // DMA-buf mode: use synchronous capture (TODO: async DMA-buf capture)
+        while !STOP_REQUESTED.load(Ordering::Relaxed) {
+            let frame_start = Instant::now();
+            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+
+            let pool = buffer_pool.as_mut().unwrap();
+            match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp) {
+                Ok(()) => {
+                    consecutive_errors = 0;
+                    frame_count += 1;
+
+                    if frame_count % 60 == 0 {
+                        let elapsed = start_time.elapsed();
+                        let fps = frame_count as f64 / elapsed.as_secs_f64();
+                        log::info!(
+                            "Recording: {} frames captured ({:.1} fps, DMA-buf)",
+                            frame_count, fps
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to capture/push frame: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        log::error!("Too many consecutive errors, stopping");
+                        break;
+                    }
+                }
+            }
+
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < frame_duration {
+                std::thread::sleep(frame_duration - frame_elapsed);
+            }
         }
     }
 
@@ -377,17 +488,9 @@ fn capture_frame_shm(
     // Cleanup
     wl_buffer.destroy();
 
-    // Convert ABGR to RGBA for GStreamer
-    let mut rgba_data = Vec::with_capacity(frame_data.len());
-    for pixel in frame_data.chunks_exact(4) {
-        // ABGR -> RGBA
-        rgba_data.push(pixel[3]); // R
-        rgba_data.push(pixel[2]); // G
-        rgba_data.push(pixel[1]); // B
-        rgba_data.push(pixel[0]); // A
-    }
-
-    Ok(rgba_data)
+    // Wayland's ABGR8888 format is [R, G, B, A] in memory (little-endian)
+    // which is exactly RGBA - no conversion needed
+    Ok(frame_data)
 }
 
 /// Select the best DMA-buf format from available formats
