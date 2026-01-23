@@ -1,10 +1,10 @@
 //! Settings drawer widget that opens relative to the toolbar
 
+use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
-use cosmic::widget::{container, radio, segmented_button, segmented_control, text};
-use cosmic::Element;
+use cosmic::widget::{container, radio, segmented_button, tab_bar, text};
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
@@ -45,9 +45,10 @@ where
     G: Fn(Container) -> Msg + Clone + 'a,
     H: Fn(u32) -> Msg + Clone + 'a,
 {
-    // Build tab row using segmented control
+    // Build tab row using tab_bar style (looks like tabs instead of segmented control)
     // The callback receives the Entity, and the handler will look up the SettingsTab data
-    let tabs_row: Element<'_, Msg> = segmented_control::horizontal(settings_tab_model)
+    let tabs_row: Element<'_, Msg> = tab_bar::horizontal(settings_tab_model)
+        .button_height(32)
         .on_activate(on_settings_tab_activate)
         .into();
 
@@ -107,11 +108,8 @@ where
         .spacing(space_xs)
         .width(Length::Fill);
 
-    // Recording settings section
-    let recording_label = text::body("Recording:");
-
     // Encoder selection
-    let encoder_label = text::caption("Encoder:");
+    let encoder_label = text::body("Encoder:");
 
     // Find selected encoder index
     let selected_encoder_idx = available_encoders
@@ -138,7 +136,7 @@ where
     }
 
     // Container format selection
-    let container_label = text::caption("Format:");
+    let container_label = text::body("Format:");
     let mp4_radio = radio("MP4", Container::Mp4, Some(video_container), |c| {
         on_container_select(c)
     })
@@ -157,7 +155,7 @@ where
         .align_y(cosmic::iced_core::Alignment::Center);
 
     // Framerate selection
-    let framerate_label = text::caption("Framerate:");
+    let framerate_label = text::body("Framerate:");
     let fps_30_radio = radio("30 fps", 30, Some(video_framerate), |fps| {
         on_framerate_select(fps)
     })
@@ -221,8 +219,6 @@ where
     .align_y(cosmic::iced_core::Alignment::Center);
 
     let picture_tab_content: Element<'_, Msg> = column![
-        magnifier_row,
-        cosmic::widget::divider::horizontal::light(),
         save_location_label,
         save_location_row,
         cosmic::widget::divider::horizontal::light(),
@@ -232,19 +228,23 @@ where
     .into();
 
     let video_tab_content: Element<'_, Msg> = column![
-        recording_label,
         encoder_label,
         encoder_column_items,
+        cosmic::widget::divider::horizontal::light(),
         container_label,
         container_row,
+        cosmic::widget::divider::horizontal::light(),
         framerate_label,
         framerate_row,
+        cosmic::widget::divider::horizontal::light(),
         show_cursor_row,
     ]
     .spacing(space_xs)
     .into();
 
     let general_tab_content: Element<'_, Msg> = column![
+        magnifier_row,
+        cosmic::widget::divider::horizontal::light(),
         toolbar_opacity_section,
         cosmic::widget::divider::horizontal::light(),
         about_section,
@@ -258,15 +258,11 @@ where
         SettingsTab::Video => video_tab_content,
     };
 
-    let drawer_content: Element<'_, Msg> = column![
-        tabs_row,
-        cosmic::widget::divider::horizontal::light(),
-        tab_content,
-    ]
-    .spacing(space_xs)
-    .padding(space_s)
-    .width(Length::Fixed(280.0))
-    .into();
+    let drawer_content: Element<'_, Msg> = column![tabs_row, tab_content,]
+        .spacing(space_xs)
+        .padding(space_s)
+        .width(Length::Fixed(280.0))
+        .into();
 
     // Wrap in a styled container with transparent background
     // HoverOpacity will handle the background drawing with opacity
