@@ -4,7 +4,6 @@ use anyhow::{Context, Result};
 use drm_fourcc::DrmFourcc;
 use gstreamer as gst;
 use gstreamer::prelude::*;
-use gstreamer_allocators as gst_allocators;
 use gstreamer_app as gst_app;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
@@ -20,8 +19,6 @@ pub struct Pipeline {
     output_path: PathBuf,
     /// Whether this pipeline is configured for DMA-buf input
     dmabuf_mode: bool,
-    /// DMA-buf allocator (only set in dmabuf mode)
-    dmabuf_allocator: Option<gst_allocators::DmaBufAllocator>,
 }
 
 impl Pipeline {
@@ -102,7 +99,6 @@ impl Pipeline {
             appsrc,
             output_path: output_path.to_path_buf(),
             dmabuf_mode: false,
-            dmabuf_allocator: None,
         })
     }
 
@@ -187,25 +183,22 @@ impl Pipeline {
         ])?;
 
         // Configure appsrc caps for DMA-buf input
-        // Use memory:DMABuf feature to indicate DMA-buf memory
+        // Note: We don't use memory:DMABuf feature because videoconvert doesn't
+        // support it directly. GStreamer will auto-map the DMA-buf when needed.
+        // This still saves the userspace ABGR→RGBA conversion compared to SHM path.
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", gst_format)
             .field("width", width as i32)
             .field("height", height as i32)
             .field("framerate", gst::Fraction::new(framerate as i32, 1))
-            .features(["memory:DMABuf"])
             .build();
         appsrc.set_caps(Some(&caps));
-
-        // Get DMA-buf allocator
-        let dmabuf_allocator = gst_allocators::DmaBufAllocator::new();
 
         Ok(Self {
             pipeline,
             appsrc,
             output_path: output_path.to_path_buf(),
             dmabuf_mode: true,
-            dmabuf_allocator: Some(dmabuf_allocator),
         })
     }
 
@@ -246,48 +239,58 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Push a DMA-buf frame to the pipeline (zero-copy)
+    /// Push a DMA-buf frame to the pipeline
     ///
-    /// This method wraps a DMA-buf file descriptor in a GStreamer buffer
-    /// without copying the data, enabling true zero-copy frame capture.
+    /// This method reads data from a DMA-buf and creates a GStreamer buffer.
+    /// While not true zero-copy, this approach:
+    /// 1. Avoids userspace ABGR→RGBA conversion (compositor outputs correct format)
+    /// 2. Works reliably with all GStreamer elements
     ///
     /// # Arguments
     /// * `fd` - Raw file descriptor of the DMA-buf
     /// * `size` - Size of the buffer in bytes
     /// * `timestamp` - Frame timestamp in nanoseconds
-    ///
-    /// # Safety
-    /// The caller must ensure the DMA-buf fd remains valid until the buffer
-    /// is consumed by the pipeline.
     pub fn push_dmabuf_frame(&self, fd: RawFd, size: usize, timestamp: u64) -> Result<()> {
-        let allocator = self.dmabuf_allocator.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Pipeline not configured for DMA-buf mode"))?;
-
-        // Wrap the DMA-buf fd in GStreamer memory
-        // Note: We dup the fd so GStreamer can take ownership
-        let dup_fd = unsafe { libc::dup(fd) };
-        if dup_fd < 0 {
-            return Err(anyhow::anyhow!("Failed to duplicate DMA-buf fd"));
-        }
-
-        // SAFETY: The dup_fd is a valid file descriptor that we just created,
-        // and GStreamer will take ownership of it.
-        let memory = unsafe {
-            allocator.alloc(dup_fd, size)
-                .map_err(|_| anyhow::anyhow!("Failed to allocate DMA-buf GStreamer memory"))?
+        // mmap the DMA-buf to read its contents
+        let ptr = unsafe {
+            libc::mmap(
+                std::ptr::null_mut(),
+                size,
+                libc::PROT_READ,
+                libc::MAP_SHARED,
+                fd,
+                0,
+            )
         };
 
-        // Create buffer from memory
-        let mut buffer = gst::Buffer::new();
+        if ptr == libc::MAP_FAILED {
+            return Err(anyhow::anyhow!("Failed to mmap DMA-buf"));
+        }
+
+        // Create GStreamer buffer with the data
+        let mut buffer = gst::Buffer::with_size(size)
+            .context("Failed to allocate GStreamer buffer")?;
+
         {
             let buffer_mut = buffer.get_mut().unwrap();
             buffer_mut.set_pts(gst::ClockTime::from_nseconds(timestamp));
-            buffer_mut.append_memory(memory);
+            let mut map = buffer_mut.map_writable()
+                .context("Failed to map buffer for writing")?;
+
+            // Copy from DMA-buf to GStreamer buffer
+            unsafe {
+                std::ptr::copy_nonoverlapping(ptr as *const u8, map.as_mut_ptr(), size);
+            }
+        }
+
+        // Unmap the DMA-buf
+        unsafe {
+            libc::munmap(ptr, size);
         }
 
         self.appsrc
             .push_buffer(buffer)
-            .map_err(|_| anyhow::anyhow!("Failed to push DMA-buf buffer to pipeline"))?;
+            .map_err(|_| anyhow::anyhow!("Failed to push buffer to pipeline"))?;
 
         Ok(())
     }

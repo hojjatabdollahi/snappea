@@ -19,23 +19,54 @@ use futures::{
 };
 use std::{
     collections::HashMap,
-    os::fd::{AsFd, OwnedFd},
+    os::fd::{AsFd, BorrowedFd, OwnedFd},
     sync::{Arc, Condvar, Mutex, Weak},
     thread,
 };
 use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum,
-    globals::registry_queue_init,
+    globals::{registry_queue_init, GlobalList},
     protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool},
 };
 use wayland_protocols::ext::{
     foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1,
     workspace::v1::client::ext_workspace_handle_v1,
 };
+use wayland_protocols::wp::linux_dmabuf::zv1::client::{
+    zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1},
+    zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
+};
 
 pub use cosmic_client_toolkit::screencopy::{CaptureSource, Rect};
 
 use crate::buffer;
+
+/// Supported DMA-buf format with modifier
+#[derive(Debug, Clone)]
+pub struct DmabufFormat {
+    pub fourcc: u32,
+    pub modifier: u64,
+}
+
+/// State for linux-dmabuf protocol
+struct DmabufState {
+    /// The linux-dmabuf global (if available)
+    dmabuf: Option<ZwpLinuxDmabufV1>,
+    /// Supported formats (fourcc + modifier pairs)
+    formats: Vec<DmabufFormat>,
+    /// Whether format enumeration is complete
+    formats_ready: bool,
+}
+
+impl Default for DmabufState {
+    fn default() -> Self {
+        Self {
+            dmabuf: None,
+            formats: Vec::new(),
+            formats_ready: false,
+        }
+    }
+}
 
 struct WaylandHelperInner {
     conn: wayland_client::Connection,
@@ -46,6 +77,7 @@ struct WaylandHelperInner {
     qh: QueueHandle<AppData>,
     capturer: Capturer,
     wl_shm: wl_shm::WlShm,
+    dmabuf_state: Mutex<DmabufState>,
 }
 
 #[derive(Clone)]
@@ -180,6 +212,10 @@ impl WaylandHelper {
         let registry_state = RegistryState::new(&globals);
         let screencopy_state = ScreencopyState::new(&globals, &qh);
         let shm_state = Shm::bind(&globals, &qh).unwrap();
+
+        // Try to bind linux-dmabuf protocol (optional, not all compositors support it)
+        let dmabuf_state = Self::bind_dmabuf(&globals, &qh);
+
         let wayland_helper = WaylandHelper {
             inner: Arc::new(WaylandHelperInner {
                 conn,
@@ -190,6 +226,7 @@ impl WaylandHelper {
                 qh: qh.clone(),
                 capturer: screencopy_state.capturer().clone(),
                 wl_shm: shm_state.wl_shm().clone(),
+                dmabuf_state: Mutex::new(dmabuf_state),
             }),
         };
         let mut data = AppData {
@@ -204,6 +241,9 @@ impl WaylandHelper {
         event_queue.flush().unwrap();
         event_queue.roundtrip(&mut data).unwrap();
 
+        // Do another roundtrip to receive dmabuf format events
+        event_queue.roundtrip(&mut data).unwrap();
+
         thread::spawn(move || {
             loop {
                 event_queue.blocking_dispatch(&mut data).unwrap();
@@ -211,6 +251,25 @@ impl WaylandHelper {
         });
 
         wayland_helper
+    }
+
+    /// Try to bind the linux-dmabuf protocol
+    fn bind_dmabuf(globals: &GlobalList, qh: &QueueHandle<AppData>) -> DmabufState {
+        // Try to bind zwp_linux_dmabuf_v1 version 3 or higher (for modifier support)
+        match globals.bind::<ZwpLinuxDmabufV1, _, _>(qh, 3..=5, ()) {
+            Ok(dmabuf) => {
+                log::info!("linux-dmabuf protocol available");
+                DmabufState {
+                    dmabuf: Some(dmabuf),
+                    formats: Vec::new(),
+                    formats_ready: false,
+                }
+            }
+            Err(e) => {
+                log::debug!("linux-dmabuf protocol not available: {}", e);
+                DmabufState::default()
+            }
+        }
     }
 
     pub fn outputs(&self) -> Vec<wl_output::WlOutput> {
@@ -356,6 +415,76 @@ impl WaylandHelper {
         pool.destroy();
 
         buffer
+    }
+
+    /// Check if linux-dmabuf protocol is available
+    pub fn has_dmabuf_support(&self) -> bool {
+        self.inner.dmabuf_state.lock().unwrap().dmabuf.is_some()
+    }
+
+    /// Get supported DMA-buf formats
+    pub fn dmabuf_formats(&self) -> Vec<DmabufFormat> {
+        self.inner.dmabuf_state.lock().unwrap().formats.clone()
+    }
+
+    /// Create a wl_buffer from a DMA-buf file descriptor
+    ///
+    /// This is the key method for zero-copy capture: it creates a Wayland buffer
+    /// backed by a DMA-buf without any CPU copies.
+    ///
+    /// # Arguments
+    /// * `fd` - The DMA-buf file descriptor
+    /// * `width` - Buffer width in pixels
+    /// * `height` - Buffer height in pixels
+    /// * `stride` - Row stride in bytes
+    /// * `fourcc` - DRM format fourcc code
+    /// * `modifier` - DRM format modifier
+    ///
+    /// # Returns
+    /// A wl_buffer that can be used with screencopy, or None if dmabuf is not supported
+    pub fn create_dmabuf_buffer(
+        &self,
+        fd: BorrowedFd<'_>,
+        width: u32,
+        height: u32,
+        stride: u32,
+        fourcc: u32,
+        modifier: u64,
+    ) -> Option<wl_buffer::WlBuffer> {
+        let dmabuf_state = self.inner.dmabuf_state.lock().unwrap();
+        let dmabuf = dmabuf_state.dmabuf.as_ref()?;
+
+        // Create buffer params object
+        let params = dmabuf.create_params(&self.inner.qh, ());
+
+        // Add the single plane (plane 0)
+        // For multi-planar formats (like NV12), you'd add multiple planes
+        let modifier_hi = (modifier >> 32) as u32;
+        let modifier_lo = (modifier & 0xFFFFFFFF) as u32;
+        params.add(
+            fd,
+            0,                  // plane index
+            0,                  // offset
+            stride,
+            modifier_hi,
+            modifier_lo,
+        );
+
+        // Create the buffer immediately (create_immed)
+        // This is synchronous - if it fails, the compositor will send an error
+        let buffer = params.create_immed(
+            width as i32,
+            height as i32,
+            fourcc,
+            zwp_linux_buffer_params_v1::Flags::empty(),
+            &self.inner.qh,
+            (),
+        );
+
+        // Flush to ensure the buffer is created
+        self.inner.conn.flush().ok();
+
+        Some(buffer)
     }
 }
 
@@ -580,6 +709,72 @@ impl Dispatch<wl_buffer::WlBuffer, ()> for AppData {
         _: &Connection,
         _qh: &QueueHandle<Self>,
     ) {
+    }
+}
+
+// Linux DMA-buf protocol dispatch implementations
+
+impl Dispatch<ZwpLinuxDmabufV1, ()> for AppData {
+    fn event(
+        app_data: &mut Self,
+        _proxy: &ZwpLinuxDmabufV1,
+        event: zwp_linux_dmabuf_v1::Event,
+        _: &(),
+        _: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_linux_dmabuf_v1::Event::Format { format } => {
+                // Legacy format event (deprecated in v4)
+                // Add format with implicit modifier
+                let mut state = app_data.wayland_helper.inner.dmabuf_state.lock().unwrap();
+                state.formats.push(DmabufFormat {
+                    fourcc: format,
+                    modifier: 0x00ffffffffffffff, // DRM_FORMAT_MOD_INVALID
+                });
+                log::trace!("DMA-buf format: 0x{:08x}", format);
+            }
+            zwp_linux_dmabuf_v1::Event::Modifier { format, modifier_hi, modifier_lo } => {
+                // Format + modifier event (v3+)
+                let modifier = ((modifier_hi as u64) << 32) | (modifier_lo as u64);
+                let mut state = app_data.wayland_helper.inner.dmabuf_state.lock().unwrap();
+                state.formats.push(DmabufFormat {
+                    fourcc: format,
+                    modifier,
+                });
+                log::trace!(
+                    "DMA-buf format: 0x{:08x}, modifier: 0x{:016x}",
+                    format,
+                    modifier
+                );
+            }
+            _ => {}
+        }
+    }
+}
+
+impl Dispatch<ZwpLinuxBufferParamsV1, ()> for AppData {
+    fn event(
+        _app_data: &mut Self,
+        params: &ZwpLinuxBufferParamsV1,
+        event: zwp_linux_buffer_params_v1::Event,
+        _: &(),
+        _: &Connection,
+        _qh: &QueueHandle<Self>,
+    ) {
+        match event {
+            zwp_linux_buffer_params_v1::Event::Created { buffer: _ } => {
+                // Buffer was created successfully (only for async create, not create_immed)
+                log::debug!("DMA-buf buffer created successfully");
+            }
+            zwp_linux_buffer_params_v1::Event::Failed => {
+                // Buffer creation failed
+                log::warn!("DMA-buf buffer creation failed");
+            }
+            _ => {}
+        }
+        // Destroy params after use
+        params.destroy();
     }
 }
 
