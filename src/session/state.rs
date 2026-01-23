@@ -215,6 +215,7 @@ pub struct UiState {
     pub selected_encoder: Option<String>,
     pub video_container: Container,
     pub video_framerate: u32,
+    pub video_show_cursor: bool,
 }
 
 impl UiState {

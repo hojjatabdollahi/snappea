@@ -460,6 +460,8 @@ where
                 move |c| on_event_container(ScreenshotEvent::video_container_set(c)),
                 ui.video_framerate,
                 move |f| on_event_framerate(ScreenshotEvent::video_framerate_set(f)),
+                ui.video_show_cursor,
+                on_event(ScreenshotEvent::show_cursor_toggle()),
                 space_s,
                 space_xs,
             ))

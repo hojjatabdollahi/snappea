@@ -218,6 +218,8 @@ pub enum SettingsMsg {
     SetVideoContainer(Container),
     /// Set video framerate
     SetVideoFramerate(u32),
+    /// Toggle showing cursor in recordings
+    ToggleShowCursor,
     /// Encoders have been detected asynchronously
     EncodersDetected(Vec<crate::screencast::encoder::EncoderInfo>),
 }
@@ -459,5 +461,8 @@ impl Msg {
     }
     pub fn set_video_framerate(framerate: u32) -> Self {
         Self::Settings(SettingsMsg::SetVideoFramerate(framerate))
+    }
+    pub fn toggle_show_cursor() -> Self {
+        Self::Settings(SettingsMsg::ToggleShowCursor)
     }
 }

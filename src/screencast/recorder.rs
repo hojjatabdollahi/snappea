@@ -28,6 +28,7 @@ static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
 /// * `container` - Container format
 /// * `framerate` - Frames per second
 /// * `toplevel_index` - Optional index of toplevel (window) to capture instead of region
+/// * `show_cursor` - Whether to capture the cursor in the recording
 pub fn start_recording(
     output_file: PathBuf,
     output_name: String,
@@ -37,6 +38,7 @@ pub fn start_recording(
     container: crate::config::Container,
     framerate: u32,
     toplevel_index: Option<usize>,
+    show_cursor: bool,
 ) -> Result<()> {
     if let Some(idx) = toplevel_index {
         log::info!(
@@ -123,8 +125,8 @@ pub fn start_recording(
         CaptureSource::Output(output.clone())
     };
 
-    let overlay_cursor = false; // Don't capture cursor in recordings
-    let session = wayland_helper.capture_source_session(capture_source.clone(), overlay_cursor);
+    log::info!("Cursor visibility in recording: {}", show_cursor);
+    let session = wayland_helper.capture_source_session(capture_source.clone(), show_cursor);
 
     // Wait for formats to be negotiated
     log::info!("Waiting for screencopy formats...");

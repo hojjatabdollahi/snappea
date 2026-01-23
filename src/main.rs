@@ -30,6 +30,7 @@ fn main() -> cosmic::iced::Result {
         let mut container = config::Container::Mp4;
         let mut framerate = 60;
         let mut toplevel_index: Option<usize> = None;
+        let mut show_cursor = false;
 
         let mut i = 2;
         while i < args.len() {
@@ -121,6 +122,10 @@ fn main() -> cosmic::iced::Result {
                         i += 1;
                     }
                 }
+                "--show-cursor" => {
+                    show_cursor = true;
+                    i += 1;
+                }
                 _ => i += 1,
             }
         }
@@ -150,6 +155,7 @@ fn main() -> cosmic::iced::Result {
                 container,
                 framerate,
                 toplevel_index,
+                show_cursor,
             ) {
                 log::error!("Recording failed: {}", e);
                 let _ = screencast::RecordingState::delete();

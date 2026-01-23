@@ -440,6 +440,7 @@ impl Screenshot {
                         selected_encoder: config.video_encoder.clone(),
                         video_container: config.video_container,
                         video_framerate: config.video_framerate,
+                        video_show_cursor: config.video_show_cursor,
                     }
                 },
             }))
@@ -618,6 +619,14 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             }
             SettingsMsg::SetVideoFramerate(framerate) => {
                 settings_handlers::handle_set_video_framerate(args, framerate)
+            }
+            SettingsMsg::ToggleShowCursor => {
+                args.ui.video_show_cursor = !args.ui.video_show_cursor;
+                // Persist to config
+                let mut config = crate::config::SnapPeaConfig::load();
+                config.video_show_cursor = args.ui.video_show_cursor;
+                config.save();
+                cosmic::Task::none()
             }
             SettingsMsg::EncodersDetected(encoders) => {
                 // Update UI with detected encoders
@@ -874,6 +883,11 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 args_vec.push("--toplevel-index".to_string());
                 args_vec.push(idx.to_string());
                 log::info!("Adding --toplevel-index {} for window recording", idx);
+            }
+
+            // Add cursor visibility flag
+            if args.ui.video_show_cursor {
+                args_vec.push("--show-cursor".to_string());
             }
 
             let exe = match std::env::current_exe() {

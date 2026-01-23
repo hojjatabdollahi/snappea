@@ -206,6 +206,8 @@ pub struct SnapPeaConfig {
     pub video_container: Container,
     /// Recording framerate (30 or 60)
     pub video_framerate: u32,
+    /// Whether to show cursor in recordings
+    pub video_show_cursor: bool,
 }
 
 impl SnapPeaConfig {
@@ -269,6 +271,7 @@ impl Default for SnapPeaConfig {
             video_encoder: None, // Auto-detect
             video_container: Container::Mp4,
             video_framerate: 60,
+            video_show_cursor: true, // Show cursor by default
         }
     }
 }

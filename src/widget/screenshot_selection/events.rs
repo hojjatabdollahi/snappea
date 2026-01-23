@@ -130,6 +130,8 @@ pub enum SettingsEvent {
     VideoContainerSet(Container),
     /// Video framerate selected
     VideoFramerateSet(u32),
+    /// Show cursor in recordings toggled
+    ShowCursorToggle,
 }
 
 /// Capture action events
@@ -402,6 +404,10 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::VideoFramerateSet(framerate))
     }
 
+    pub fn show_cursor_toggle() -> Self {
+        Self::Settings(SettingsEvent::ShowCursorToggle)
+    }
+
     // Capture events
     pub fn copy_to_clipboard() -> Self {
         Self::Capture(CaptureEvent::CopyToClipboard)
@@ -535,6 +541,7 @@ impl ScreenshotEvent {
             Self::Settings(SettingsEvent::VideoFramerateSet(framerate)) => {
                 Msg::set_video_framerate(framerate)
             }
+            Self::Settings(SettingsEvent::ShowCursorToggle) => Msg::toggle_show_cursor(),
 
             // Capture events
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),

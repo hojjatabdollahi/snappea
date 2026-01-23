@@ -29,6 +29,8 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     on_container_select: G,
     video_framerate: u32,
     on_framerate_select: H,
+    video_show_cursor: bool,
+    on_show_cursor_toggle: Msg,
     space_s: u16,
     space_xs: u16,
 ) -> Element<'a, Msg>
@@ -146,6 +148,18 @@ where
         .spacing(space_s)
         .align_y(cosmic::iced_core::Alignment::Center);
 
+    // Show cursor toggle
+    let show_cursor_row = row![
+        text::caption("Show cursor"),
+        cosmic::widget::horizontal_space(),
+        toggler(video_show_cursor)
+            .on_toggle(move |_| on_show_cursor_toggle.clone())
+            .size(20.0),
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
     // About section
     const SNAPPEA_LOGO: &[u8] = include_bytes!("../../data/logo.svg");
     const GITHUB_ICON: &[u8] =
@@ -195,6 +209,7 @@ where
         container_row,
         framerate_label,
         framerate_row,
+        show_cursor_row,
         cosmic::widget::divider::horizontal::light(),
         about_section,
     ]
