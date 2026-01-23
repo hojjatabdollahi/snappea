@@ -244,6 +244,12 @@ impl WaylandHelper {
         // Do another roundtrip to receive dmabuf format events
         event_queue.roundtrip(&mut data).unwrap();
 
+        // Do additional roundtrips to receive toplevel info
+        // The toplevel protocol requires multiple roundtrips to get all window info
+        for _ in 0..3 {
+            event_queue.roundtrip(&mut data).unwrap();
+        }
+
         thread::spawn(move || {
             loop {
                 event_queue.blocking_dispatch(&mut data).unwrap();
@@ -289,6 +295,37 @@ impl WaylandHelper {
             .get(output)
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Get all toplevels (windows) including minimized ones
+    /// This returns ALL known toplevels, not just those on active workspaces
+    pub fn all_toplevels(&self) -> Vec<ExtForeignToplevelHandleV1> {
+        self.inner
+            .toplevels
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|info| info.foreign_toplevel.clone())
+            .collect()
+    }
+
+    /// Wait for toplevels to be populated, with a timeout
+    /// Returns true if toplevels were found, false if timeout expired
+    pub fn wait_for_toplevels(&self, timeout: std::time::Duration) -> bool {
+        let start = std::time::Instant::now();
+        let poll_interval = std::time::Duration::from_millis(50);
+
+        while start.elapsed() < timeout {
+            let count = self.inner.toplevels.lock().unwrap().len();
+            if count > 0 {
+                log::debug!("Found {} toplevels after {:?}", count, start.elapsed());
+                return true;
+            }
+            std::thread::sleep(poll_interval);
+        }
+
+        log::warn!("Timeout waiting for toplevels after {:?}", timeout);
+        false
     }
 
     fn set_output_info(&self, output: &wl_output::WlOutput, output_info_opt: Option<OutputInfo>) {

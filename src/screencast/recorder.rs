@@ -98,15 +98,20 @@ pub fn start_recording(
 
     // Determine capture source: toplevel (window) or output (screen/region)
     let capture_source = if let Some(idx) = toplevel_index {
-        // Get toplevels for this output
-        let toplevels = wayland_helper.output_toplevels(&output);
-        log::info!("Output '{}' has {} toplevels", output_name, toplevels.len());
+        // Wait for toplevels to be populated (they arrive asynchronously)
+        log::info!("Waiting for toplevel info from compositor...");
+        if !wayland_helper.wait_for_toplevels(Duration::from_secs(2)) {
+            anyhow::bail!("Timeout waiting for toplevel info from compositor");
+        }
+
+        // Get ALL toplevels (including minimized windows, not just per-output)
+        let toplevels = wayland_helper.all_toplevels();
+        log::info!("Found {} total toplevels (including minimized)", toplevels.len());
 
         if idx >= toplevels.len() {
             anyhow::bail!(
-                "Toplevel index {} out of range. Output '{}' has {} toplevels.",
+                "Toplevel index {} out of range. Found {} toplevels total.",
                 idx,
-                output_name,
                 toplevels.len()
             );
         }

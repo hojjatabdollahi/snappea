@@ -28,6 +28,9 @@ pub struct PortalContext {
 pub struct CaptureData {
     pub output_images: HashMap<String, ScreenshotImage>,
     pub toplevel_images: HashMap<String, Vec<ScreenshotImage>>,
+    /// Maps (output_name, local_index) -> global_index for toplevel recording
+    /// The outer HashMap key is output_name, inner Vec index is local_index, value is global_index
+    pub toplevel_global_indices: HashMap<String, Vec<usize>>,
 }
 
 #[derive(Clone, Debug, Default)]

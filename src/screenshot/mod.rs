@@ -357,6 +357,32 @@ impl Screenshot {
             }
         }
 
+        // Build mapping from (output, local_index) -> global_index at capture time
+        // This ensures the indices are stable when recording starts later
+        let all_toplevels = self.wayland_helper.all_toplevels();
+        let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
+            .iter()
+            .map(|Output { output, name, .. }| {
+                let output_toplevels = self.wayland_helper.output_toplevels(output);
+                let global_indices: Vec<usize> = output_toplevels
+                    .iter()
+                    .map(|t| {
+                        all_toplevels
+                            .iter()
+                            .position(|at| at == t)
+                            .unwrap_or(0)
+                    })
+                    .collect();
+                log::debug!(
+                    "Output '{}': {} toplevels, global indices: {:?}",
+                    name,
+                    output_toplevels.len(),
+                    global_indices
+                );
+                (name.clone(), global_indices)
+            })
+            .collect();
+
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
         // Load persisted config for settings
@@ -376,6 +402,7 @@ impl Screenshot {
                 capture: CaptureData {
                     output_images,
                     toplevel_images,
+                    toplevel_global_indices,
                 },
                 session: SessionState {
                     choice,
@@ -675,11 +702,33 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 }
                 Choice::Window(output_name, Some(window_index)) => {
                     // For window recording, use toplevel screencopy (same as screenshots)
-                    // Store the window index for passing to the recorder subprocess
-                    toplevel_index = Some(*window_index);
+                    // Use the global index that was captured at screenshot startup time
+                    // This ensures stability even if windows have been minimized/moved since then
 
                     if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
-                        log::info!("Recording window {} on output '{}'", window_index, output_name);
+                        // Look up the global index from the pre-captured mapping
+                        let global_index = args.capture.toplevel_global_indices
+                            .get(output_name)
+                            .and_then(|indices| indices.get(*window_index).copied());
+
+                        match global_index {
+                            Some(idx) => {
+                                log::info!(
+                                    "Recording window {} (global index {}) on output '{}'",
+                                    window_index, idx, output_name
+                                );
+                                toplevel_index = Some(idx);
+                            }
+                            None => {
+                                log::error!(
+                                    "Window index {} not found in captured indices for output '{}' (has {:?})",
+                                    window_index, output_name,
+                                    args.capture.toplevel_global_indices.get(output_name)
+                                );
+                                return cosmic::Task::none();
+                            }
+                        }
+
                         // Pass output region - recorder will use toplevel capture and skip cropping
                         (
                             output.logical_pos.0,
@@ -776,6 +825,15 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             let output_dir = dirs::video_dir()
                 .or_else(|| dirs::home_dir())
                 .unwrap_or_else(|| std::path::PathBuf::from("."));
+
+            // Ensure output directory exists
+            if !output_dir.exists() {
+                if let Err(e) = std::fs::create_dir_all(&output_dir) {
+                    log::error!("Failed to create output directory '{}': {}", output_dir.display(), e);
+                    return cosmic::Task::none();
+                }
+            }
+
             let output_file = output_dir.join(format!("recording-{}.{}", timestamp, container.extension()));
 
             // Determine encoder (from config or best_encoder)
@@ -814,28 +872,62 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             }
 
             let exe = match std::env::current_exe() {
-                Ok(exe) => exe,
+                Ok(exe) => {
+                    // Canonicalize to resolve symlinks and get absolute path
+                    match exe.canonicalize() {
+                        Ok(canonical) => {
+                            log::debug!("Recording executable: {}", canonical.display());
+                            canonical
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to canonicalize exe path '{}': {}, using original", exe.display(), e);
+                            exe
+                        }
+                    }
+                }
                 Err(e) => {
                     log::error!("Failed to get current executable: {}", e);
                     return cosmic::Task::none();
                 }
             };
 
-            match std::process::Command::new(exe).args(&args_vec).spawn() {
-                Ok(child) => {
+            // Verify executable exists before spawning
+            if !exe.exists() {
+                log::error!("Recording executable does not exist: {}", exe.display());
+                return cosmic::Task::none();
+            }
+
+            match std::process::Command::new(&exe).args(&args_vec).spawn() {
+                Ok(mut child) => {
+                    let pid = child.id();
                     log::info!(
                         "Recording started: PID {}, output: {}, local_region: {:?}",
-                        child.id(),
+                        pid,
                         output_file.display(),
                         local_region
                     );
+
+                    // Spawn a thread to wait for the child process to prevent zombies
+                    // This thread will reap the process when it exits
+                    std::thread::spawn(move || {
+                        match child.wait() {
+                            Ok(status) => {
+                                log::info!("Recording process {} exited with status: {}", pid, status);
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to wait for recording process {}: {}", pid, e);
+                            }
+                        }
+                    });
+
                     // Close UI - same as Cancel
                     handle_cancel_inner(app)
                 }
                 Err(e) => {
                     log::error!(
-                        "Failed to start recording: {} (output: {}, local_region: {:?})",
+                        "Failed to start recording: {} (exe: {}, output: {}, local_region: {:?})",
                         e,
+                        exe.display(),
                         output_file.display(),
                         local_region
                     );
