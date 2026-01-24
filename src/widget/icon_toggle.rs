@@ -76,6 +76,8 @@ pub struct IconToggle<'a, Msg> {
     /// Animation percent (0.0 = A selected, 1.0 = B selected)
     /// If None, uses is_b_selected directly (no animation)
     animation_percent: Option<f32>,
+    /// Content opacity for fade effect (1.0 = fully visible)
+    content_opacity: f32,
 }
 
 impl<'a, Msg> IconToggle<'a, Msg> {
@@ -88,6 +90,7 @@ impl<'a, Msg> IconToggle<'a, Msg> {
             is_vertical: false,
             on_toggle: None,
             animation_percent: None,
+            content_opacity: 1.0,
         }
     }
 
@@ -107,6 +110,12 @@ impl<'a, Msg> IconToggle<'a, Msg> {
     /// This is used for smooth animation transitions
     pub fn percent(mut self, percent: f32) -> Self {
         self.animation_percent = Some(percent.clamp(0.0, 1.0));
+        self
+    }
+
+    /// Set content opacity for fade effect (1.0 = fully visible)
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.content_opacity = opacity;
         self
     }
 
@@ -224,11 +233,13 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
 
         let bounds = layout.bounds();
         let cosmic_theme = theme.cosmic();
+        let opacity = self.content_opacity;
 
-        // Colors
-        let accent_color: Color = cosmic_theme.accent_color().into();
-        let pill_color = Color::from_rgba(0.3, 0.3, 0.3, 0.6);
-        let hover_color = Color::from_rgba(accent_color.r, accent_color.g, accent_color.b, 0.3);
+        // Colors with opacity applied
+        let mut accent_color: Color = cosmic_theme.accent_color().into();
+        accent_color.a *= opacity;
+        let pill_color = Color::from_rgba(0.3, 0.3, 0.3, 0.6 * opacity);
+        let hover_color = Color::from_rgba(accent_color.r, accent_color.g, accent_color.b, 0.3 * opacity);
 
         // Calculate icon center positions based on orientation
         let (icon_a_center_x, icon_a_center_y, icon_b_center_x, icon_b_center_y) =
@@ -338,14 +349,21 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
 
         let selected_icon_class =
             cosmic::theme::Svg::Custom(Rc::new(move |_theme| cosmic::iced_widget::svg::Style {
-                color: Some(Color::WHITE),
+                color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
+            }));
+
+        let default_icon_class =
+            cosmic::theme::Svg::Custom(Rc::new(move |theme| {
+                let mut color: Color = theme.cosmic().background.component.on.into();
+                color.a *= opacity;
+                cosmic::iced_widget::svg::Style { color: Some(color) }
             }));
 
         // Draw icon A
         let icon_a_class = if icon_a_selected {
             selected_icon_class.clone()
         } else {
-            cosmic::theme::Svg::Default
+            default_icon_class.clone()
         };
 
         let icon_a_widget =
@@ -376,7 +394,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         let icon_b_class = if icon_b_selected {
             selected_icon_class
         } else {
-            cosmic::theme::Svg::Default
+            default_icon_class
         };
 
         let icon_b_widget =

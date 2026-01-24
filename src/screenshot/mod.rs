@@ -436,6 +436,7 @@ impl Screenshot {
                         save_location_setting: config.save_location,
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
+                        toolbar_is_hovered: false,
                         tesseract_available: is_tesseract_available(),
                         available_encoders: Vec::new(),
                         encoder_displays: Vec::new(),
@@ -644,6 +645,20 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             }
             SettingsMsg::SetToolbarOpacity(opacity) => {
                 settings_handlers::handle_set_toolbar_opacity(args, opacity)
+            }
+            SettingsMsg::ToolbarHoverChanged(is_hovered) => {
+                args.ui.toolbar_is_hovered = is_hovered;
+                // Start the appropriate animation
+                if is_hovered {
+                    args.ui
+                        .timeline
+                        .set_chain(crate::widget::toolbar::toolbar_fade_in());
+                } else {
+                    args.ui
+                        .timeline
+                        .set_chain(crate::widget::toolbar::toolbar_fade_out());
+                }
+                cosmic::Task::none()
             }
             SettingsMsg::SetVideoEncoder(encoder) => {
                 settings_handlers::handle_set_video_encoder(args, encoder)

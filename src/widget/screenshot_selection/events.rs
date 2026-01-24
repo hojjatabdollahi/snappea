@@ -137,6 +137,8 @@ pub enum SettingsEvent {
     VideoFramerateSet(u32),
     /// Show cursor in recordings toggled
     ShowCursorToggle,
+    /// Toolbar hover state changed (for fade animation)
+    ToolbarHoverChanged(bool),
 }
 
 /// Capture action events
@@ -427,6 +429,10 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::ShowCursorToggle)
     }
 
+    pub fn toolbar_hover_changed(is_hovered: bool) -> Self {
+        Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered))
+    }
+
     // Capture events
     pub fn copy_to_clipboard() -> Self {
         Self::Capture(CaptureEvent::CopyToClipboard)
@@ -579,6 +585,9 @@ impl ScreenshotEvent {
                 Msg::set_video_framerate(framerate)
             }
             Self::Settings(SettingsEvent::ShowCursorToggle) => Msg::toggle_show_cursor(),
+            Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered)) => {
+                Msg::toolbar_hover_changed(is_hovered)
+            }
 
             // Capture events
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),

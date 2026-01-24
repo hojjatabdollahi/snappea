@@ -217,6 +217,8 @@ pub struct UiState {
     pub save_location_setting: SaveLocation,
     pub copy_to_clipboard_on_save: bool,
     pub toolbar_unhovered_opacity: f32,
+    /// Whether the toolbar is currently being hovered (for animated opacity)
+    pub toolbar_is_hovered: bool,
     pub tesseract_available: bool,
     // Recording settings
     pub available_encoders: Vec<EncoderInfo>,

@@ -411,6 +411,16 @@ where
                 let on_event = on_event.clone();
                 move |is_video| on_event(ScreenshotEvent::capture_mode_toggle(is_video))
             },
+            // Compute animated content opacity for toolbar fade effect
+            crate::widget::toolbar::get_toolbar_opacity(
+                &ui.timeline,
+                ui.toolbar_unhovered_opacity,
+                ui.toolbar_is_hovered,
+            ),
+            {
+                let on_event = on_event.clone();
+                move |is_hovered| on_event(ScreenshotEvent::toolbar_hover_changed(is_hovered))
+            },
         );
 
         // Build shapes_element

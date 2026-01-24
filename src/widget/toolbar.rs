@@ -3,11 +3,54 @@
 use std::rc::Rc;
 
 use cosmic::iced::Length;
-use cosmic::iced_core::{layout, widget::Tree, Background, Border, Layout, Size};
+use cosmic::iced_core::{layout, widget::Tree, Background, Border, Color, Layout, Size};
 use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
 use cosmic::iced_widget::{canvas, column, container, row};
 use cosmic::widget::{button, icon, tooltip};
 use cosmic::Element;
+use cosmic_time::once_cell::sync::Lazy;
+use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
+
+/// Animation ID for toolbar hover opacity
+pub static TOOLBAR_HOVER_ID: Lazy<cosmic_time::id::Toggler> =
+    Lazy::new(cosmic_time::id::Toggler::unique);
+
+/// Animation duration for toolbar fade in milliseconds
+const TOOLBAR_FADE_DURATION_MS: u64 = 200;
+
+/// Get the current toolbar opacity from the timeline
+/// Returns 1.0 when hovered (faded in), base_opacity when not hovered (faded out)
+pub fn get_toolbar_opacity(timeline: &Timeline, base_opacity: f32, is_hovered: bool) -> f32 {
+    let anim_value = timeline
+        .get(&TOOLBAR_HOVER_ID.clone().into(), 0)
+        .map_or(if is_hovered { 1.0 } else { 0.0 }, |interped| {
+            interped.value
+        });
+    // Interpolate between base_opacity and 1.0
+    base_opacity + (1.0 - base_opacity) * anim_value
+}
+
+/// Create an animation chain for fading in (unhovered -> hovered)
+pub fn toolbar_fade_in() -> cosmic_time::chain::Toggler {
+    chain!(
+        TOOLBAR_HOVER_ID.clone(),
+        lazy::toggler(Duration::ZERO),
+        toggler(Duration::from_millis(TOOLBAR_FADE_DURATION_MS))
+            .percent(1.0)
+            .ease(Ease::Exponential(Exponential::Out)),
+    )
+}
+
+/// Create an animation chain for fading out (hovered -> unhovered)
+pub fn toolbar_fade_out() -> cosmic_time::chain::Toggler {
+    chain!(
+        TOOLBAR_HOVER_ID.clone(),
+        lazy::toggler(Duration::ZERO),
+        toggler(Duration::from_millis(TOOLBAR_FADE_DURATION_MS))
+            .percent(0.0)
+            .ease(Ease::Exponential(Exponential::In)),
+    )
+}
 
 use super::icon_toggle::icon_toggle;
 use super::tool_button::{build_shape_button, build_tool_button};
@@ -24,6 +67,10 @@ pub struct HoverOpacity<'a, Msg> {
     unhovered_opacity: f32,
     /// When true, always use full opacity (ignores hover state)
     force_opaque: bool,
+    /// Callback when hover state changes
+    on_hover_change: Option<Box<dyn Fn(bool) -> Msg + 'a>>,
+    /// Externally provided content opacity (for animated fading of icons/buttons)
+    content_opacity: Option<f32>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -41,9 +88,19 @@ pub struct HatContainer<'a, Msg> {
     placement: HatPlacement,
     unhovered_opacity: f32,
     force_opaque: bool,
+    /// Callback when hover state changes
+    on_hover_change: Option<Box<dyn Fn(bool) -> Msg + 'a>>,
+    /// Externally provided content opacity (for animated fading of icons/buttons)
+    content_opacity: Option<f32>,
 }
 
 const HAT_HIT_RADIUS_FALLBACK: f32 = 8.0;
+
+/// State for HoverOpacity widget to track previous hover state
+#[derive(Debug, Clone, Default)]
+struct HoverState {
+    was_hovered: bool,
+}
 
 fn rounded_rect_contains(
     rect: cosmic::iced_core::Rectangle,
@@ -402,6 +459,8 @@ impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
             content: content.into(),
             unhovered_opacity: 0.5,
             force_opaque: false,
+            on_hover_change: None,
+            content_opacity: None,
         }
     }
 
@@ -416,6 +475,18 @@ impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
         self.force_opaque = force;
         self
     }
+
+    /// Set callback for hover state changes
+    pub fn on_hover_change(mut self, callback: impl Fn(bool) -> Msg + 'a) -> Self {
+        self.on_hover_change = Some(Box::new(callback));
+        self
+    }
+
+    /// Set content opacity (for animated fading of icons/buttons)
+    pub fn content_opacity(mut self, opacity: f32) -> Self {
+        self.content_opacity = Some(opacity);
+        self
+    }
 }
 
 impl<'a, Msg: 'static + Clone> HatContainer<'a, Msg> {
@@ -426,6 +497,8 @@ impl<'a, Msg: 'static + Clone> HatContainer<'a, Msg> {
             placement: HatPlacement::HeaderTop,
             unhovered_opacity: 0.5,
             force_opaque: false,
+            on_hover_change: None,
+            content_opacity: None,
         }
     }
 
@@ -443,6 +516,18 @@ impl<'a, Msg: 'static + Clone> HatContainer<'a, Msg> {
         self.unhovered_opacity = opacity.clamp(0.1, 1.0);
         self
     }
+
+    /// Set callback for hover state changes
+    pub fn on_hover_change(mut self, callback: impl Fn(bool) -> Msg + 'a) -> Self {
+        self.on_hover_change = Some(Box::new(callback));
+        self
+    }
+
+    /// Set content opacity (for animated fading of icons/buttons)
+    pub fn content_opacity(mut self, opacity: f32) -> Self {
+        self.content_opacity = Some(opacity);
+        self
+    }
 }
 
 impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Renderer>
@@ -450,6 +535,10 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
 {
     fn size(&self) -> Size<Length> {
         self.content.as_widget().size()
+    }
+
+    fn state(&self) -> cosmic::iced_core::widget::tree::State {
+        cosmic::iced_core::widget::tree::State::new(HoverState::default())
     }
 
     fn layout(
@@ -552,6 +641,23 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         viewport: &cosmic::iced_core::Rectangle,
     ) -> cosmic::iced_core::event::Status {
+        // Check for hover state changes on any mouse event
+        if let cosmic::iced_core::Event::Mouse(_) = &event {
+            if let Some(ref on_hover_change) = self.on_hover_change {
+                let bounds = layout.bounds();
+                let is_hovered = cursor
+                    .position()
+                    .map(|p| bounds.contains(p))
+                    .unwrap_or(false);
+
+                let state = tree.state.downcast_mut::<HoverState>();
+                if state.was_hovered != is_hovered {
+                    state.was_hovered = is_hovered;
+                    shell.publish(on_hover_change(is_hovered));
+                }
+            }
+        }
+
         self.content.as_widget_mut().on_event(
             &mut tree.children[0],
             event,
@@ -599,6 +705,10 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
 {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Shrink, Length::Shrink)
+    }
+
+    fn state(&self) -> cosmic::iced_core::widget::tree::State {
+        cosmic::iced_core::widget::tree::State::new(HoverState::default())
     }
 
     fn layout(
@@ -797,15 +907,28 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         let header_layout = children.next();
         let body_layout = children.next();
 
+        // Check for hover state changes on any mouse event
         if matches!(event, cosmic::iced_core::Event::Mouse(_)) {
-            if let (Some(header_layout), Some(body_layout), Some(position)) =
-                (header_layout, body_layout, cursor.position())
-            {
+            if let (Some(header_layout), Some(body_layout)) = (header_layout, body_layout) {
                 let header_bounds = header_layout.bounds();
                 let body_bounds = body_layout.bounds();
                 let radius = HAT_HIT_RADIUS_FALLBACK;
 
-                if !hat_contains(self.placement, header_bounds, body_bounds, radius, position) {
+                let is_hovered = cursor
+                    .position()
+                    .map(|p| hat_contains(self.placement, header_bounds, body_bounds, radius, p))
+                    .unwrap_or(false);
+
+                // Emit hover change callback
+                if let Some(ref on_hover_change) = self.on_hover_change {
+                    let state = tree.state.downcast_mut::<HoverState>();
+                    if state.was_hovered != is_hovered {
+                        state.was_hovered = is_hovered;
+                        shell.publish(on_hover_change(is_hovered));
+                    }
+                }
+
+                if !is_hovered {
                     return cosmic::iced_core::event::Status::Ignored;
                 }
             }
@@ -980,6 +1103,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     recording_annotation_mode: bool,
     toggle_animation_percent: f32,
     on_capture_mode_toggle: impl Fn(bool) -> Msg + 'a,
+    content_opacity: f32,
+    on_hover_change: impl Fn(bool) -> Msg + 'a,
 ) -> Element<'a, Msg> {
     use cosmic::widget::divider::vertical;
 
@@ -988,10 +1113,25 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         ToolbarPosition::Left | ToolbarPosition::Right
     );
 
-    let active_icon =
-        cosmic::theme::Svg::Custom(Rc::new(|theme| cosmic::iced_widget::svg::Style {
-            color: Some(theme.cosmic().accent_color().into()),
-        }));
+    // Helper: SVG style with opacity for active (accent colored) icons
+    let active_icon = {
+        let opacity = content_opacity;
+        cosmic::theme::Svg::Custom(Rc::new(move |theme| {
+            let mut color: Color = theme.cosmic().accent_color().into();
+            color.a *= opacity;
+            cosmic::iced_widget::svg::Style { color: Some(color) }
+        }))
+    };
+
+    // Helper: SVG style with opacity for default (theme colored) icons
+    let default_icon = {
+        let opacity = content_opacity;
+        cosmic::theme::Svg::Custom(Rc::new(move |theme| {
+            let mut color: Color = theme.cosmic().background.component.on.into();
+            color.a *= opacity;
+            cosmic::iced_widget::svg::Style { color: Some(color) }
+        }))
+    };
 
     // Position selector - custom widget with triangular hit regions
     let position_selector: Element<'_, Msg> = tooltip(
@@ -1002,7 +1142,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             on_toolbar_position(ToolbarPosition::Bottom),
             on_toolbar_position(ToolbarPosition::Left),
             on_toolbar_position(ToolbarPosition::Right),
-        ),
+        )
+        .opacity(content_opacity),
         "Move Toolbar (Ctrl+hjkl)",
         tooltip::Position::Bottom,
     )
@@ -1015,6 +1156,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         is_video_mode,
     )
     .percent(toggle_animation_percent)
+    .opacity(content_opacity)
     .on_toggle(on_capture_mode_toggle);
     let mode_toggle: Element<'_, Msg> = tooltip(
         if is_vertical {
@@ -1036,7 +1178,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .class(if matches!(choice, Choice::Rectangle(..)) {
                     active_icon.clone()
                 } else {
-                    cosmic::theme::Svg::default()
+                    default_icon.clone()
                 }),
         )
         .selected(matches!(choice, Choice::Rectangle(..)))
@@ -1056,7 +1198,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .class(if matches!(choice, Choice::Window(..)) {
                     active_icon.clone()
                 } else {
-                    cosmic::theme::Svg::default()
+                    default_icon.clone()
                 })
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0)),
@@ -1077,7 +1219,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .class(if matches!(choice, Choice::Output(..)) {
                     active_icon.clone()
                 } else {
-                    cosmic::theme::Svg::default()
+                    default_icon.clone()
                 }),
         )
         .selected(matches!(choice, Choice::Output(..)))
@@ -1138,39 +1280,45 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Custom red circular button with themed border
     let record_icon = container(
         icon::Icon::from(icon::from_name("media-record-symbolic").size(64))
-            .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
-                cosmic::iced_widget::svg::Style {
-                    color: Some(cosmic::iced::Color::WHITE),
-                }
-            })))
+            .class({
+                let opacity = content_opacity;
+                cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
+                    cosmic::iced_widget::svg::Style {
+                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
+                    }
+                }))
+            })
             .width(Length::Fixed(24.0))
             .height(Length::Fixed(24.0)),
     )
-    .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
-        let cosmic_theme = theme.cosmic();
-        // Check if dark theme by examining background luminance
-        let bg = cosmic_theme.background.base;
-        let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
-        let border_color = if is_dark {
-            cosmic::iced::Color::WHITE
-        } else {
-            cosmic::iced::Color::BLACK
-        };
-        let red_color = if has_selection {
-            cosmic::iced::Color::from_rgb(0.85, 0.2, 0.2) // Bright red when enabled
-        } else {
-            cosmic::iced::Color::from_rgb(0.5, 0.3, 0.3) // Muted red when disabled
-        };
-        cosmic::iced::widget::container::Style {
-            background: Some(Background::Color(red_color)),
-            border: Border {
-                radius: 20.0.into(), // Circular
-                width: 2.0,
-                color: border_color,
-            },
-            ..Default::default()
-        }
-    })))
+    .class({
+        let opacity = content_opacity;
+        cosmic::theme::Container::Custom(Box::new(move |theme| {
+            let cosmic_theme = theme.cosmic();
+            // Check if dark theme by examining background luminance
+            let bg = cosmic_theme.background.base;
+            let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
+            let border_color = if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, opacity)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, opacity)
+            };
+            let red_color = if has_selection {
+                Color::from_rgba(0.85, 0.2, 0.2, opacity) // Bright red when enabled
+            } else {
+                Color::from_rgba(0.5, 0.3, 0.3, opacity) // Muted red when disabled
+            };
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(red_color)),
+                border: Border {
+                    radius: 20.0.into(), // Circular
+                    width: 2.0,
+                    color: border_color,
+                },
+                ..Default::default()
+            }
+        }))
+    })
     .padding(8)
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))
@@ -1195,28 +1343,33 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Stop recording button - square stop icon in red circle
     let stop_icon = container(
         icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(64))
-            .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
-                cosmic::iced_widget::svg::Style {
-                    color: Some(cosmic::iced::Color::WHITE),
-                }
-            })))
+            .class({
+                let opacity = content_opacity;
+                cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
+                    cosmic::iced_widget::svg::Style {
+                        color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
+                    }
+                }))
+            })
             .width(Length::Fixed(24.0))
             .height(Length::Fixed(24.0)),
     )
-    .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
-        let cosmic_theme = theme.cosmic();
-        let bg = cosmic_theme.background.base;
-        let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
-        let border_color = if is_dark {
-            cosmic::iced::Color::WHITE
-        } else {
-            cosmic::iced::Color::BLACK
-        };
-        cosmic::iced::widget::container::Style {
-            background: Some(Background::Color(cosmic::iced::Color::from_rgb(
-                0.85, 0.2, 0.2,
-            ))),
-            border: Border {
+    .class({
+        let opacity = content_opacity;
+        cosmic::theme::Container::Custom(Box::new(move |theme| {
+            let cosmic_theme = theme.cosmic();
+            let bg = cosmic_theme.background.base;
+            let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
+            let border_color = if is_dark {
+                Color::from_rgba(1.0, 1.0, 1.0, opacity)
+            } else {
+                Color::from_rgba(0.0, 0.0, 0.0, opacity)
+            };
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(Color::from_rgba(
+                    0.85, 0.2, 0.2, opacity,
+                ))),
+                border: Border {
                 radius: 20.0.into(),
                 width: 2.0,
                 color: border_color,
@@ -1249,7 +1402,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 .class(if recording_annotation_mode {
                     active_icon.clone()
                 } else {
-                    cosmic::theme::Svg::default()
+                    default_icon.clone()
                 }),
         )
         .selected(recording_annotation_mode)
@@ -1272,6 +1425,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         has_selection.then_some(on_shape_right_click.clone()),
         space_xs,
         space_xxs,
+        content_opacity,
     );
 
     // Redact/Pixelate tool button (combined)
@@ -1286,6 +1440,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         has_selection.then_some(on_redact_press.clone()),
         has_selection.then_some(on_redact_right_click.clone()),
         space_xs,
+        content_opacity,
     );
 
     // OCR button
@@ -1585,6 +1740,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         return HoverOpacity::new(toolbar_body)
             .unhovered_opacity(toolbar_unhovered_opacity)
             .force_opaque(force_toolbar_opaque)
+            .content_opacity(content_opacity)
+            .on_hover_change(on_hover_change)
             .into();
     }
 
@@ -1611,5 +1768,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .placement(placement)
         .unhovered_opacity(toolbar_unhovered_opacity)
         .force_opaque(force_toolbar_opaque)
+        .content_opacity(content_opacity)
+        .on_hover_change(on_hover_change)
         .into()
 }

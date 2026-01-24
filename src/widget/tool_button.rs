@@ -283,7 +283,10 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
     on_press: Option<Msg>,
     on_right_click: Option<Msg>,
     padding: u16,
+    content_opacity: f32,
 ) -> Element<'a, Msg> {
+    use std::rc::Rc;
+
     let main_size = 40.0;
     let dot_size = 6.0_f32;
     let dot_spacing = 4.0_f32;
@@ -294,12 +297,23 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         cosmic::theme::Button::Icon
     };
 
+    // Create icon style with opacity
+    let icon_style = {
+        let opacity = content_opacity;
+        cosmic::theme::Svg::Custom(Rc::new(move |theme| {
+            let mut color: cosmic::iced::Color = theme.cosmic().background.component.on.into();
+            color.a *= opacity;
+            cosmic::iced_widget::svg::Style { color: Some(color) }
+        }))
+    };
+
     // Standard button like all other toolbar buttons
     let main_button = if is_enabled {
         button::custom(
             icon::Icon::from(icon::from_name(icon_name).size(64))
                 .width(Length::Fixed(main_size))
-                .height(Length::Fixed(main_size)),
+                .height(Length::Fixed(main_size))
+                .class(icon_style.clone()),
         )
         .class(button_class)
         .on_press_maybe(on_press.clone())
@@ -308,7 +322,8 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         button::custom(
             icon::Icon::from(icon::from_name(icon_name).size(64))
                 .width(Length::Fixed(main_size))
-                .height(Length::Fixed(main_size)),
+                .height(Length::Fixed(main_size))
+                .class(icon_style.clone()),
         )
         .class(button_class)
         .padding(padding)
@@ -317,17 +332,19 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
     // Wrap button in a right-click handler
     let main_button_with_events = RightClickWrapper::new(main_button, on_right_click);
 
-    // Create indicator dots using theme accent color
-    let dot_inactive_color = cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5);
+    // Create indicator dots using theme accent color with opacity
+    let dot_inactive_color = cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5 * content_opacity);
 
     let make_dot = move |index: usize| {
         let is_active_dot = index == current_option_index;
+        let opacity = content_opacity;
         container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
             .width(Length::Fixed(dot_size))
             .height(Length::Fixed(dot_size))
             .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
                 let cosmic_theme = theme.cosmic();
-                let accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+                let mut accent_color: cosmic::iced::Color = cosmic_theme.accent_color().into();
+                accent_color.a *= opacity;
                 cosmic::iced::widget::container::Style {
                     background: Some(Background::Color(if is_active_dot {
                         accent_color
@@ -382,6 +399,7 @@ pub fn build_shape_button<'a, Msg: Clone + 'static>(
     on_right_click: Option<Msg>,
     padding: u16,
     _space_xxs: u16,
+    content_opacity: f32,
 ) -> Element<'a, Msg> {
     let option_index = match current_tool {
         ShapeTool::Arrow => 0,
@@ -400,6 +418,7 @@ pub fn build_shape_button<'a, Msg: Clone + 'static>(
         on_press,
         on_right_click,
         padding,
+        content_opacity,
     )
 }
 

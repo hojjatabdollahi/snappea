@@ -17,6 +17,7 @@ pub struct ToolbarPositionSelector<Msg> {
     on_bottom: Msg,
     on_left: Msg,
     on_right: Msg,
+    content_opacity: f32,
 }
 
 impl<Msg: Clone> ToolbarPositionSelector<Msg> {
@@ -35,7 +36,14 @@ impl<Msg: Clone> ToolbarPositionSelector<Msg> {
             on_bottom,
             on_left,
             on_right,
+            content_opacity: 1.0,
         }
+    }
+
+    /// Set content opacity for fade effect (1.0 = fully visible)
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.content_opacity = opacity;
+        self
     }
 
     /// Determine which triangular region a point falls into
@@ -123,12 +131,14 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
 
         let bounds = layout.bounds();
         let cosmic_theme = theme.cosmic();
-        let accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+        let opacity = self.content_opacity;
+        let mut accent = cosmic::iced::Color::from(cosmic_theme.accent_color());
+        accent.a *= opacity;
         let radius = cosmic_theme.radius_xs();
 
-        // Use more visible colors
-        let base_color = cosmic::iced::Color::from_rgba(0.4, 0.4, 0.4, 0.6);
-        let hover_color = cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 0.8);
+        // Use more visible colors with opacity applied
+        let base_color = cosmic::iced::Color::from_rgba(0.4, 0.4, 0.4, 0.6 * opacity);
+        let hover_color = cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 0.8 * opacity);
 
         // Determine hovered region
         let hovered_region = cursor
