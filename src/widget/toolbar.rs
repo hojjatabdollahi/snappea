@@ -52,141 +52,16 @@ pub fn toolbar_fade_out() -> cosmic_time::chain::Toggler {
     )
 }
 
-/// A simple wrapper that applies opacity to its child using alpha compositing
-struct OpacityWrapper<'a, Msg> {
-    content: Element<'a, Msg>,
-    opacity: f32,
-}
+/// Helper to create an SVG icon with opacity support
+/// libcosmic's Icon doesn't expose opacity, but iced's Svg widget does
+fn icon_with_opacity(icon_name: &str, size: u16, opacity: f32) -> cosmic::iced_widget::svg::Svg<'_, cosmic::Theme> {
+    let icon_handle = icon::Icon::from(icon::from_name(icon_name).size(size))
+        .into_svg_handle()
+        .expect("Icon should be SVG");
 
-impl<'a, Msg> OpacityWrapper<'a, Msg> {
-    fn new(content: impl Into<Element<'a, Msg>>, opacity: f32) -> Self {
-        Self {
-            content: content.into(),
-            opacity: opacity.clamp(0.0, 1.0),
-        }
-    }
-}
-
-impl<'a, Msg: 'static> cosmic::iced_core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
-    for OpacityWrapper<'a, Msg>
-{
-    fn size(&self) -> Size<Length> {
-        self.content.as_widget().size()
-    }
-
-    fn layout(
-        &self,
-        tree: &mut Tree,
-        renderer: &cosmic::Renderer,
-        limits: &cosmic::iced::Limits,
-    ) -> layout::Node {
-        self.content
-            .as_widget()
-            .layout(&mut tree.children[0], renderer, limits)
-    }
-
-    fn children(&self) -> Vec<Tree> {
-        vec![Tree::new(&self.content)]
-    }
-
-    fn diff(&mut self, tree: &mut Tree) {
-        tree.diff_children(std::slice::from_mut(&mut self.content));
-    }
-
-    fn draw(
-        &self,
-        tree: &Tree,
-        renderer: &mut cosmic::Renderer,
-        theme: &cosmic::Theme,
-        style: &cosmic::iced_core::renderer::Style,
-        layout: Layout<'_>,
-        cursor: cosmic::iced_core::mouse::Cursor,
-        viewport: &cosmic::iced_core::Rectangle,
-    ) {
-        // Modify the style to apply opacity to text_color (which affects icons)
-        let mut draw_style = *style;
-        draw_style.text_color.a *= self.opacity;
-
-        self.content.as_widget().draw(
-            &tree.children[0],
-            renderer,
-            theme,
-            &draw_style,
-            layout,
-            cursor,
-            viewport,
-        );
-    }
-
-    fn on_event(
-        &mut self,
-        tree: &mut Tree,
-        event: cosmic::iced_core::Event,
-        layout: Layout<'_>,
-        cursor: cosmic::iced_core::mouse::Cursor,
-        renderer: &cosmic::Renderer,
-        clipboard: &mut dyn cosmic::iced_core::Clipboard,
-        shell: &mut cosmic::iced_core::Shell<'_, Msg>,
-        viewport: &cosmic::iced_core::Rectangle,
-    ) -> cosmic::iced_core::event::Status {
-        self.content.as_widget_mut().on_event(
-            &mut tree.children[0],
-            event,
-            layout,
-            cursor,
-            renderer,
-            clipboard,
-            shell,
-            viewport,
-        )
-    }
-
-    fn mouse_interaction(
-        &self,
-        tree: &Tree,
-        layout: Layout<'_>,
-        cursor: cosmic::iced_core::mouse::Cursor,
-        viewport: &cosmic::iced_core::Rectangle,
-        renderer: &cosmic::Renderer,
-    ) -> cosmic::iced_core::mouse::Interaction {
-        self.content.as_widget().mouse_interaction(
-            &tree.children[0],
-            layout,
-            cursor,
-            viewport,
-            renderer,
-        )
-    }
-
-    fn operate(
-        &self,
-        tree: &mut Tree,
-        layout: Layout<'_>,
-        renderer: &cosmic::Renderer,
-        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
-    ) {
-        self.content
-            .as_widget()
-            .operate(&mut tree.children[0], layout, renderer, operation);
-    }
-
-    fn overlay<'b>(
-        &'b mut self,
-        tree: &'b mut Tree,
-        layout: Layout<'_>,
-        renderer: &cosmic::Renderer,
-        translation: cosmic::iced::Vector,
-    ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
-        self.content
-            .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, translation)
-    }
-}
-
-impl<'a, Msg: 'static> From<OpacityWrapper<'a, Msg>> for Element<'a, Msg> {
-    fn from(widget: OpacityWrapper<'a, Msg>) -> Self {
-        Element::new(widget)
-    }
+    cosmic::iced_widget::svg::Svg::new(icon_handle)
+        .opacity(opacity)
+        .symbolic(true)
 }
 
 use super::icon_toggle::icon_toggle;
@@ -1292,55 +1167,46 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
     // Common buttons with tooltips
     let btn_region = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("screenshot-selection-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .selected(matches!(choice, Choice::Rectangle(..)))
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_choice_change(Choice::Rectangle(
-                Rect::default(),
-                DragState::None,
-            )))
-            .padding(space_xs),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("screenshot-selection-symbolic", 64, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .selected(matches!(choice, Choice::Rectangle(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Rectangle(
+            Rect::default(),
+            DragState::None,
+        )))
+        .padding(space_xs),
         "Select Region (R)",
         tooltip::Position::Bottom,
     );
 
     let btn_window = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("screenshot-window-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .selected(matches!(choice, Choice::Window(..)))
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
-            .padding(space_xs),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("screenshot-window-symbolic", 64, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .selected(matches!(choice, Choice::Window(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
+        .padding(space_xs),
         "Select Window (W)",
         tooltip::Position::Bottom,
     );
 
     let btn_screen = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("screenshot-screen-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .selected(matches!(choice, Choice::Output(..)))
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_choice_change(Choice::Output(None))) // Goes to picker mode
-            .padding(space_xs),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("screenshot-screen-symbolic", 64, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .selected(matches!(choice, Choice::Output(..)))
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_choice_change(Choice::Output(None))) // Goes to picker mode
+        .padding(space_xs),
         "Select Screen (S)",
         tooltip::Position::Bottom,
     );
@@ -1365,34 +1231,28 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
     // Copy to clipboard button - always enabled
     let btn_copy = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_copy_to_clipboard)
-            .padding(space_xs),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("edit-copy-symbolic", 64, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_copy_to_clipboard)
+        .padding(space_xs),
         copy_tooltip,
         tooltip::Position::Bottom,
     );
 
     // Save to pictures button - always enabled
     let btn_save = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("document-save-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_save_to_pictures)
-            .padding(space_xs),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("document-save-symbolic", 64, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_save_to_pictures)
+        .padding(space_xs),
         save_tooltip,
         tooltip::Position::Bottom,
     );
@@ -1451,13 +1311,10 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     };
 
     let btn_record = tooltip(
-        OpacityWrapper::new(
-            button::custom(record_icon)
-                .class(cosmic::theme::Button::Icon)
-                .on_press_maybe(has_selection.then_some(on_record_region))
-                .padding(0),
-            content_opacity,
-        ),
+        button::custom(record_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_record_region))
+            .padding(0),
         record_tooltip,
         tooltip::Position::Bottom,
     );
@@ -1503,39 +1360,29 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     .align_y(cosmic::iced_core::alignment::Vertical::Center);
 
     let btn_stop_recording = tooltip(
-        OpacityWrapper::new(
-            button::custom(stop_icon)
-                .class(cosmic::theme::Button::Icon)
-                .on_press(on_stop_recording)
-                .padding(0),
-            content_opacity,
-        ),
+        button::custom(stop_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press(on_stop_recording)
+            .padding(0),
         "Stop Recording",
         tooltip::Position::Bottom,
     );
 
     // Annotation toggle button for recording mode (pencil icon)
+    // Uses build_tool_button for consistent appearance with indicator dot
     // Left click toggles mode, right click opens popup
-    let pencil_button = OpacityWrapper::new(
-        button::custom(
-            icon::Icon::from(icon::from_name("edit-symbolic").size(64))
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .selected(recording_annotation_mode || pencil_popup_open)
-        .class(if pencil_popup_open {
-            cosmic::theme::Button::Suggested
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press(on_toggle_recording_annotation)
-        .padding(space_xs),
-        content_opacity,
-    );
-    let btn_recording_annotate = tooltip(
-        super::tool_button::RightClickWrapper::new(pencil_button, Some(on_pencil_right_click)),
+    let btn_recording_annotate: Element<'_, Msg> = build_tool_button(
+        "edit-symbolic",
         "Freehand Annotation (right-click for options)",
-        tooltip::Position::Bottom,
+        1, // Single indicator dot (on/off state)
+        0, // Always show first dot as active when mode is on
+        recording_annotation_mode,
+        pencil_popup_open,
+        true, // Always enabled during recording
+        Some(on_toggle_recording_annotation),
+        Some(on_pencil_right_click),
+        space_xs,
+        content_opacity,
     );
 
     // Shape drawing button with indicator dots
@@ -1571,49 +1418,40 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // OCR button
     let btn_ocr = if has_ocr_text {
         tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(cosmic::theme::Button::Suggested)
-                .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("edit-copy-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Suggested)
+            .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
+            .padding(space_xs),
             "Copy OCR Text (O)",
             tooltip::Position::Bottom,
         )
     } else if tesseract_available {
         tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(cosmic::theme::Button::Icon)
-                .on_press_maybe(has_selection.then_some(on_ocr.clone()))
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("ocr-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_ocr.clone()))
+            .padding(space_xs),
             "Recognize Text (O)",
             tooltip::Position::Bottom,
         )
     } else {
         tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("ocr-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(cosmic::theme::Button::Icon)
-                .on_press_maybe(None)
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("ocr-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(None)
+            .padding(space_xs),
             "Install tesseract to enable OCR",
             tooltip::Position::Bottom,
         )
@@ -1623,33 +1461,27 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     let has_qr_codes = !qr_codes.is_empty();
     let btn_qr = if has_qr_codes {
         tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("edit-copy-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(cosmic::theme::Button::Suggested)
-                .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("edit-copy-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Suggested)
+            .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
+            .padding(space_xs),
             "Copy QR Code (Q)",
             tooltip::Position::Bottom,
         )
     } else {
         tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("qr-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(cosmic::theme::Button::Icon)
-                .on_press_maybe(has_selection.then_some(on_qr.clone()))
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("qr-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(cosmic::theme::Button::Icon)
+            .on_press_maybe(has_selection.then_some(on_qr.clone()))
+            .padding(space_xs),
             "Scan QR Code (Q)",
             tooltip::Position::Bottom,
         )
@@ -1658,21 +1490,18 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Settings button - responds to both left and right click
     let btn_settings: Element<'_, Msg> = {
         let settings_btn = tooltip(
-            OpacityWrapper::new(
-                button::custom(
-                    icon::Icon::from(icon::from_name("application-menu-symbolic").size(64))
-                        .width(Length::Fixed(40.0))
-                        .height(Length::Fixed(40.0)),
-                )
-                .class(if settings_drawer_open {
-                    cosmic::theme::Button::Suggested
-                } else {
-                    cosmic::theme::Button::Icon
-                })
-                .on_press(on_settings_toggle.clone())
-                .padding(space_xs),
-                content_opacity,
-            ),
+            button::custom(
+                icon_with_opacity("application-menu-symbolic", 64, content_opacity)
+                    .width(Length::Fixed(40.0))
+                    .height(Length::Fixed(40.0)),
+            )
+            .class(if settings_drawer_open {
+                cosmic::theme::Button::Suggested
+            } else {
+                cosmic::theme::Button::Icon
+            })
+            .on_press(on_settings_toggle.clone())
+            .padding(space_xs),
             "Settings",
             tooltip::Position::Bottom,
         );
@@ -1680,16 +1509,14 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     };
 
     let btn_close = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("window-close-symbolic").size(63))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_cancel),
-            content_opacity,
-        ),
+        button::custom(
+            icon_with_opacity("window-close-symbolic", 63, content_opacity)
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_cancel)
+        .padding(space_xs),
         "Cancel",
         tooltip::Position::Bottom,
     );

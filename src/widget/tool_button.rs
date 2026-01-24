@@ -297,33 +297,30 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         cosmic::theme::Button::Icon
     };
 
-    // Create icon style with opacity
-    let icon_style = {
-        let opacity = content_opacity;
-        cosmic::theme::Svg::Custom(Rc::new(move |theme| {
-            let mut color: cosmic::iced::Color = theme.cosmic().background.component.on.into();
-            color.a *= opacity;
-            cosmic::iced_widget::svg::Style { color: Some(color) }
-        }))
-    };
+    // Create icon using iced's Svg with native opacity support
+    let icon_svg_handle = icon::Icon::from(icon::from_name(icon_name).size(64))
+        .into_svg_handle()
+        .expect("Icon should be SVG");
 
     // Standard button like all other toolbar buttons
     let main_button = if is_enabled {
         button::custom(
-            icon::Icon::from(icon::from_name(icon_name).size(64))
+            cosmic::iced_widget::svg::Svg::new(icon_svg_handle.clone())
                 .width(Length::Fixed(main_size))
                 .height(Length::Fixed(main_size))
-                .class(icon_style.clone()),
+                .opacity(content_opacity)
+                .symbolic(true),
         )
         .class(button_class)
         .on_press_maybe(on_press.clone())
         .padding(padding)
     } else {
         button::custom(
-            icon::Icon::from(icon::from_name(icon_name).size(64))
+            cosmic::iced_widget::svg::Svg::new(icon_svg_handle.clone())
                 .width(Length::Fixed(main_size))
                 .height(Length::Fixed(main_size))
-                .class(icon_style.clone()),
+                .opacity(content_opacity)
+                .symbolic(true),
         )
         .class(button_class)
         .padding(padding)

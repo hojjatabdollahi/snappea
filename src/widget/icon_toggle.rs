@@ -342,35 +342,36 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
             );
         }
 
-        // 4. Draw icons - color based on proximity to selection circle
+        // 4. Draw icons using iced's Svg with opacity support
         // When animating, both icons should transition their colors smoothly
         let icon_a_selected = percent < 0.5;
         let icon_b_selected = percent >= 0.5;
 
-        let selected_icon_class =
-            cosmic::theme::Svg::Custom(Rc::new(move |_theme| cosmic::iced_widget::svg::Style {
-                color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
-            }));
+        // Create SVG widgets with native opacity support
+        let icon_a_handle = icon::Icon::from(icon::from_name(self.icon_a_name).size(ICON_SIZE as u16))
+            .into_svg_handle()
+            .expect("Icon should be SVG");
 
-        let default_icon_class =
-            cosmic::theme::Svg::Custom(Rc::new(move |theme| {
-                let mut color: Color = theme.cosmic().background.component.on.into();
-                color.a *= opacity;
-                cosmic::iced_widget::svg::Style { color: Some(color) }
-            }));
-
-        // Draw icon A
-        let icon_a_class = if icon_a_selected {
-            selected_icon_class.clone()
-        } else {
-            default_icon_class.clone()
-        };
-
-        let icon_a_widget =
-            icon::Icon::from(icon::from_name(self.icon_a_name).size(ICON_SIZE as u16))
+        let icon_a_widget = if icon_a_selected {
+            // Selected: white color with opacity
+            cosmic::iced_widget::svg::Svg::new(icon_a_handle)
                 .width(Length::Fixed(ICON_SIZE))
                 .height(Length::Fixed(ICON_SIZE))
-                .class(icon_a_class);
+                .opacity(opacity)
+                .symbolic(true)
+                .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                    cosmic::iced_widget::svg::Style {
+                        color: Some(Color::from_rgb(1.0, 1.0, 1.0)),
+                    }
+                })))
+        } else {
+            // Default: theme color with opacity
+            cosmic::iced_widget::svg::Svg::new(icon_a_handle)
+                .width(Length::Fixed(ICON_SIZE))
+                .height(Length::Fixed(ICON_SIZE))
+                .opacity(opacity)
+                .symbolic(true)
+        };
 
         let icon_a_layout =
             layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(cosmic::iced::Point::new(
@@ -378,7 +379,6 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
                 icon_a_center_y - ICON_SIZE / 2.0,
             ));
 
-        // Convert Icon to Element, then get the widget to draw
         let icon_a_element: Element<'_, Msg> = icon_a_widget.into();
         icon_a_element.as_widget().draw(
             &Tree::empty(),
@@ -391,17 +391,30 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         );
 
         // Draw icon B
-        let icon_b_class = if icon_b_selected {
-            selected_icon_class
-        } else {
-            default_icon_class
-        };
+        let icon_b_handle = icon::Icon::from(icon::from_name(self.icon_b_name).size(ICON_SIZE as u16))
+            .into_svg_handle()
+            .expect("Icon should be SVG");
 
-        let icon_b_widget =
-            icon::Icon::from(icon::from_name(self.icon_b_name).size(ICON_SIZE as u16))
+        let icon_b_widget = if icon_b_selected {
+            // Selected: white color with opacity
+            cosmic::iced_widget::svg::Svg::new(icon_b_handle)
                 .width(Length::Fixed(ICON_SIZE))
                 .height(Length::Fixed(ICON_SIZE))
-                .class(icon_b_class);
+                .opacity(opacity)
+                .symbolic(true)
+                .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                    cosmic::iced_widget::svg::Style {
+                        color: Some(Color::from_rgb(1.0, 1.0, 1.0)),
+                    }
+                })))
+        } else {
+            // Default: theme color with opacity
+            cosmic::iced_widget::svg::Svg::new(icon_b_handle)
+                .width(Length::Fixed(ICON_SIZE))
+                .height(Length::Fixed(ICON_SIZE))
+                .opacity(opacity)
+                .symbolic(true)
+        };
 
         let icon_b_layout =
             layout::Node::new(Size::new(ICON_SIZE, ICON_SIZE)).move_to(cosmic::iced::Point::new(

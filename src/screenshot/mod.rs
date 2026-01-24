@@ -1155,9 +1155,12 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             cosmic::Task::none()
         }
         CaptureMsg::ToggleRecordingAnnotation => {
-            log::info!("Toggle recording annotation mode");
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.recording_annotation_mode = !args.ui.recording_annotation_mode;
+                log::info!(
+                    "Toggle recording annotation mode: UI state = {}",
+                    args.ui.recording_annotation_mode
+                );
             }
             // Return a task that sends ToggleAnnotationMode to properly
             // recreate the layer surface with correct input zone

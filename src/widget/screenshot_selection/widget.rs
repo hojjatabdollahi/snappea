@@ -1345,6 +1345,47 @@ where
             }
         }
 
+        // During recording with annotation mode OFF, pass through mouse events
+        // that are outside the toolbar (allows interacting with desktop)
+        if self.ui.is_recording && !self.ui.recording_annotation_mode {
+            if let Event::Mouse(_) = &event {
+                if let Some(pos) = cursor.position() {
+                    let layout_children: Vec<_> = layout.children().collect();
+                    let toolbar_bounds = layout_children.get(3).map(|l| l.bounds());
+
+                    // Check if click is inside toolbar or any open popup
+                    let inside_toolbar = toolbar_bounds
+                        .map(|b| b.contains(pos))
+                        .unwrap_or(false);
+
+                    // Also check for open popups
+                    let inside_pencil_popup = if self.ui.pencil_popup_open {
+                        let mut popup_idx = 4;
+                        if self.settings_drawer_element.is_some() {
+                            popup_idx += 1;
+                        }
+                        if self.shape_popup_element.is_some() {
+                            popup_idx += 1;
+                        }
+                        if self.redact_popup_element.is_some() {
+                            popup_idx += 1;
+                        }
+                        layout_children
+                            .get(popup_idx)
+                            .map(|l| l.bounds().contains(pos))
+                            .unwrap_or(false)
+                    } else {
+                        false
+                    };
+
+                    // If click is outside toolbar and popups, pass it through
+                    if !inside_toolbar && !inside_pencil_popup {
+                        return cosmic::iced_core::event::Status::Ignored;
+                    }
+                }
+            }
+        }
+
         // Handle click-outside-to-close for popups (both left and right click)
         if let Event::Mouse(MouseEvent::ButtonPressed(button)) = &event
             && matches!(button, Button::Left | Button::Right)
