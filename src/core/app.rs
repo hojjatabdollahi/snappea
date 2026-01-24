@@ -318,8 +318,14 @@ impl cosmic::Application for App {
                     use cosmic::iced_core::layout::Limits;
 
                     let input_zone = if annotation_mode {
-                        // Full input capture for drawing
-                        None
+                        // Capture input only inside the recording region so the main toolbar
+                        // remains clickable outside that area.
+                        Some(vec![cosmic::iced_core::Rectangle {
+                            x: indicator.region.0 as f32,
+                            y: indicator.region.1 as f32,
+                            width: indicator.region.2 as f32,
+                            height: indicator.region.3 as f32,
+                        }])
                     } else {
                         // No input capture - click through (main UI handles controls)
                         Some(vec![])
