@@ -10,8 +10,8 @@ use cosmic::{
     },
     iced_core::Renderer,
     iced_core::{
-        self, Border, Color, Length, Point, Rectangle, Shadow, Size, clipboard::DndSource,
-        layout::Node, renderer::Quad,
+        self, clipboard::DndSource, layout::Node, renderer::Quad, Border, Color, Length, Point,
+        Rectangle, Shadow, Size,
     },
     widget::{self, Widget},
 };
@@ -77,6 +77,8 @@ pub struct RectangleSelection<'a, Msg> {
     popup_open: bool,
     /// Whether magnifier is enabled
     magnifier_enabled: bool,
+    /// Whether recording is active (hide selection UI)
+    is_recording: bool,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -98,6 +100,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         rect_outline_mode: bool,
         popup_open: bool,
         magnifier_enabled: bool,
+        is_recording: bool,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
@@ -116,6 +119,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             rect_outline_mode,
             popup_open,
             magnifier_enabled,
+            is_recording,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -501,6 +505,9 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _cursor: cosmic::iced_core::mouse::Cursor,
         _viewport: &cosmic::iced_core::Rectangle,
     ) {
+        if self.is_recording {
+            return;
+        }
         let cosmic = theme.cosmic();
         let accent = Color::from(cosmic.accent_color());
         let inner_rect = self.rectangle_selection;

@@ -928,9 +928,11 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                     }
                 }
 
-                if !is_hovered {
-                    return cosmic::iced_core::event::Status::Ignored;
-                }
+                // Don't block events when not hovered - allow clicks through
+                // The hover state is only for visual feedback (opacity animation)
+                // if !is_hovered {
+                //     return cosmic::iced_core::event::Status::Ignored;
+                // }
             }
         }
 
@@ -1376,7 +1378,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             },
             ..Default::default()
         }
-    })))
+    }))
+})
     .padding(8)
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))

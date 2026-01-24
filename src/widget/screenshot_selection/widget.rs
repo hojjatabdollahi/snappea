@@ -264,6 +264,7 @@ where
                 annotations.rect_outline_mode,
                 ui.shape_popup_open || ui.redact_popup_open || ui.settings_drawer_open,
                 ui.magnifier_enabled,
+                ui.is_recording,
             )
             .into(),
             Choice::Output(None) => {
@@ -1091,17 +1092,19 @@ where
             draw_ocr_overlays(renderer, viewport, &self.ocr_overlays_for_output);
         }
 
-        // Draw selection frame
-        if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
-            let output_width = (self.output_rect.right - self.output_rect.left) as f32;
-            let output_height = (self.output_rect.bottom - self.output_rect.top) as f32;
-            draw_selection_frame_with_handles(
-                renderer,
-                (sel_x, sel_y, sel_w, sel_h),
-                (output_width, output_height),
-                accent_color,
-                corner_radius,
-            );
+        // Draw selection frame (hide while recording)
+        if !self.ui.is_recording {
+            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                let output_width = (self.output_rect.right - self.output_rect.left) as f32;
+                let output_height = (self.output_rect.bottom - self.output_rect.top) as f32;
+                draw_selection_frame_with_handles(
+                    renderer,
+                    (sel_x, sel_y, sel_w, sel_h),
+                    (output_width, output_height),
+                    accent_color,
+                    corner_radius,
+                );
+            }
         }
 
         // Draw menu
