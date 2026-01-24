@@ -109,6 +109,22 @@ pub enum ToolPopupEvent {
     PixelationSizeSet(u32),
     /// Pixelation size saved
     PixelationSizeSave,
+    /// Pencil popup toggled
+    PencilPopupToggle,
+    /// Pencil popup closed
+    PencilPopupClose,
+    /// Pencil color changed
+    PencilColorSet(ShapeColor),
+    /// Pencil fade duration changed (during drag)
+    PencilFadeDurationSet(f32),
+    /// Save pencil fade duration (on release)
+    PencilFadeDurationSave,
+    /// Pencil thickness changed (during drag)
+    PencilThicknessSet(f32),
+    /// Save pencil thickness (on release)
+    PencilThicknessSave,
+    /// Clear pencil drawings
+    PencilClear,
 }
 
 /// Settings drawer events
@@ -157,6 +173,8 @@ pub enum CaptureEvent {
     StopRecording,
     /// Toggle annotation mode during recording
     ToggleRecordingAnnotation,
+    /// Right-click on pencil button (open popup)
+    PencilRightClick,
     /// Cancel screenshot
     Cancel,
     /// Toggle capture mode (screenshot vs video) - true = video mode
@@ -461,6 +479,42 @@ impl ScreenshotEvent {
         Self::Capture(CaptureEvent::ToggleRecordingAnnotation)
     }
 
+    pub fn pencil_right_click() -> Self {
+        Self::Capture(CaptureEvent::PencilRightClick)
+    }
+
+    pub fn pencil_popup_toggle() -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilPopupToggle)
+    }
+
+    pub fn pencil_popup_close() -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilPopupClose)
+    }
+
+    pub fn pencil_color_set(color: ShapeColor) -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilColorSet(color))
+    }
+
+    pub fn pencil_fade_duration_set(duration: f32) -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilFadeDurationSet(duration))
+    }
+
+    pub fn pencil_fade_duration_save() -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilFadeDurationSave)
+    }
+
+    pub fn pencil_thickness_set(thickness: f32) -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilThicknessSet(thickness))
+    }
+
+    pub fn pencil_thickness_save() -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilThicknessSave)
+    }
+
+    pub fn pencil_clear() -> Self {
+        Self::ToolPopup(ToolPopupEvent::PencilClear)
+    }
+
     pub fn cancel() -> Self {
         Self::Capture(CaptureEvent::Cancel)
     }
@@ -564,6 +618,20 @@ impl ScreenshotEvent {
             Self::ToolPopup(ToolPopupEvent::PixelationSizeSave) => {
                 Msg::save_pixelation_block_size()
             }
+            Self::ToolPopup(ToolPopupEvent::PencilPopupToggle) => Msg::toggle_pencil_popup(),
+            Self::ToolPopup(ToolPopupEvent::PencilPopupClose) => Msg::close_pencil_popup(),
+            Self::ToolPopup(ToolPopupEvent::PencilColorSet(color)) => Msg::set_pencil_color(color),
+            Self::ToolPopup(ToolPopupEvent::PencilFadeDurationSet(duration)) => {
+                Msg::set_pencil_fade_duration(duration)
+            }
+            Self::ToolPopup(ToolPopupEvent::PencilFadeDurationSave) => {
+                Msg::save_pencil_fade_duration()
+            }
+            Self::ToolPopup(ToolPopupEvent::PencilThicknessSet(thickness)) => {
+                Msg::set_pencil_thickness(thickness)
+            }
+            Self::ToolPopup(ToolPopupEvent::PencilThicknessSave) => Msg::save_pencil_thickness(),
+            Self::ToolPopup(ToolPopupEvent::PencilClear) => Msg::clear_pencil_drawings(),
 
             // Settings events
             Self::Settings(SettingsEvent::DrawerToggle) => Msg::toggle_settings_drawer(),
@@ -605,6 +673,7 @@ impl ScreenshotEvent {
             Self::Capture(CaptureEvent::ToggleRecordingAnnotation) => {
                 Msg::toggle_recording_annotation()
             }
+            Self::Capture(CaptureEvent::PencilRightClick) => Msg::toggle_pencil_popup(),
             Self::Capture(CaptureEvent::Cancel) => Msg::cancel(),
             Self::Capture(CaptureEvent::CaptureModeToggle(is_video)) => Msg::Capture(
                 crate::session::messages::CaptureMsg::ToggleCaptureMode(is_video),

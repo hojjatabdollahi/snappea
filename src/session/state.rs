@@ -236,6 +236,14 @@ pub struct UiState {
     pub is_recording: bool,
     /// Whether annotation mode is active during recording
     pub recording_annotation_mode: bool,
+    /// Whether pencil popup is open during recording
+    pub pencil_popup_open: bool,
+    /// Pencil color for recording annotations
+    pub pencil_color: ShapeColor,
+    /// Duration in seconds before pencil strokes fade away
+    pub pencil_fade_duration: f32,
+    /// Pencil line thickness in pixels
+    pub pencil_thickness: f32,
     /// Last known toolbar bounds (output-local)
     pub toolbar_bounds: Option<Rectangle>,
     /// Animation timeline for UI animations
@@ -247,5 +255,6 @@ impl UiState {
         self.shape_popup_open = false;
         self.redact_popup_open = false;
         self.settings_drawer_open = false;
+        self.pencil_popup_open = false;
     }
 }

@@ -785,3 +785,172 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
         })))
         .into()
 }
+
+/// Build the pencil settings popup element for recording annotations
+#[allow(clippy::too_many_arguments)]
+pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
+    current_color: ShapeColor,
+    fade_duration: f32,
+    thickness: f32,
+    has_annotations: bool,
+    on_color_change: &(impl Fn(ShapeColor) -> Msg + 'a),
+    on_duration_change: impl Fn(f32) -> Msg + 'a,
+    on_duration_save: Msg,
+    on_thickness_change: impl Fn(f32) -> Msg + 'a,
+    on_thickness_save: Msg,
+    on_clear: Msg,
+    space_s: u16,
+    space_xs: u16,
+) -> Element<'a, Msg> {
+    // Color picker - 2 rows of 4 color swatches each
+    let make_color_swatch = |color: &ShapeColor, name: &'static str| {
+        let is_selected = (color.r - current_color.r).abs() < 0.05
+            && (color.g - current_color.g).abs() < 0.05
+            && (color.b - current_color.b).abs() < 0.05;
+        let color_val = *color;
+        let iced_color: cosmic::iced::Color = color_val.into();
+
+        tooltip(
+            button::custom(
+                container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+                    .width(Length::Fixed(24.0))
+                    .height(Length::Fixed(24.0))
+                    .class(cosmic::theme::Container::Custom(Box::new(move |_theme| {
+                        cosmic::iced::widget::container::Style {
+                            background: Some(Background::Color(iced_color)),
+                            border: Border {
+                                radius: 4.0.into(),
+                                width: if is_selected { 2.0 } else { 1.0 },
+                                color: if is_selected {
+                                    cosmic::iced::Color::WHITE
+                                } else {
+                                    cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.5)
+                                },
+                            },
+                            ..Default::default()
+                        }
+                    }))),
+            )
+            .class(cosmic::theme::Button::Text)
+            .on_press(on_color_change(color_val))
+            .padding(2),
+            name,
+            tooltip::Position::Bottom,
+        )
+    };
+
+    // First row: Red, Green, Blue, Yellow
+    let color_row1 = row![
+        make_color_swatch(&COLOR_PRESETS[0].0, COLOR_PRESETS[0].1),
+        make_color_swatch(&COLOR_PRESETS[1].0, COLOR_PRESETS[1].1),
+        make_color_swatch(&COLOR_PRESETS[2].0, COLOR_PRESETS[2].1),
+        make_color_swatch(&COLOR_PRESETS[3].0, COLOR_PRESETS[3].1),
+    ]
+    .spacing(space_xs)
+    .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Second row: Orange, Purple, White, Black
+    let color_row2 = row![
+        make_color_swatch(&COLOR_PRESETS[4].0, COLOR_PRESETS[4].1),
+        make_color_swatch(&COLOR_PRESETS[5].0, COLOR_PRESETS[5].1),
+        make_color_swatch(&COLOR_PRESETS[6].0, COLOR_PRESETS[6].1),
+        make_color_swatch(&COLOR_PRESETS[7].0, COLOR_PRESETS[7].1),
+    ]
+    .spacing(space_xs)
+    .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Center the color rows
+    let color_row1_centered = container(color_row1)
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    let color_row2_centered = container(color_row2)
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center);
+
+    let color_section = column![
+        text::body("Color"),
+        color_row1_centered,
+        color_row2_centered
+    ]
+    .spacing(space_xs)
+    .align_x(cosmic::iced_core::Alignment::Start);
+
+    // Thickness slider (1-10 pixels) - updates during drag, saves on release
+    let thickness_label = text::body(format!("Thickness: {:.0}px", thickness));
+    let thickness_slider =
+        cosmic::widget::slider(1.0..=10.0, thickness, move |v| on_thickness_change(v))
+            .step(1.0)
+            .on_release(on_thickness_save)
+            .width(Length::Fill);
+
+    let thickness_section = column![thickness_label, thickness_slider,]
+        .spacing(space_xs)
+        .width(Length::Fill);
+
+    // Fade duration slider (1-10 seconds) - updates during drag, saves on release
+    let duration_label = text::body(format!("Fade: {:.0}s", fade_duration));
+    let duration_slider =
+        cosmic::widget::slider(1.0..=10.0, fade_duration, move |v| on_duration_change(v))
+            .step(1.0)
+            .on_release(on_duration_save)
+            .width(Length::Fill);
+
+    let duration_section = column![duration_label, duration_slider,]
+        .spacing(space_xs)
+        .width(Length::Fill);
+
+    // Clear button (full width)
+    let clear_button = button::custom(
+        container(
+            row![
+                icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text::body("Clear Drawings"),
+            ]
+            .spacing(space_xs)
+            .align_y(cosmic::iced_core::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center),
+    )
+    .class(cosmic::theme::Button::Destructive)
+    .on_press_maybe(has_annotations.then_some(on_clear))
+    .padding([space_xs, space_s])
+    .width(Length::Fill);
+
+    let clear_row = container(clear_button).width(Length::Fill);
+
+    // Assemble popup content
+    let popup_content = column![
+        color_section,
+        cosmic::widget::divider::horizontal::light(),
+        thickness_section,
+        cosmic::widget::divider::horizontal::light(),
+        duration_section,
+        cosmic::widget::divider::horizontal::light(),
+        clear_row,
+    ]
+    .spacing(space_s)
+    .padding(space_s)
+    .width(Length::Fixed(230.0));
+
+    container(popup_content)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(
+                    cosmic_theme.background.component.base.into(),
+                )),
+                text_color: Some(cosmic_theme.background.component.on.into()),
+                border: Border {
+                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                    width: 1.0,
+                    color: cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
+                },
+                ..Default::default()
+            }
+        })))
+        .into()
+}

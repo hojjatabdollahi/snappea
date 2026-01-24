@@ -211,6 +211,31 @@ pub struct SnapPeaConfig {
     pub video_framerate: u32,
     /// Whether to show cursor in recordings
     pub video_show_cursor: bool,
+    /// Pencil color for recording annotations (RGB, 0.0-1.0)
+    #[serde(default = "default_pencil_color")]
+    pub pencil_color: ShapeColor,
+    /// Duration in seconds before pencil strokes fade away
+    #[serde(default = "default_pencil_fade_duration")]
+    pub pencil_fade_duration: f32,
+    /// Pencil line thickness in pixels
+    #[serde(default = "default_pencil_thickness")]
+    pub pencil_thickness: f32,
+}
+
+fn default_pencil_color() -> ShapeColor {
+    ShapeColor {
+        r: 1.0,
+        g: 0.9,
+        b: 0.0,
+    } // Yellow
+}
+
+fn default_pencil_fade_duration() -> f32 {
+    3.0 // 3 seconds
+}
+
+fn default_pencil_thickness() -> f32 {
+    3.0 // 3 pixels
 }
 
 fn default_toolbar_unhovered_opacity() -> f32 {
@@ -281,6 +306,9 @@ impl Default for SnapPeaConfig {
             video_container: Container::Mp4,
             video_framerate: 60,
             video_show_cursor: true, // Show cursor by default
+            pencil_color: default_pencil_color(),
+            pencil_fade_duration: default_pencil_fade_duration(),
+            pencil_thickness: default_pencil_thickness(),
         }
     }
 }

@@ -1221,6 +1221,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_record_region: Msg,
     on_stop_recording: Msg,
     on_toggle_recording_annotation: Msg,
+    on_pencil_right_click: Msg,
     on_shape_press: Msg,
     on_shape_right_click: Msg,
     on_redact_press: Msg,
@@ -1240,6 +1241,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     is_video_mode: bool,
     is_recording: bool,
     recording_annotation_mode: bool,
+    pencil_popup_open: bool,
     toggle_animation_percent: f32,
     on_capture_mode_toggle: impl Fn(bool) -> Msg + 'a,
     content_opacity: f32,
@@ -1513,21 +1515,26 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     );
 
     // Annotation toggle button for recording mode (pencil icon)
-    // This toggles freehand drawing mode on the recording overlay
+    // Left click toggles mode, right click opens popup
+    let pencil_button = OpacityWrapper::new(
+        button::custom(
+            icon::Icon::from(icon::from_name("edit-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0)),
+        )
+        .selected(recording_annotation_mode || pencil_popup_open)
+        .class(if pencil_popup_open {
+            cosmic::theme::Button::Suggested
+        } else {
+            cosmic::theme::Button::Icon
+        })
+        .on_press(on_toggle_recording_annotation)
+        .padding(space_xs),
+        content_opacity,
+    );
     let btn_recording_annotate = tooltip(
-        OpacityWrapper::new(
-            button::custom(
-                icon::Icon::from(icon::from_name("edit-symbolic").size(64))
-                    .width(Length::Fixed(40.0))
-                    .height(Length::Fixed(40.0)),
-            )
-            .selected(recording_annotation_mode)
-            .class(cosmic::theme::Button::Icon)
-            .on_press(on_toggle_recording_annotation)
-            .padding(space_xs),
-            content_opacity,
-        ),
-        "Freehand Annotation",
+        super::tool_button::RightClickWrapper::new(pencil_button, Some(on_pencil_right_click)),
+        "Freehand Annotation (right-click for options)",
         tooltip::Position::Bottom,
     );
 

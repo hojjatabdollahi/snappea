@@ -448,6 +448,10 @@ impl Screenshot {
                         is_video_mode: false,
                         is_recording: false,
                         recording_annotation_mode: false,
+                        pencil_popup_open: false,
+                        pencil_color: config.pencil_color,
+                        pencil_fade_duration: config.pencil_fade_duration,
+                        pencil_thickness: config.pencil_thickness,
                         toolbar_bounds: None,
                         timeline: cosmic_time::Timeline::new(),
                     }
@@ -574,6 +578,35 @@ fn handle_draw_msg(app: &mut App, msg: DrawMsg) -> cosmic::Task<crate::core::app
 /// Handle Tool messages (popup and tool configuration)
 /// Delegates to the widget::tool_handlers module
 fn handle_tool_msg(app: &mut App, msg: ToolMsg) -> cosmic::Task<crate::core::app::Msg> {
+    // Handle ClearPencilDrawings specially since it needs access to recording_indicator
+    if let ToolMsg::ClearPencilDrawings = &msg {
+        if let Some(indicator) = &mut app.recording_indicator {
+            indicator.annotations.clear();
+            indicator.current_stroke = None;
+        }
+        return cosmic::Task::none();
+    }
+
+    // Handle SetPencilColor, SetPencilFadeDuration, SetPencilThickness - update recording_indicator too
+    match &msg {
+        ToolMsg::SetPencilColor(color) => {
+            if let Some(indicator) = &mut app.recording_indicator {
+                indicator.pencil_color = *color;
+            }
+        }
+        ToolMsg::SetPencilFadeDuration(duration) => {
+            if let Some(indicator) = &mut app.recording_indicator {
+                indicator.pencil_fade_duration = *duration;
+            }
+        }
+        ToolMsg::SetPencilThickness(thickness) => {
+            if let Some(indicator) = &mut app.recording_indicator {
+                indicator.pencil_thickness = *thickness;
+            }
+        }
+        _ => {}
+    }
+
     if let Some(args) = app.screenshot_args.as_mut() {
         let needs_save = crate::widget::tool_handlers::handle_tool_msg(args, msg);
         if needs_save {
@@ -1051,6 +1084,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     super_pressed: false,
                     ctrl_pressed: false,
                     annotation_mode: false,
+                    pencil_color: config.pencil_color,
+                    pencil_fade_duration: config.pencil_fade_duration,
+                    pencil_thickness: config.pencil_thickness,
                     toolbar_bounds,
                     toolbar_pos: (0.0, 0.0), // Not used - main toolbar handles controls
                     toolbar_dragging: false,

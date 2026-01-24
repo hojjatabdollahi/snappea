@@ -2,7 +2,7 @@
 //!
 //! Handles ToolMsg for popup state, tool selection, colors, and config persistence.
 
-use crate::config::{SnapPeaConfig, RedactTool, ShapeTool};
+use crate::config::{RedactTool, ShapeTool, SnapPeaConfig};
 use crate::screenshot::Args;
 use crate::session::messages::{ToolMsg, ToolPopupAction};
 
@@ -58,6 +58,32 @@ pub fn handle_tool_msg(args: &mut Args, msg: ToolMsg) -> bool {
         ToolMsg::SavePixelationBlockSize => {
             true // needs config save
         }
+        ToolMsg::PencilPopup(action) => {
+            handle_pencil_popup(args, action);
+            false
+        }
+        ToolMsg::SetPencilColor(color) => {
+            args.ui.pencil_color = color;
+            true // needs config save
+        }
+        ToolMsg::SetPencilFadeDuration(duration) => {
+            args.ui.pencil_fade_duration = duration;
+            false // saved on release, not during drag
+        }
+        ToolMsg::SavePencilFadeDuration => {
+            true // needs config save
+        }
+        ToolMsg::SetPencilThickness(thickness) => {
+            args.ui.pencil_thickness = thickness;
+            false // saved on release, not during drag
+        }
+        ToolMsg::SavePencilThickness => {
+            true // needs config save
+        }
+        ToolMsg::ClearPencilDrawings => {
+            // This is handled in screenshot/mod.rs because it needs access to app.recording_indicator
+            false
+        }
     }
 }
 
@@ -69,6 +95,9 @@ pub fn save_tool_config(args: &Args) {
     config.shape_shadow = args.ui.shape_shadow;
     config.primary_redact_tool = args.ui.primary_redact_tool;
     config.pixelation_block_size = args.ui.pixelation_block_size;
+    config.pencil_color = args.ui.pencil_color;
+    config.pencil_fade_duration = args.ui.pencil_fade_duration;
+    config.pencil_thickness = args.ui.pencil_thickness;
     config.save();
 }
 
@@ -233,6 +262,32 @@ fn handle_redact_mode_toggle(args: &mut Args) {
     }
     // Close popups
     args.close_all_popups();
+}
+
+// ============================================================================
+// Pencil tool handlers (for recording annotations)
+// ============================================================================
+
+fn handle_pencil_popup(args: &mut Args, action: ToolPopupAction) {
+    match action {
+        ToolPopupAction::Toggle => {
+            args.ui.pencil_popup_open = !args.ui.pencil_popup_open;
+            if args.ui.pencil_popup_open {
+                args.ui.shape_popup_open = false;
+                args.ui.redact_popup_open = false;
+                args.ui.settings_drawer_open = false;
+            }
+        }
+        ToolPopupAction::Open => {
+            args.ui.pencil_popup_open = true;
+            args.ui.shape_popup_open = false;
+            args.ui.redact_popup_open = false;
+            args.ui.settings_drawer_open = false;
+        }
+        ToolPopupAction::Close => {
+            args.ui.pencil_popup_open = false;
+        }
+    }
 }
 
 // ============================================================================

@@ -96,6 +96,21 @@ pub enum ToolMsg {
     SetPixelationBlockSize(u32),
     /// Save current pixelation block size to config
     SavePixelationBlockSize,
+
+    /// Pencil popup actions
+    PencilPopup(ToolPopupAction),
+    /// Set pencil color for recording annotations
+    SetPencilColor(ShapeColor),
+    /// Set pencil fade duration (during drag, no save)
+    SetPencilFadeDuration(f32),
+    /// Save pencil fade duration (on release)
+    SavePencilFadeDuration,
+    /// Set pencil line thickness (during drag, no save)
+    SetPencilThickness(f32),
+    /// Save pencil line thickness (on release)
+    SavePencilThickness,
+    /// Clear all pencil drawings
+    ClearPencilDrawings,
 }
 
 // ============================================================================
@@ -382,6 +397,32 @@ impl Msg {
     }
     pub fn save_pixelation_block_size() -> Self {
         Self::Tool(ToolMsg::SavePixelationBlockSize)
+    }
+
+    // Pencil tool shortcuts (for recording annotations)
+    pub fn toggle_pencil_popup() -> Self {
+        Self::Tool(ToolMsg::PencilPopup(ToolPopupAction::Toggle))
+    }
+    pub fn close_pencil_popup() -> Self {
+        Self::Tool(ToolMsg::PencilPopup(ToolPopupAction::Close))
+    }
+    pub fn set_pencil_color(color: ShapeColor) -> Self {
+        Self::Tool(ToolMsg::SetPencilColor(color))
+    }
+    pub fn set_pencil_fade_duration(duration: f32) -> Self {
+        Self::Tool(ToolMsg::SetPencilFadeDuration(duration))
+    }
+    pub fn save_pencil_fade_duration() -> Self {
+        Self::Tool(ToolMsg::SavePencilFadeDuration)
+    }
+    pub fn set_pencil_thickness(thickness: f32) -> Self {
+        Self::Tool(ToolMsg::SetPencilThickness(thickness))
+    }
+    pub fn save_pencil_thickness() -> Self {
+        Self::Tool(ToolMsg::SavePencilThickness)
+    }
+    pub fn clear_pencil_drawings() -> Self {
+        Self::Tool(ToolMsg::ClearPencilDrawings)
     }
 
     // Selection shortcuts

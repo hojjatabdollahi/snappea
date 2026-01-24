@@ -53,6 +53,10 @@ pub struct AnnotationStroke {
     pub completed_at: Option<std::time::Instant>,
     /// Opacity (1.0 = fully visible, 0.0 = invisible)
     pub opacity: f32,
+    /// Color of this stroke (RGB, 0.0-1.0)
+    pub color: crate::config::ShapeColor,
+    /// Line thickness in pixels
+    pub thickness: f32,
 }
 
 /// State for the recording indicator overlay
@@ -78,6 +82,12 @@ pub struct RecordingIndicator {
     pub ctrl_pressed: bool,
     /// Whether annotation mode is active (overlay captures all input)
     pub annotation_mode: bool,
+    /// Pencil color (RGB, 0.0-1.0)
+    pub pencil_color: crate::config::ShapeColor,
+    /// Duration in seconds before pencil strokes fade away
+    pub pencil_fade_duration: f32,
+    /// Pencil line thickness in pixels
+    pub pencil_thickness: f32,
     /// Toolbar bounds from main UI (output-local coords)
     pub toolbar_bounds: Option<cosmic::iced_core::Rectangle>,
     /// Toolbar position (top-left corner)
@@ -237,13 +247,24 @@ impl cosmic::Application for App {
             }
             Msg::AnnotationFade => {
                 if let Some(indicator) = &mut self.recording_indicator {
-                    let fade_duration = 3.0; // seconds to fully fade
-                    let fade_per_tick = 1.0 / (fade_duration * 20.0); // 20 ticks per second
+                    let total_duration = indicator.pencil_fade_duration;
+                    let hold_duration = total_duration * 0.8; // Stay opaque for 80%
+                    let fade_duration = total_duration * 0.2; // Fade during last 20%
 
                     // Update opacity for completed strokes
                     for stroke in &mut indicator.annotations {
-                        if stroke.completed_at.is_some() {
-                            stroke.opacity = (stroke.opacity - fade_per_tick).max(0.0);
+                        if let Some(completed_at) = stroke.completed_at {
+                            let elapsed = completed_at.elapsed().as_secs_f32();
+
+                            if elapsed <= hold_duration {
+                                // During hold phase, stay fully opaque
+                                stroke.opacity = 1.0;
+                            } else {
+                                // During fade phase, linearly interpolate from 1.0 to 0.0
+                                let fade_elapsed = elapsed - hold_duration;
+                                let fade_progress = (fade_elapsed / fade_duration).min(1.0);
+                                stroke.opacity = 1.0 - fade_progress;
+                            }
                         }
                     }
 
@@ -274,10 +295,15 @@ impl cosmic::Application for App {
                         cosmic::iced::mouse::Event::ButtonReleased(cosmic::iced::mouse::Button::Left) => {
                             if let Some(points) = indicator.current_stroke.take() {
                                 if points.len() > 1 {
+                                    // Capture current color and thickness for this stroke
+                                    let color = indicator.pencil_color;
+                                    let thickness = indicator.pencil_thickness;
                                     indicator.annotations.push(AnnotationStroke {
                                         points,
                                         completed_at: Some(std::time::Instant::now()),
                                         opacity: 1.0,
+                                        color,
+                                        thickness,
                                     });
                                 }
                             }
@@ -684,6 +710,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
     let annotations = indicator.annotations.clone();
     let current_stroke = indicator.current_stroke.clone();
     let annotation_mode = indicator.annotation_mode;
+    let pencil_color = indicator.pencil_color;
+    let pencil_thickness = indicator.pencil_thickness;
 
     struct RecordingOverlay {
         region: (i32, i32, u32, u32),
@@ -691,6 +719,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
         annotations: Vec<AnnotationStroke>,
         current_stroke: Option<Vec<(f32, f32)>>,
         annotation_mode: bool,
+        pencil_color: crate::config::ShapeColor,
+        pencil_thickness: f32,
     }
 
     /// State for tracking cursor position between events
@@ -802,6 +832,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
             }
 
             // Draw completed annotation strokes with fading opacity
+            // Each stroke has its own color and thickness
             for stroke in &self.annotations {
                 if stroke.points.len() < 2 {
                     continue;
@@ -817,20 +848,25 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                     }
                 });
 
-                // Yellow color with fading opacity
-                let color = cosmic::iced_core::Color::from_rgba(1.0, 0.9, 0.0, stroke.opacity);
+                // Use per-stroke color with fading opacity
+                let color = cosmic::iced_core::Color::from_rgba(
+                    stroke.color.r,
+                    stroke.color.g,
+                    stroke.color.b,
+                    stroke.opacity,
+                );
 
                 frame.stroke(
                     &path,
                     Stroke::default()
                         .with_color(color)
-                        .with_width(3.0)
+                        .with_width(stroke.thickness)
                         .with_line_cap(canvas::LineCap::Round)
                         .with_line_join(canvas::LineJoin::Round),
                 );
             }
 
-            // Draw current stroke being drawn (full opacity)
+            // Draw current stroke being drawn (full opacity, uses current settings)
             if let Some(points) = &self.current_stroke {
                 if points.len() >= 2 {
                     let path = Path::new(|builder| {
@@ -840,14 +876,19 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                         }
                     });
 
-                    // Yellow color, full opacity for current stroke
-                    let color = cosmic::iced_core::Color::from_rgba(1.0, 0.9, 0.0, 1.0);
+                    // Use current pencil color, full opacity for stroke being drawn
+                    let color = cosmic::iced_core::Color::from_rgba(
+                        self.pencil_color.r,
+                        self.pencil_color.g,
+                        self.pencil_color.b,
+                        1.0,
+                    );
 
                     frame.stroke(
                         &path,
                         Stroke::default()
                             .with_color(color)
-                            .with_width(3.0)
+                            .with_width(self.pencil_thickness)
                             .with_line_cap(canvas::LineCap::Round)
                             .with_line_join(canvas::LineJoin::Round),
                     );
@@ -864,6 +905,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
         annotations,
         current_stroke,
         annotation_mode,
+        pencil_color,
+        pencil_thickness,
     };
 
     canvas::Canvas::new(program)

@@ -54,7 +54,7 @@ use crate::widget::{
     rectangle_selection::RectangleSelection,
     screenshot::SelectedImageWidget,
     settings_drawer::build_settings_drawer,
-    tool_button::{build_redact_popup, build_shape_popup},
+    tool_button::{build_pencil_popup, build_redact_popup, build_shape_popup},
     toolbar::build_toolbar,
 };
 
@@ -131,6 +131,7 @@ where
     settings_drawer_element: Option<Element<'a, Msg>>,
     shape_popup_element: Option<Element<'a, Msg>>,
     redact_popup_element: Option<Element<'a, Msg>>,
+    pencil_popup_element: Option<Element<'a, Msg>>,
 }
 
 impl<'a, E> ScreenshotSelectionWidget<'a, E>
@@ -385,6 +386,7 @@ where
             on_event(ScreenshotEvent::record_region()),
             on_event(ScreenshotEvent::stop_recording()),
             on_event(ScreenshotEvent::toggle_recording_annotation()),
+            on_event(ScreenshotEvent::pencil_right_click()),
             on_event(ScreenshotEvent::shape_mode_toggle()),
             on_event(ScreenshotEvent::shape_popup_toggle()),
             on_event(ScreenshotEvent::redact_tool_mode_toggle()),
@@ -407,6 +409,7 @@ where
             ui.is_video_mode,
             ui.is_recording,
             ui.recording_annotation_mode,
+            ui.pencil_popup_open,
             crate::widget::icon_toggle::get_toggle_percent(&ui.timeline, ui.is_video_mode),
             {
                 let on_event = on_event.clone();
@@ -550,6 +553,33 @@ where
             None
         };
 
+        // Build pencil_popup_element (only shown during recording)
+        let on_event_pencil_color = on_event.clone();
+        let on_event_pencil_duration = on_event.clone();
+        let on_event_pencil_thickness = on_event.clone();
+        let pencil_popup_element = if ui.pencil_popup_open && ui.is_recording {
+            // Check if there are any pencil annotations (strokes in recording indicator)
+            // For now, we'll pass false since we don't have direct access to strokes here
+            // The clear button will be enabled when there are strokes
+            let has_pencil_annotations = true; // Always enable clear button during recording
+            Some(build_pencil_popup(
+                ui.pencil_color,
+                ui.pencil_fade_duration,
+                ui.pencil_thickness,
+                has_pencil_annotations,
+                &move |c| on_event_pencil_color(ScreenshotEvent::pencil_color_set(c)),
+                move |d| on_event_pencil_duration(ScreenshotEvent::pencil_fade_duration_set(d)),
+                on_event(ScreenshotEvent::pencil_fade_duration_save()),
+                move |t| on_event_pencil_thickness(ScreenshotEvent::pencil_thickness_set(t)),
+                on_event(ScreenshotEvent::pencil_thickness_save()),
+                on_event(ScreenshotEvent::pencil_clear()),
+                space_s,
+                space_xs,
+            ))
+        } else {
+            None
+        };
+
         Self {
             id: cosmic::widget::Id::unique(),
             choice,
@@ -583,6 +613,7 @@ where
             settings_drawer_element,
             shape_popup_element,
             redact_popup_element,
+            pencil_popup_element,
         }
     }
 
@@ -646,6 +677,9 @@ where
         if let Some(ref popup) = self.redact_popup_element {
             children.push(Tree::new(popup));
         }
+        if let Some(ref popup) = self.pencil_popup_element {
+            children.push(Tree::new(popup));
+        }
         children
     }
 
@@ -663,6 +697,9 @@ where
             elements.push(selector);
         }
         if let Some(ref mut popup) = self.redact_popup_element {
+            elements.push(popup);
+        }
+        if let Some(ref mut popup) = self.pencil_popup_element {
             elements.push(popup);
         }
         tree.diff_children(&mut elements);
@@ -880,6 +917,69 @@ where
                     Point {
                         x: menu_pos.x - popup_bounds.width - popup_margin,
                         y: (redact_btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+            };
+            popup_node = popup_node.move_to(popup_pos);
+            nodes.push(popup_node);
+        }
+
+        // Layout pencil popup if present (only during recording)
+        if let Some(ref popup) = self.pencil_popup_element {
+            let mut child_idx = 4;
+            if self.settings_drawer_element.is_some() {
+                child_idx += 1;
+            }
+            if self.shape_popup_element.is_some() {
+                child_idx += 1;
+            }
+            if self.redact_popup_element.is_some() {
+                child_idx += 1;
+            }
+            let mut popup_node =
+                popup
+                    .as_widget()
+                    .layout(&mut children[child_idx], renderer, limits);
+            let popup_bounds = popup_node.bounds();
+            let popup_margin = 4.0_f32;
+            // Position near the pencil button - roughly in the middle of the toolbar during recording
+            let pencil_btn_fraction = 0.35_f32;
+
+            let popup_pos = match self.ui.toolbar_position {
+                ToolbarPosition::Bottom => {
+                    let pencil_btn_x = menu_pos.x + menu_bounds.width * pencil_btn_fraction;
+                    Point {
+                        x: (pencil_btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y - popup_bounds.height - popup_margin,
+                    }
+                }
+                ToolbarPosition::Top => {
+                    let pencil_btn_x = menu_pos.x + menu_bounds.width * pencil_btn_fraction;
+                    Point {
+                        x: (pencil_btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y + menu_bounds.height + popup_margin,
+                    }
+                }
+                ToolbarPosition::Left => {
+                    let pencil_btn_y = menu_pos.y + menu_bounds.height * pencil_btn_fraction;
+                    Point {
+                        x: menu_pos.x + menu_bounds.width + popup_margin,
+                        y: (pencil_btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+                ToolbarPosition::Right => {
+                    let pencil_btn_y = menu_pos.y + menu_bounds.height * pencil_btn_fraction;
+                    Point {
+                        x: menu_pos.x - popup_bounds.width - popup_margin,
+                        y: (pencil_btn_y - popup_bounds.height / 2.0)
                             .max(margin)
                             .min(limits.max().height - popup_bounds.height - margin),
                     }
@@ -1189,6 +1289,36 @@ where
                 });
             }
         }
+
+        // Draw pencil popup
+        if let Some(ref popup) = self.pencil_popup_element {
+            let layout_children: Vec<_> = layout.children().collect();
+            let mut popup_idx = 4;
+            if self.settings_drawer_element.is_some() {
+                popup_idx += 1;
+            }
+            if self.shape_popup_element.is_some() {
+                popup_idx += 1;
+            }
+            if self.redact_popup_element.is_some() {
+                popup_idx += 1;
+            }
+            if layout_children.len() > popup_idx {
+                let popup_layout = layout_children[popup_idx];
+                renderer.with_layer(popup_layout.bounds(), |renderer| {
+                    let popup_tree = &tree.children[popup_idx];
+                    popup.as_widget().draw(
+                        popup_tree,
+                        renderer,
+                        theme,
+                        style,
+                        popup_layout,
+                        cursor,
+                        viewport,
+                    );
+                });
+            }
+        }
     }
 
     fn on_event(
@@ -1268,6 +1398,35 @@ where
 
                 if !inside_popup && !inside_toolbar {
                     shell.publish(self.emit(ScreenshotEvent::redact_popup_close()));
+                    return cosmic::iced_core::event::Status::Captured;
+                }
+            }
+
+            // Handle pencil popup click-outside
+            if self.ui.pencil_popup_open {
+                let mut popup_idx = 4;
+                if self.settings_drawer_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.shape_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.redact_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                let inside_popup = if layout_children.len() > popup_idx {
+                    layout_children[popup_idx].bounds().contains(pos)
+                } else {
+                    false
+                };
+                let inside_toolbar = if layout_children.len() > 3 {
+                    layout_children[3].bounds().contains(pos)
+                } else {
+                    false
+                };
+
+                if !inside_popup && !inside_toolbar {
+                    shell.publish(self.emit(ScreenshotEvent::pencil_popup_close()));
                     return cosmic::iced_core::event::Status::Captured;
                 }
             }
@@ -1376,6 +1535,9 @@ where
         if let Some(ref mut popup) = self.redact_popup_element {
             children.push(popup);
         }
+        if let Some(ref mut popup) = self.pencil_popup_element {
+            children.push(popup);
+        }
 
         let mut status = cosmic::iced_core::event::Status::Ignored;
         for (i, (child_layout, child)) in layout_children
@@ -1442,6 +1604,25 @@ where
                         popup_idx += 1;
                     }
                     if self.shape_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if layout_children.len() > popup_idx
+                        && layout_children[popup_idx].bounds().contains(pos)
+                    {
+                        return cosmic::iced_core::event::Status::Captured;
+                    }
+                }
+
+                // Check pencil popup
+                if self.ui.pencil_popup_open {
+                    let mut popup_idx = 4;
+                    if self.settings_drawer_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.shape_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.redact_popup_element.is_some() {
                         popup_idx += 1;
                     }
                     if layout_children.len() > popup_idx
@@ -1632,6 +1813,9 @@ where
         if let Some(ref popup) = self.redact_popup_element {
             children.push(popup);
         }
+        if let Some(ref popup) = self.pencil_popup_element {
+            children.push(popup);
+        }
 
         let layout = layout.children().collect::<Vec<_>>();
         for (i, (layout, child)) in layout
@@ -1673,6 +1857,9 @@ where
         if let Some(ref mut popup) = self.redact_popup_element {
             elements.push(popup);
         }
+        if let Some(ref mut popup) = self.pencil_popup_element {
+            elements.push(popup);
+        }
 
         let children = elements
             .into_iter()
@@ -1709,6 +1896,9 @@ where
             children.push(selector);
         }
         if let Some(ref popup) = self.redact_popup_element {
+            children.push(popup);
+        }
+        if let Some(ref popup) = self.pencil_popup_element {
             children.push(popup);
         }
         for (i, (layout, child)) in layout
@@ -1754,6 +1944,9 @@ where
             children.push(selector);
         }
         if let Some(ref popup) = self.redact_popup_element {
+            children.push(popup);
+        }
+        if let Some(ref popup) = self.pencil_popup_element {
             children.push(popup);
         }
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {
