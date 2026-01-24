@@ -382,6 +382,8 @@ where
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
             on_event(ScreenshotEvent::record_region()),
+            on_event(ScreenshotEvent::stop_recording()),
+            on_event(ScreenshotEvent::toggle_recording_annotation()),
             on_event(ScreenshotEvent::shape_mode_toggle()),
             on_event(ScreenshotEvent::shape_popup_toggle()),
             on_event(ScreenshotEvent::redact_tool_mode_toggle()),
@@ -402,6 +404,8 @@ where
             output_ctx.output_count,
             ui.tesseract_available,
             ui.is_video_mode,
+            ui.is_recording,
+            ui.recording_annotation_mode,
             crate::widget::icon_toggle::get_toggle_percent(&ui.timeline, ui.is_video_mode),
             {
                 let on_event = on_event.clone();

@@ -444,6 +444,8 @@ impl Screenshot {
                         video_framerate: config.video_framerate,
                         video_show_cursor: config.video_show_cursor,
                         is_video_mode: false,
+                        is_recording: false,
+                        recording_annotation_mode: false,
                         timeline: cosmic_time::Timeline::new(),
                     }
                 },
@@ -994,30 +996,22 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 local_region
             );
 
-            // Create recording indicator overlay
+            // Set recording mode in UI state - keep screenshot UI open
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.is_recording = true;
+                args.ui.recording_annotation_mode = false;
+                // Close any open popups/drawers
+                args.close_all_popups();
+            }
+
+            // Create recording indicator overlay (shows red border around recording area)
             let indicator_id = window::Id::unique();
             let indicator_output = selected_output
                 .map(|o| o.output.clone())
                 .or_else(|| app.outputs.first().map(|o| o.output.clone()));
 
             let indicator_task = if let Some(wl_output) = indicator_output {
-                // Toolbar dimensions - must match constants in render_recording_indicator
-                let toolbar_width = 140.0f32;
-                let toolbar_height = 56.0f32;
-                let toolbar_margin = 8.0f32;
-
-                // Initial toolbar position: OUTSIDE recording area (above it, right-aligned)
-                // If no room above, fall back to inside at top-right
-                let toolbar_x = local_region.0 as f32 + local_region.2 as f32 - toolbar_width;
-                let toolbar_y = if local_region.1 as f32 >= toolbar_height + toolbar_margin {
-                    // Room above - position outside
-                    local_region.1 as f32 - toolbar_height - toolbar_margin
-                } else {
-                    // No room above - position inside at top with margin
-                    local_region.1 as f32 + toolbar_margin
-                };
-
-                // Store the indicator state
+                // Store the indicator state (no toolbar - main UI handles controls)
                 app.recording_indicator = Some(RecordingIndicator {
                     window_id: indicator_id,
                     output_name: output_name_for_indicator,
@@ -1029,34 +1023,26 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     super_pressed: false,
                     ctrl_pressed: false,
                     annotation_mode: false,
-                    toolbar_pos: (toolbar_x, toolbar_y),
+                    toolbar_pos: (0.0, 0.0), // Not used - main toolbar handles controls
                     toolbar_dragging: false,
                     drag_offset: (0.0, 0.0),
                 });
 
                 log::info!(
-                    "Creating recording indicator overlay: id={:?}, region={:?}, toolbar at ({}, {})",
+                    "Creating recording indicator overlay: id={:?}, region={:?}",
                     indicator_id,
-                    local_region,
-                    toolbar_x,
-                    toolbar_y
+                    local_region
                 );
 
                 // Create layer surface for the indicator on the Overlay layer
                 // Overlay layer is NOT captured by screencopy
-                // Initially, only the toolbar captures input (rest is click-through)
-                // When annotation mode is activated, full input capture is enabled
+                // No input capture - the main UI handles all input
                 get_layer_surface(SctkLayerSurfaceSettings {
                     id: indicator_id,
                     layer: Layer::Overlay,
                     keyboard_interactivity: KeyboardInteractivity::None,
-                    input_zone: Some(vec![cosmic::iced_core::Rectangle {
-                        x: toolbar_x,
-                        y: toolbar_y,
-                        width: toolbar_width,
-                        height: toolbar_height,
-                    }]), // Only toolbar captures input initially
-                    anchor: Anchor::all(), // Cover full output
+                    input_zone: Some(vec![]), // No input capture - click through
+                    anchor: Anchor::all(),    // Cover full output
                     output: IcedOutput::Output(wl_output),
                     namespace: "snappea-indicator".to_string(),
                     size: Some((None, None)), // Full output size
@@ -1068,10 +1054,8 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 cosmic::Task::none()
             };
 
-            // Close screenshot UI surfaces
-            let cancel_task = handle_cancel_inner(app);
-
-            cosmic::Task::batch([indicator_task, cancel_task])
+            // Keep screenshot UI open - toolbar will show recording controls
+            indicator_task
         }
         CaptureMsg::Choice(c) => handle_choice_inner(app, c),
         CaptureMsg::Location(loc) => handle_location_inner(app, loc),
@@ -1091,6 +1075,28 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 args.ui.timeline.set_chain(chain).start();
             }
             cosmic::Task::none()
+        }
+        CaptureMsg::StopRecording => {
+            log::info!("Stop recording requested");
+            // Stop the recording
+            if let Err(e) = crate::screencast::stop_recording() {
+                log::error!("Failed to stop recording: {}", e);
+            }
+            // Update UI state - go back to video mode
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.is_recording = false;
+                args.ui.recording_annotation_mode = false;
+            }
+            cosmic::Task::none()
+        }
+        CaptureMsg::ToggleRecordingAnnotation => {
+            log::info!("Toggle recording annotation mode");
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.recording_annotation_mode = !args.ui.recording_annotation_mode;
+            }
+            // Return a task that sends ToggleAnnotationMode to properly
+            // recreate the layer surface with correct input zone
+            cosmic::Task::done(crate::core::app::Msg::ToggleAnnotationMode)
         }
     }
 }

@@ -142,6 +142,10 @@ pub enum CaptureMsg {
     SaveToPictures,
     /// Record selected region
     RecordRegion,
+    /// Stop recording
+    StopRecording,
+    /// Toggle annotation mode during recording
+    ToggleRecordingAnnotation,
     /// Toggle capture mode (screenshot vs video) - true = video mode
     ToggleCaptureMode(bool),
     /// Set selection choice
@@ -411,6 +415,12 @@ impl Msg {
     }
     pub fn record_region() -> Self {
         Self::Capture(CaptureMsg::RecordRegion)
+    }
+    pub fn stop_recording() -> Self {
+        Self::Capture(CaptureMsg::StopRecording)
+    }
+    pub fn toggle_recording_annotation() -> Self {
+        Self::Capture(CaptureMsg::ToggleRecordingAnnotation)
     }
     pub fn choice(c: Choice) -> Self {
         Self::Capture(CaptureMsg::Choice(c))

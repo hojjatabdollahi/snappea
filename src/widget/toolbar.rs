@@ -405,6 +405,12 @@ impl<'a, Msg: 'static + Clone> HoverOpacity<'a, Msg> {
         }
     }
 
+    /// Set opacity when not hovered (0.0 to 1.0)
+    pub fn unhovered_opacity(mut self, opacity: f32) -> Self {
+        self.unhovered_opacity = opacity;
+        self
+    }
+
     /// Force full opacity regardless of hover state
     pub fn force_opaque(mut self, force: bool) -> Self {
         self.force_opaque = force;
@@ -951,6 +957,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
     on_record_region: Msg,
+    on_stop_recording: Msg,
+    on_toggle_recording_annotation: Msg,
     on_shape_press: Msg,
     on_shape_right_click: Msg,
     on_redact_press: Msg,
@@ -968,6 +976,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     output_count: usize,
     tesseract_available: bool,
     is_video_mode: bool,
+    is_recording: bool,
+    recording_annotation_mode: bool,
     toggle_animation_percent: f32,
     on_capture_mode_toggle: impl Fn(bool) -> Msg + 'a,
 ) -> Element<'a, Msg> {
@@ -1182,6 +1192,74 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
+    // Stop recording button - square stop icon in red circle
+    let stop_icon = container(
+        icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(64))
+            .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                cosmic::iced_widget::svg::Style {
+                    color: Some(cosmic::iced::Color::WHITE),
+                }
+            })))
+            .width(Length::Fixed(24.0))
+            .height(Length::Fixed(24.0)),
+    )
+    .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
+        let cosmic_theme = theme.cosmic();
+        let bg = cosmic_theme.background.base;
+        let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
+        let border_color = if is_dark {
+            cosmic::iced::Color::WHITE
+        } else {
+            cosmic::iced::Color::BLACK
+        };
+        cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(cosmic::iced::Color::from_rgb(
+                0.85, 0.2, 0.2,
+            ))),
+            border: Border {
+                radius: 20.0.into(),
+                width: 2.0,
+                color: border_color,
+            },
+            ..Default::default()
+        }
+    })))
+    .padding(8)
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center)
+    .align_y(cosmic::iced_core::alignment::Vertical::Center);
+
+    let btn_stop_recording = tooltip(
+        button::custom(stop_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press(on_stop_recording)
+            .padding(0),
+        "Stop Recording",
+        tooltip::Position::Bottom,
+    );
+
+    // Annotation toggle button for recording mode (pencil icon)
+    // This toggles freehand drawing mode on the recording overlay
+    let btn_recording_annotate = tooltip(
+        button::custom(
+            icon::Icon::from(icon::from_name("edit-symbolic").size(64))
+                .width(Length::Fixed(40.0))
+                .height(Length::Fixed(40.0))
+                .class(if recording_annotation_mode {
+                    active_icon.clone()
+                } else {
+                    cosmic::theme::Svg::default()
+                }),
+        )
+        .selected(recording_annotation_mode)
+        .class(cosmic::theme::Button::Icon)
+        .on_press(on_toggle_recording_annotation)
+        .padding(space_xs),
+        "Freehand Annotation",
+        tooltip::Position::Bottom,
+    );
+
     // Shape drawing button with indicator dots
     // - Normal click: triggers primary action (toggles mode)
     // - Right-click or long-press: triggers secondary action (opens popup)
@@ -1318,7 +1396,24 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     let toolbar_body_content: Element<'_, Msg> = if is_vertical {
         // Vertical layout for left/right positions
         use cosmic::widget::divider::horizontal;
-        if is_video_mode {
+        if is_recording {
+            // Recording mode: only position, annotation toggle, and stop button
+            column![
+                position_selector,
+                horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_recording_annotate]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+                horizontal::light().width(Length::Fixed(64.0)),
+                column![btn_stop_recording]
+                    .spacing(space_s)
+                    .align_x(cosmic::iced_core::Alignment::Center),
+            ]
+            .align_x(cosmic::iced_core::Alignment::Center)
+            .spacing(space_s)
+            .padding([space_s, space_xxs, space_s, space_xxs])
+            .into()
+        } else if is_video_mode {
             column![
                 position_selector,
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -1387,7 +1482,24 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         }
     } else {
         // Horizontal layout for top/bottom positions
-        if is_video_mode {
+        if is_recording {
+            // Recording mode: only position, annotation toggle, and stop button
+            row![
+                position_selector,
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_recording_annotate]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+                vertical::light().height(Length::Fixed(64.0)),
+                row![btn_stop_recording]
+                    .spacing(space_s)
+                    .align_y(cosmic::iced_core::Alignment::Center),
+            ]
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .spacing(space_s)
+            .padding([space_xxs, space_s, space_xxs, space_s])
+            .into()
+        } else if is_video_mode {
             row![
                 position_selector,
                 vertical::light().height(Length::Fixed(64.0)),
@@ -1467,6 +1579,14 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             }
         })),
     );
+
+    // When recording, hide the header (mode toggle) - just show body with HoverOpacity
+    if is_recording {
+        return HoverOpacity::new(toolbar_body)
+            .unhovered_opacity(toolbar_unhovered_opacity)
+            .force_opaque(force_toolbar_opaque)
+            .into();
+    }
 
     let toolbar_toggle = cosmic::widget::container(mode_toggle)
         .padding(space_xxs)

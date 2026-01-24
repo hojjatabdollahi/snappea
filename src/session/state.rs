@@ -227,6 +227,10 @@ pub struct UiState {
     pub video_show_cursor: bool,
     /// Whether video mode is selected (false = screenshot, true = video)
     pub is_video_mode: bool,
+    /// Whether recording is currently active
+    pub is_recording: bool,
+    /// Whether annotation mode is active during recording
+    pub recording_annotation_mode: bool,
     /// Animation timeline for UI animations
     pub timeline: Timeline,
 }

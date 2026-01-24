@@ -305,11 +305,6 @@ impl cosmic::Application for App {
 
                     let wl_output = indicator.output.clone();
                     let annotation_mode = indicator.annotation_mode;
-                    let toolbar_pos = indicator.toolbar_pos;
-
-                    // Toolbar dimensions - must match constants in render_recording_indicator
-                    let toolbar_width = 140.0f32;
-                    let toolbar_height = 56.0f32;
 
                     use cosmic::iced_winit::commands::layer_surface::{
                         destroy_layer_surface, get_layer_surface,
@@ -326,13 +321,8 @@ impl cosmic::Application for App {
                         // Full input capture for drawing
                         None
                     } else {
-                        // Only capture input on the toolbar area
-                        Some(vec![cosmic::iced_core::Rectangle {
-                            x: toolbar_pos.0,
-                            y: toolbar_pos.1,
-                            width: toolbar_width,
-                            height: toolbar_height,
-                        }])
+                        // No input capture - click through (main UI handles controls)
+                        Some(vec![])
                     };
 
                     let destroy_task = destroy_layer_surface(old_window_id);
@@ -631,32 +621,14 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
     let visible = indicator.blink_visible;
     let annotations = indicator.annotations.clone();
     let current_stroke = indicator.current_stroke.clone();
-    let super_pressed = indicator.super_pressed;
-    let ctrl_pressed = indicator.ctrl_pressed;
     let annotation_mode = indicator.annotation_mode;
-
-    // Toolbar dimensions and position
-    let toolbar_pos = indicator.toolbar_pos;
-    let toolbar_dragging = indicator.toolbar_dragging;
-
-    // Toolbar layout constants - sized to match main toolbar
-    const TOOLBAR_HEIGHT: f32 = 56.0;
-    const TOOLBAR_WIDTH: f32 = 140.0;
-    const GRAB_HANDLE_WIDTH: f32 = 20.0;
-    const BUTTON_SIZE: f32 = 40.0;
-    const BUTTON_PADDING: f32 = 8.0;
 
     struct RecordingOverlay {
         region: (i32, i32, u32, u32),
         border_visible: bool,
         annotations: Vec<AnnotationStroke>,
         current_stroke: Option<Vec<(f32, f32)>>,
-        super_pressed: bool,
-        ctrl_pressed: bool,
         annotation_mode: bool,
-        toolbar_x: f32,
-        toolbar_y: f32,
-        toolbar_dragging: bool,
     }
 
     /// State for tracking cursor position between events
@@ -675,7 +647,6 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
             bounds: cosmic::iced_core::Rectangle,
             cursor: cosmic::iced_core::mouse::Cursor,
         ) -> (canvas::event::Status, Option<Msg>) {
-            use cosmic::iced_core::keyboard;
             use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
             // Update cursor position if available
@@ -683,60 +654,12 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                 state.cursor_position = pos;
             }
 
-            let cx = state.cursor_position.x;
-            let cy = state.cursor_position.y;
-
-            // Toolbar hit areas
-            let grab_x = self.toolbar_x;
-            let grab_y = self.toolbar_y;
-            let grab_w = GRAB_HANDLE_WIDTH;
-            let grab_h = TOOLBAR_HEIGHT;
-
-            let stop_x = self.toolbar_x + GRAB_HANDLE_WIDTH + BUTTON_PADDING;
-            let stop_y = self.toolbar_y + (TOOLBAR_HEIGHT - BUTTON_SIZE) / 2.0;
-
-            let pencil_x = stop_x + BUTTON_SIZE + BUTTON_PADDING;
-            let pencil_y = stop_y;
-
-            let is_on_grab = cx >= grab_x && cx <= grab_x + grab_w
-                && cy >= grab_y && cy <= grab_y + grab_h;
-            let is_on_stop = cx >= stop_x && cx <= stop_x + BUTTON_SIZE
-                && cy >= stop_y && cy <= stop_y + BUTTON_SIZE;
-            let is_on_pencil = cx >= pencil_x && cx <= pencil_x + BUTTON_SIZE
-                && cy >= pencil_y && cy <= pencil_y + BUTTON_SIZE;
-
-            // Check if annotation mode is active (pencil button is on)
-            // When pencil mode is on, can draw directly without modifier keys
+            // Check if annotation mode is active (controlled by main toolbar pencil button)
             let can_draw = self.annotation_mode;
 
             match event {
-                canvas::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
-                    return (
-                        canvas::event::Status::Captured,
-                        Some(Msg::IndicatorModifiers(modifiers)),
-                    );
-                }
                 canvas::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) => {
-                    // Check toolbar interactions
-                    if is_on_grab {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::ToolbarDragStart(cx, cy)),
-                        );
-                    }
-                    if is_on_stop {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::StopRecording),
-                        );
-                    }
-                    if is_on_pencil {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::ToggleAnnotationMode),
-                        );
-                    }
-                    // Start drawing if in annotation mode (pencil button on)
+                    // Start drawing if in annotation mode
                     if can_draw {
                         return (
                             canvas::event::Status::Captured,
@@ -751,13 +674,6 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                 }
                 canvas::Event::Mouse(MouseEvent::CursorMoved { position }) => {
                     state.cursor_position = position;
-                    // Handle toolbar dragging
-                    if self.toolbar_dragging {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::ToolbarDragMove(position.x, position.y)),
-                        );
-                    }
                     if can_draw && self.current_stroke.is_some() {
                         return (
                             canvas::event::Status::Captured,
@@ -769,13 +685,6 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                     }
                 }
                 canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
-                    // End toolbar drag
-                    if self.toolbar_dragging {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::ToolbarDragEnd),
-                        );
-                    }
                     if self.current_stroke.is_some() {
                         return (
                             canvas::event::Status::Captured,
@@ -883,144 +792,6 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                 }
             }
 
-            // Draw toolbar with grab handle, stop button, and pencil button
-            // Style matches the main screenshot toolbar (rounded corners, semi-transparent background)
-            {
-                let tx = self.toolbar_x;
-                let ty = self.toolbar_y;
-                let radius = 8.0; // Matches cosmic radius_s
-
-                // Toolbar background (rounded rectangle with subtle border)
-                let toolbar_bg = Path::new(|builder| {
-                    builder.move_to(cosmic::iced_core::Point::new(tx + radius, ty));
-                    builder.line_to(cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH - radius, ty));
-                    builder.arc_to(
-                        cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH, ty),
-                        cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH, ty + radius),
-                        radius,
-                    );
-                    builder.line_to(cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH, ty + TOOLBAR_HEIGHT - radius));
-                    builder.arc_to(
-                        cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH, ty + TOOLBAR_HEIGHT),
-                        cosmic::iced_core::Point::new(tx + TOOLBAR_WIDTH - radius, ty + TOOLBAR_HEIGHT),
-                        radius,
-                    );
-                    builder.line_to(cosmic::iced_core::Point::new(tx + radius, ty + TOOLBAR_HEIGHT));
-                    builder.arc_to(
-                        cosmic::iced_core::Point::new(tx, ty + TOOLBAR_HEIGHT),
-                        cosmic::iced_core::Point::new(tx, ty + TOOLBAR_HEIGHT - radius),
-                        radius,
-                    );
-                    builder.line_to(cosmic::iced_core::Point::new(tx, ty + radius));
-                    builder.arc_to(
-                        cosmic::iced_core::Point::new(tx, ty),
-                        cosmic::iced_core::Point::new(tx + radius, ty),
-                        radius,
-                    );
-                    builder.close();
-                });
-
-                // Dark semi-transparent background (matches cosmic theme component background)
-                frame.fill(&toolbar_bg, cosmic::iced_core::Color::from_rgba(0.12, 0.12, 0.14, 0.92));
-
-                // Subtle border
-                frame.stroke(
-                    &toolbar_bg,
-                    Stroke::default()
-                        .with_color(cosmic::iced_core::Color::from_rgba(0.3, 0.3, 0.35, 0.5))
-                        .with_width(1.0),
-                );
-
-                // Grab handle (vertical dots/lines on the left)
-                let grab_center_x = tx + GRAB_HANDLE_WIDTH / 2.0;
-                let grab_center_y = ty + TOOLBAR_HEIGHT / 2.0;
-                for dy in [-12.0, 0.0, 12.0] {
-                    let dot = Path::circle(
-                        cosmic::iced_core::Point::new(grab_center_x - 3.0, grab_center_y + dy),
-                        2.5,
-                    );
-                    frame.fill(&dot, cosmic::iced_core::Color::from_rgba(0.55, 0.55, 0.55, 1.0));
-                    let dot2 = Path::circle(
-                        cosmic::iced_core::Point::new(grab_center_x + 3.0, grab_center_y + dy),
-                        2.5,
-                    );
-                    frame.fill(&dot2, cosmic::iced_core::Color::from_rgba(0.55, 0.55, 0.55, 1.0));
-                }
-
-                // Stop button (red square/circle)
-                let stop_x = tx + GRAB_HANDLE_WIDTH + BUTTON_PADDING;
-                let stop_y = ty + (TOOLBAR_HEIGHT - BUTTON_SIZE) / 2.0;
-                let stop_center_x = stop_x + BUTTON_SIZE / 2.0;
-                let stop_center_y = stop_y + BUTTON_SIZE / 2.0;
-
-                let stop_bg = Path::circle(
-                    cosmic::iced_core::Point::new(stop_center_x, stop_center_y),
-                    BUTTON_SIZE / 2.0,
-                );
-                frame.fill(&stop_bg, cosmic::iced_core::Color::from_rgba(0.8, 0.2, 0.2, 1.0));
-
-                // Stop icon (white square)
-                let stop_icon_size = BUTTON_SIZE * 0.35;
-                let stop_icon = Path::rectangle(
-                    cosmic::iced_core::Point::new(
-                        stop_center_x - stop_icon_size / 2.0,
-                        stop_center_y - stop_icon_size / 2.0,
-                    ),
-                    cosmic::iced_core::Size::new(stop_icon_size, stop_icon_size),
-                );
-                frame.fill(&stop_icon, cosmic::iced_core::Color::WHITE);
-
-                // Pencil button
-                let pencil_x = stop_x + BUTTON_SIZE + BUTTON_PADDING;
-                let pencil_y = stop_y;
-                let pencil_center_x = pencil_x + BUTTON_SIZE / 2.0;
-                let pencil_center_y = pencil_y + BUTTON_SIZE / 2.0;
-
-                // Pencil button background - green when active, gray otherwise
-                let pencil_bg_color = if self.annotation_mode {
-                    cosmic::iced_core::Color::from_rgba(0.2, 0.7, 0.2, 1.0)
-                } else {
-                    cosmic::iced_core::Color::from_rgba(0.4, 0.4, 0.4, 1.0)
-                };
-
-                let pencil_bg = Path::circle(
-                    cosmic::iced_core::Point::new(pencil_center_x, pencil_center_y),
-                    BUTTON_SIZE / 2.0,
-                );
-                frame.fill(&pencil_bg, pencil_bg_color);
-
-                // Pencil icon (diagonal line with tip)
-                let icon_size = BUTTON_SIZE * 0.4;
-                let pen_path = Path::new(|builder| {
-                    builder.move_to(cosmic::iced_core::Point::new(
-                        pencil_center_x - icon_size * 0.4,
-                        pencil_center_y + icon_size * 0.4,
-                    ));
-                    builder.line_to(cosmic::iced_core::Point::new(
-                        pencil_center_x + icon_size * 0.4,
-                        pencil_center_y - icon_size * 0.4,
-                    ));
-                });
-
-                frame.stroke(
-                    &pen_path,
-                    Stroke::default()
-                        .with_color(cosmic::iced_core::Color::WHITE)
-                        .with_width(3.5)
-                        .with_line_cap(canvas::LineCap::Round),
-                );
-
-                // Pencil tip
-                let tip_path = Path::circle(
-                    cosmic::iced_core::Point::new(
-                        pencil_center_x - icon_size * 0.45,
-                        pencil_center_y + icon_size * 0.45,
-                    ),
-                    3.0,
-                );
-                frame.fill(&tip_path, cosmic::iced_core::Color::WHITE);
-            }
-
             vec![frame.into_geometry()]
         }
     }
@@ -1030,12 +801,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
         border_visible: visible,
         annotations,
         current_stroke,
-        super_pressed,
-        ctrl_pressed,
         annotation_mode,
-        toolbar_x: toolbar_pos.0,
-        toolbar_y: toolbar_pos.1,
-        toolbar_dragging,
     };
 
     canvas::Canvas::new(program)

@@ -148,6 +148,10 @@ pub enum CaptureEvent {
     SaveToPictures,
     /// Record selected region
     RecordRegion,
+    /// Stop recording
+    StopRecording,
+    /// Toggle annotation mode during recording
+    ToggleRecordingAnnotation,
     /// Cancel screenshot
     Cancel,
     /// Toggle capture mode (screenshot vs video) - true = video mode
@@ -436,6 +440,14 @@ impl ScreenshotEvent {
         Self::Capture(CaptureEvent::RecordRegion)
     }
 
+    pub fn stop_recording() -> Self {
+        Self::Capture(CaptureEvent::StopRecording)
+    }
+
+    pub fn toggle_recording_annotation() -> Self {
+        Self::Capture(CaptureEvent::ToggleRecordingAnnotation)
+    }
+
     pub fn cancel() -> Self {
         Self::Capture(CaptureEvent::Cancel)
     }
@@ -572,6 +584,10 @@ impl ScreenshotEvent {
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),
             Self::Capture(CaptureEvent::SaveToPictures) => Msg::save_to_pictures(),
             Self::Capture(CaptureEvent::RecordRegion) => Msg::record_region(),
+            Self::Capture(CaptureEvent::StopRecording) => Msg::stop_recording(),
+            Self::Capture(CaptureEvent::ToggleRecordingAnnotation) => {
+                Msg::toggle_recording_annotation()
+            }
             Self::Capture(CaptureEvent::Cancel) => Msg::cancel(),
             Self::Capture(CaptureEvent::CaptureModeToggle(is_video)) => Msg::Capture(
                 crate::session::messages::CaptureMsg::ToggleCaptureMode(is_video),
