@@ -348,6 +348,9 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _viewport: &Rectangle,
         _renderer: &cosmic::Renderer,
     ) -> iced_core::mouse::Interaction {
+        if self.is_recording {
+            return iced_core::mouse::Interaction::default();
+        }
         match self.drag_state(cursor) {
             DragState::None => {
                 if self.drag_state == DragState::None {
@@ -379,6 +382,9 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         shell: &mut iced_core::Shell<'_, Msg>,
         _viewport: &Rectangle,
     ) -> iced_core::event::Status {
+        if self.is_recording {
+            return cosmic::iced_core::event::Status::Ignored;
+        }
         match event {
             cosmic::iced_core::Event::Dnd(DndEvent::Offer(id, e)) if id == Some(self.drag_id) => {
                 if self.drag_state == DragState::None {

@@ -437,6 +437,7 @@ impl Screenshot {
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
                         toolbar_is_hovered: false,
+                        toolbar_opacity_save_id: 0,
                         tesseract_available: is_tesseract_available(),
                         available_encoders: Vec::new(),
                         encoder_displays: Vec::new(),
@@ -447,6 +448,7 @@ impl Screenshot {
                         is_video_mode: false,
                         is_recording: false,
                         recording_annotation_mode: false,
+                        toolbar_bounds: None,
                         timeline: cosmic_time::Timeline::new(),
                     }
                 },
@@ -646,6 +648,9 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             SettingsMsg::SetToolbarOpacity(opacity) => {
                 settings_handlers::handle_set_toolbar_opacity(args, opacity)
             }
+            SettingsMsg::SaveToolbarOpacityDebounced(opacity, save_id) => {
+                settings_handlers::handle_save_toolbar_opacity_debounced(args, opacity, save_id)
+            }
             SettingsMsg::ToolbarHoverChanged(is_hovered) => {
                 args.ui.toolbar_is_hovered = is_hovered;
                 // Start the appropriate animation
@@ -657,6 +662,13 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                     args.ui
                         .timeline
                         .set_chain(crate::widget::toolbar::toolbar_fade_out());
+                }
+                cosmic::Task::none()
+            }
+            SettingsMsg::ToolbarBounds(bounds) => {
+                args.ui.toolbar_bounds = Some(bounds);
+                if let Some(indicator) = &mut app.recording_indicator {
+                    indicator.toolbar_bounds = Some(bounds);
                 }
                 cosmic::Task::none()
             }
@@ -912,6 +924,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
 
             let framerate = config.video_framerate;
             let show_cursor = args.ui.video_show_cursor;
+            let toolbar_bounds = args.ui.toolbar_bounds;
             log::info!("Cursor visibility setting: {}", show_cursor);
 
             // Build CaptureSource for thread-based recording
@@ -1038,6 +1051,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     super_pressed: false,
                     ctrl_pressed: false,
                     annotation_mode: false,
+                    toolbar_bounds,
                     toolbar_pos: (0.0, 0.0), // Not used - main toolbar handles controls
                     toolbar_dragging: false,
                     drag_offset: (0.0, 0.0),

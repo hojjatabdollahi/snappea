@@ -12,6 +12,7 @@ use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPositio
 use crate::domain::Choice;
 use cosmic::iced::time::Instant;
 use cosmic::iced::window;
+use cosmic::iced_core::Rectangle;
 use cosmic::widget::segmented_button;
 
 // ============================================================================
@@ -225,8 +226,12 @@ pub enum SettingsMsg {
     SettingsTabActivated(segmented_button::Entity),
     /// Set toolbar opacity when not hovered
     SetToolbarOpacity(f32),
+    /// Save toolbar opacity to config (debounced) with ID to prevent stale saves
+    SaveToolbarOpacityDebounced(f32, u64),
     /// Toolbar hover state changed (true = hovered, false = unhovered)
     ToolbarHoverChanged(bool),
+    /// Update the toolbar bounds for recording input filtering
+    ToolbarBounds(Rectangle),
     /// Set video encoder (gst_element name)
     SetVideoEncoder(String),
     /// Set video container format
@@ -484,6 +489,9 @@ impl Msg {
     }
     pub fn toolbar_hover_changed(is_hovered: bool) -> Self {
         Self::Settings(SettingsMsg::ToolbarHoverChanged(is_hovered))
+    }
+    pub fn toolbar_bounds(bounds: Rectangle) -> Self {
+        Self::Settings(SettingsMsg::ToolbarBounds(bounds))
     }
     pub fn set_video_encoder(encoder: String) -> Self {
         Self::Settings(SettingsMsg::SetVideoEncoder(encoder))

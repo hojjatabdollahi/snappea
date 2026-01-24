@@ -9,6 +9,7 @@ use crate::domain::{
 };
 use crate::screencast::encoder::EncoderInfo;
 use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
+use cosmic::iced_core::Rectangle;
 
 use cosmic_time::Timeline;
 use std::collections::HashMap;
@@ -219,6 +220,8 @@ pub struct UiState {
     pub toolbar_unhovered_opacity: f32,
     /// Whether the toolbar is currently being hovered (for animated opacity)
     pub toolbar_is_hovered: bool,
+    /// ID for debouncing toolbar opacity saves (incremented on each change)
+    pub toolbar_opacity_save_id: u64,
     pub tesseract_available: bool,
     // Recording settings
     pub available_encoders: Vec<EncoderInfo>,
@@ -233,6 +236,8 @@ pub struct UiState {
     pub is_recording: bool,
     /// Whether annotation mode is active during recording
     pub recording_annotation_mode: bool,
+    /// Last known toolbar bounds (output-local)
+    pub toolbar_bounds: Option<Rectangle>,
     /// Animation timeline for UI animations
     pub timeline: Timeline,
 }

@@ -1205,6 +1205,16 @@ where
         use cosmic::iced_core::Event;
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
+        if self.output_ctx.is_active_output {
+            if matches!(event, Event::Mouse(_)) {
+                if let Some(menu_layout) = layout.children().nth(3) {
+                    shell.publish(self.emit(ScreenshotEvent::toolbar_bounds(
+                        menu_layout.bounds(),
+                    )));
+                }
+            }
+        }
+
         // Handle click-outside-to-close for popups (both left and right click)
         if let Event::Mouse(MouseEvent::ButtonPressed(button)) = &event
             && matches!(button, Button::Left | Button::Right)

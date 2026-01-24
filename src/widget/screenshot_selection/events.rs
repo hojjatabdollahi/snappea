@@ -6,6 +6,7 @@
 
 use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
+use cosmic::iced_core::Rectangle;
 use cosmic::widget::segmented_button;
 use wayland_client::protocol::wl_output::WlOutput;
 
@@ -139,6 +140,8 @@ pub enum SettingsEvent {
     ShowCursorToggle,
     /// Toolbar hover state changed (for fade animation)
     ToolbarHoverChanged(bool),
+    /// Toolbar bounds updated (output-local coordinates)
+    ToolbarBounds(Rectangle),
 }
 
 /// Capture action events
@@ -433,6 +436,10 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered))
     }
 
+    pub fn toolbar_bounds(bounds: Rectangle) -> Self {
+        Self::Settings(SettingsEvent::ToolbarBounds(bounds))
+    }
+
     // Capture events
     pub fn copy_to_clipboard() -> Self {
         Self::Capture(CaptureEvent::CopyToClipboard)
@@ -588,6 +595,7 @@ impl ScreenshotEvent {
             Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered)) => {
                 Msg::toolbar_hover_changed(is_hovered)
             }
+            Self::Settings(SettingsEvent::ToolbarBounds(bounds)) => Msg::toolbar_bounds(bounds),
 
             // Capture events
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),

@@ -71,11 +71,41 @@ pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {
 // because it needs access to app.settings_tab_model
 
 /// Handle SetToolbarOpacity message
+/// Updates UI immediately and schedules a debounced save to config
 pub fn handle_set_toolbar_opacity(args: &mut Args, opacity: f32) -> HandlerResult {
+    // Update UI immediately for responsive feedback
     args.ui.toolbar_unhovered_opacity = opacity.clamp(0.1, 1.0);
-    let mut config = SnapPeaConfig::load();
-    config.toolbar_unhovered_opacity = args.ui.toolbar_unhovered_opacity;
-    config.save();
+
+    // Increment save ID to invalidate any pending saves
+    args.ui.toolbar_opacity_save_id = args.ui.toolbar_opacity_save_id.wrapping_add(1);
+    let save_id = args.ui.toolbar_opacity_save_id;
+
+    // Schedule a debounced save (500ms delay)
+    cosmic::Task::perform(
+        async move {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            (opacity, save_id)
+        },
+        |(opacity, save_id)| {
+            crate::core::app::Msg::Screenshot(
+                crate::session::messages::Msg::Settings(
+                    crate::session::messages::SettingsMsg::SaveToolbarOpacityDebounced(opacity, save_id)
+                )
+            )
+        }
+    )
+}
+
+/// Handle SaveToolbarOpacityDebounced message
+/// Only saves to config if the save ID matches (no newer changes)
+pub fn handle_save_toolbar_opacity_debounced(args: &mut Args, opacity: f32, save_id: u64) -> HandlerResult {
+    // Only save if this is still the latest change (ID matches)
+    if args.ui.toolbar_opacity_save_id == save_id {
+        let mut config = SnapPeaConfig::load();
+        config.toolbar_unhovered_opacity = opacity.clamp(0.1, 1.0);
+        config.save();
+    }
+    // If IDs don't match, a newer change came in, so skip this save
     cosmic::Task::none()
 }
 

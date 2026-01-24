@@ -78,6 +78,8 @@ pub struct RecordingIndicator {
     pub ctrl_pressed: bool,
     /// Whether annotation mode is active (overlay captures all input)
     pub annotation_mode: bool,
+    /// Toolbar bounds from main UI (output-local coords)
+    pub toolbar_bounds: Option<cosmic::iced_core::Rectangle>,
     /// Toolbar position (top-left corner)
     pub toolbar_pos: (f32, f32),
     /// Whether toolbar is being dragged
@@ -318,14 +320,68 @@ impl cosmic::Application for App {
                     use cosmic::iced_core::layout::Limits;
 
                     let input_zone = if annotation_mode {
-                        // Capture input only inside the recording region so the main toolbar
-                        // remains clickable outside that area.
-                        Some(vec![cosmic::iced_core::Rectangle {
+                        let region_rect = cosmic::iced_core::Rectangle {
                             x: indicator.region.0 as f32,
                             y: indicator.region.1 as f32,
                             width: indicator.region.2 as f32,
                             height: indicator.region.3 as f32,
-                        }])
+                        };
+                        let mut zones = Vec::new();
+
+                        if let Some(toolbar_bounds) = indicator.toolbar_bounds {
+                            if let Some(intersection) = region_rect.intersection(&toolbar_bounds) {
+                                let region_right = region_rect.x + region_rect.width;
+                                let region_bottom = region_rect.y + region_rect.height;
+                                let toolbar_right = intersection.x + intersection.width;
+                                let toolbar_bottom = intersection.y + intersection.height;
+
+                                let top_height = intersection.y - region_rect.y;
+                                if top_height > 0.0 {
+                                    zones.push(cosmic::iced_core::Rectangle {
+                                        x: region_rect.x,
+                                        y: region_rect.y,
+                                        width: region_rect.width,
+                                        height: top_height,
+                                    });
+                                }
+
+                                let bottom_height = region_bottom - toolbar_bottom;
+                                if bottom_height > 0.0 {
+                                    zones.push(cosmic::iced_core::Rectangle {
+                                        x: region_rect.x,
+                                        y: toolbar_bottom,
+                                        width: region_rect.width,
+                                        height: bottom_height,
+                                    });
+                                }
+
+                                let left_width = intersection.x - region_rect.x;
+                                if left_width > 0.0 && intersection.height > 0.0 {
+                                    zones.push(cosmic::iced_core::Rectangle {
+                                        x: region_rect.x,
+                                        y: intersection.y,
+                                        width: left_width,
+                                        height: intersection.height,
+                                    });
+                                }
+
+                                let right_width = region_right - toolbar_right;
+                                if right_width > 0.0 && intersection.height > 0.0 {
+                                    zones.push(cosmic::iced_core::Rectangle {
+                                        x: toolbar_right,
+                                        y: intersection.y,
+                                        width: right_width,
+                                        height: intersection.height,
+                                    });
+                                }
+                            } else {
+                                zones.push(region_rect);
+                            }
+                        } else {
+                            zones.push(region_rect);
+                        }
+
+                        Some(zones)
                     } else {
                         // No input capture - click through (main UI handles controls)
                         Some(vec![])
