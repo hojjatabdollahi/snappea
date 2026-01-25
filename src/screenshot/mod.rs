@@ -750,12 +750,35 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
         return cosmic::Task::none();
     }
 
+    // Handle ToggleDrawer specially - we need to sync tab state when opening
+    if let SettingsMsg::ToggleDrawer = msg {
+        if let Some(args) = app.screenshot_args.as_mut() {
+            args.ui.settings_drawer_open = !args.ui.settings_drawer_open;
+            
+            // When opening the drawer, sync the tab state with the model
+            if args.ui.settings_drawer_open {
+                // Get the currently active tab from the model using active_data
+                if let Some(&tab) = app.settings_tab_model.active_data::<SettingsTab>() {
+                    args.ui.settings_tab = tab;
+                }
+                // Close other popups
+                args.ui.shape_popup_open = false;
+                args.ui.redact_popup_open = false;
+                args.disable_all_modes();
+            }
+        }
+        return cosmic::Task::none();
+    }
+
     with_args!(app, |args| {
         match msg {
             SettingsMsg::ToolbarPosition(pos) => {
                 settings_handlers::handle_toolbar_position_change(args, pos)
             }
-            SettingsMsg::ToggleDrawer => settings_handlers::handle_toggle_settings_drawer(args),
+            SettingsMsg::ToggleDrawer => {
+                // Already handled above
+                cosmic::Task::none()
+            }
             SettingsMsg::ToggleMagnifier => settings_handlers::handle_toggle_magnifier(args),
             SettingsMsg::SetSaveLocation(loc) => match loc {
                 SaveLocationChoice::Pictures => {
