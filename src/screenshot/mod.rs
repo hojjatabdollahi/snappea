@@ -756,11 +756,13 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 if is_hovered {
                     args.ui
                         .timeline
-                        .set_chain(crate::widget::toolbar::toolbar_fade_in());
+                        .set_chain(crate::widget::toolbar::toolbar_fade_in())
+                        .start();
                 } else {
                     args.ui
                         .timeline
-                        .set_chain(crate::widget::toolbar::toolbar_fade_out());
+                        .set_chain(crate::widget::toolbar::toolbar_fade_out())
+                        .start();
                 }
                 cosmic::Task::none()
             }
@@ -1223,17 +1225,16 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             };
 
             // If hide_toolbar_to_tray is enabled, spawn tray and hide toolbar
-            if config.hide_toolbar_to_tray {
-                if let Some(ref tx) = app.tray_tx {
-                    log::info!("Creating system tray for recording (toolbar hidden)");
-                    let tray_handle = crate::tray::create_tray(true, tx.clone());
-                    app.tray_handle = Some(tray_handle);
-                    app.toolbar_visible = false;
-                } else {
-                    log::warn!("Tray sender not available, showing toolbar instead");
-                    app.toolbar_visible = true;
-                }
+            // Always create tray icon when recording
+            if let Some(ref tx) = app.tray_tx {
+                // toolbar_visible parameter reflects initial toolbar state
+                let toolbar_visible = !config.hide_toolbar_to_tray;
+                log::info!("Creating system tray for recording (toolbar_visible={})", toolbar_visible);
+                let tray_handle = crate::tray::create_tray(toolbar_visible, tx.clone());
+                app.tray_handle = Some(tray_handle);
+                app.toolbar_visible = toolbar_visible;
             } else {
+                log::warn!("Tray sender not available");
                 app.toolbar_visible = true;
             }
 
@@ -1271,6 +1272,29 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     crate::session::messages::ToolMsg::PencilPopup(action)
                 )
             ))
+        }
+        CaptureMsg::HideToTray => {
+            log::info!("Hide to tray requested");
+            // Update tray to show toolbar is hidden
+            if let Some(ref handle) = app.tray_handle {
+                handle.update(|tray| {
+                    tray.set_toolbar_visible(false);
+                });
+            }
+            app.toolbar_visible = false;
+            
+            // Disable pencil/annotation mode when hiding to tray
+            if let Some(indicator) = app.recording_indicator.as_mut() {
+                indicator.annotation_mode = false;
+                indicator.pencil_popup_open = false;
+                indicator.pencil_popup_bounds = None;
+            }
+            
+            // Recreate the indicator surface without toolbar input zone
+            if app.recording_indicator.is_some() {
+                return cosmic::Task::done(crate::core::app::Msg::ToggleAnnotationMode);
+            }
+            cosmic::Task::none()
         }
         CaptureMsg::StopRecording => {
             log::info!("Stop recording requested");

@@ -1029,9 +1029,9 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
 
     // Stop button - red circle with stop icon
     let stop_icon = container(
-        icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(24))
-            .width(Length::Fixed(24.0))
-            .height(Length::Fixed(24.0)),
+        icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(20))
+            .width(Length::Fixed(20.0))
+            .height(Length::Fixed(20.0)),
     )
     .class(cosmic::theme::Container::Custom(Box::new(|_theme| {
         cosmic::iced::widget::container::Style {
@@ -1044,7 +1044,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
             ..Default::default()
         }
     })))
-    .padding(8)
+    .padding(10)
     .width(Length::Fixed(40.0))
     .height(Length::Fixed(40.0))
     .align_x(cosmic::iced_core::alignment::Horizontal::Center)
@@ -1060,6 +1060,16 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         "Stop Recording",
         cosmic::widget::tooltip::Position::Bottom,
     );
+
+    // Drag handle on the left
+    const DRAG_ICON: &[u8] = include_bytes!("../../data/icons/hicolor/scalable/actions/drag.svg");
+    let drag_handle_icon = cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(DRAG_ICON).symbolic(true))
+        .size(40);
+    let drag_handle = cosmic::widget::container(drag_handle_icon)
+        .width(Length::Fixed(56.0))
+        .height(Length::Fixed(56.0))
+        .align_x(cosmic::iced_core::alignment::Horizontal::Center)
+        .align_y(cosmic::iced_core::alignment::Vertical::Center);
 
     // Pencil toggle button with indicator dot and popup support
     let btn_pencil: cosmic::Element<'static, Msg> = crate::widget::tool_button::build_tool_button(
@@ -1080,8 +1090,24 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         1.0, // full opacity
     );
 
-    // Build toolbar content
-    let toolbar_content = row![btn_pencil, btn_stop]
+    // Hide to tray button (minimize icon)
+    const MINIMIZE_ICON: &[u8] = include_bytes!("../../data/icons/hicolor/scalable/actions/minimize.svg");
+    let tray_icon = cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(MINIMIZE_ICON).symbolic(true))
+        .size(40);
+
+    let btn_hide_to_tray = cosmic::widget::tooltip(
+        button::custom(tray_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press(Msg::Screenshot(crate::session::messages::Msg::Capture(
+                crate::session::messages::CaptureMsg::HideToTray,
+            )))
+            .padding(8),
+        "Minimize to System Tray",
+        cosmic::widget::tooltip::Position::Bottom,
+    );
+
+    // Build toolbar content: drag handle | pencil | stop | minimize
+    let toolbar_content = row![drag_handle, btn_pencil, btn_stop, btn_hide_to_tray]
         .spacing(8)
         .align_y(cosmic::iced_core::Alignment::Center);
 

@@ -5,17 +5,18 @@
 //! Supports both horizontal and vertical orientations.
 //! Supports smooth animation via cosmic-time.
 
-use cosmic::Element;
 use cosmic::iced::Size;
 use cosmic::iced_core::{
-    Background, Border, Color, Layout, Length, Rectangle, layout,
+    layout,
     mouse::{self, Cursor},
     renderer::Quad,
     widget::Tree,
+    Background, Border, Color, Layout, Length, Rectangle,
 };
 use cosmic::widget::icon;
+use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
+use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
 use std::rc::Rc;
 
 /// Animation ID for the capture mode toggle
@@ -239,7 +240,12 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         let mut accent_color: Color = cosmic_theme.accent_color().into();
         accent_color.a *= opacity;
         let pill_color = Color::from_rgba(0.3, 0.3, 0.3, 0.6 * opacity);
-        let hover_color = Color::from_rgba(accent_color.r, accent_color.g, accent_color.b, 0.3 * opacity);
+        let hover_color = Color::from_rgba(
+            accent_color.r,
+            accent_color.g,
+            accent_color.b,
+            0.3 * opacity,
+        );
 
         // Calculate icon center positions based on orientation
         let (icon_a_center_x, icon_a_center_y, icon_b_center_x, icon_b_center_y) =
@@ -348,20 +354,24 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         let icon_b_selected = percent >= 0.5;
 
         // Create SVG widgets with native opacity support
-        let icon_a_handle = icon::Icon::from(icon::from_name(self.icon_a_name).size(ICON_SIZE as u16))
-            .into_svg_handle()
-            .expect("Icon should be SVG");
+        let icon_a_handle =
+            icon::Icon::from(icon::from_name(self.icon_a_name).size(ICON_SIZE as u16))
+                .into_svg_handle()
+                .expect("Icon should be SVG");
+
+        // Use theme's accent.on color (typically black/dark) for selected icons
+        let on_accent_color: Color = cosmic_theme.accent.on.into();
 
         let icon_a_widget = if icon_a_selected {
-            // Selected: white color with opacity
+            // Selected: use accent.on color (black/dark on accent background) with opacity
             cosmic::iced_widget::svg::Svg::new(icon_a_handle)
                 .width(Length::Fixed(ICON_SIZE))
                 .height(Length::Fixed(ICON_SIZE))
                 .opacity(opacity)
                 .symbolic(true)
-                .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                .class(cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
                     cosmic::iced_widget::svg::Style {
-                        color: Some(Color::from_rgb(1.0, 1.0, 1.0)),
+                        color: Some(on_accent_color),
                     }
                 })))
         } else {
@@ -391,20 +401,21 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         );
 
         // Draw icon B
-        let icon_b_handle = icon::Icon::from(icon::from_name(self.icon_b_name).size(ICON_SIZE as u16))
-            .into_svg_handle()
-            .expect("Icon should be SVG");
+        let icon_b_handle =
+            icon::Icon::from(icon::from_name(self.icon_b_name).size(ICON_SIZE as u16))
+                .into_svg_handle()
+                .expect("Icon should be SVG");
 
         let icon_b_widget = if icon_b_selected {
-            // Selected: white color with opacity
+            // Selected: use accent.on color (black/dark on accent background) with opacity
             cosmic::iced_widget::svg::Svg::new(icon_b_handle)
                 .width(Length::Fixed(ICON_SIZE))
                 .height(Length::Fixed(ICON_SIZE))
                 .opacity(opacity)
                 .symbolic(true)
-                .class(cosmic::theme::Svg::Custom(Rc::new(|_theme| {
+                .class(cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
                     cosmic::iced_widget::svg::Style {
-                        color: Some(Color::from_rgb(1.0, 1.0, 1.0)),
+                        color: Some(on_accent_color),
                     }
                 })))
         } else {

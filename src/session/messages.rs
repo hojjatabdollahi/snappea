@@ -160,6 +160,8 @@ pub enum CaptureMsg {
     RecordRegion,
     /// Stop recording
     StopRecording,
+    /// Hide toolbar to system tray during recording
+    HideToTray,
     /// Toggle annotation mode during recording
     ToggleRecordingAnnotation,
     /// Right-click on pencil button (opens config popup)

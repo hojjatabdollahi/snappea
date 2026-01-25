@@ -54,7 +54,11 @@ pub fn toolbar_fade_out() -> cosmic_time::chain::Toggler {
 
 /// Helper to create an SVG icon with opacity support
 /// libcosmic's Icon doesn't expose opacity, but iced's Svg widget does
-fn icon_with_opacity(icon_name: &str, size: u16, opacity: f32) -> cosmic::iced_widget::svg::Svg<'_, cosmic::Theme> {
+fn icon_with_opacity(
+    icon_name: &str,
+    size: u16,
+    opacity: f32,
+) -> cosmic::iced_widget::svg::Svg<'_, cosmic::Theme> {
     let icon_handle = icon::Icon::from(icon::from_name(icon_name).size(size))
         .into_svg_handle()
         .expect("Icon should be SVG");
@@ -62,6 +66,99 @@ fn icon_with_opacity(icon_name: &str, size: u16, opacity: f32) -> cosmic::iced_w
     cosmic::iced_widget::svg::Svg::new(icon_handle)
         .opacity(opacity)
         .symbolic(true)
+}
+
+/// Helper to create an SVG icon with opacity and custom color support
+fn icon_with_opacity_and_color(
+    icon_name: &str,
+    size: u16,
+    opacity: f32,
+    color: Color,
+) -> cosmic::iced_widget::svg::Svg<'static, cosmic::Theme> {
+    let icon_handle = icon::Icon::from(icon::from_name(icon_name).size(size))
+        .into_svg_handle()
+        .expect("Icon should be SVG");
+
+    cosmic::iced_widget::svg::Svg::new(icon_handle)
+        .opacity(opacity)
+        .symbolic(true)
+        .class(cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
+            cosmic::iced_widget::svg::Style { color: Some(color) }
+        })))
+}
+
+/// Create a custom button class that applies opacity to the Suggested style
+fn suggested_button_class_with_opacity(opacity: f32) -> cosmic::theme::Button {
+    cosmic::theme::Button::Custom {
+        active: Box::new(move |_focused, theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::widget::button::Style {
+                background: Some(cosmic::iced_core::Background::Color({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.base.into();
+                    color.a *= opacity;
+                    color
+                })),
+                text_color: Some({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.on.into();
+                    color.a *= opacity;
+                    color
+                }),
+                border_radius: cosmic_theme.corner_radii.radius_s.into(),
+                ..Default::default()
+            }
+        }),
+        disabled: Box::new(move |theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::widget::button::Style {
+                background: Some(cosmic::iced_core::Background::Color({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.base.into();
+                    color.a *= opacity * 0.5;
+                    color
+                })),
+                text_color: Some({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.on.into();
+                    color.a *= opacity * 0.5;
+                    color
+                }),
+                border_radius: cosmic_theme.corner_radii.radius_s.into(),
+                ..Default::default()
+            }
+        }),
+        hovered: Box::new(move |_focused, theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::widget::button::Style {
+                background: Some(cosmic::iced_core::Background::Color({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.base.into();
+                    color.a *= opacity;
+                    color
+                })),
+                text_color: Some({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.on.into();
+                    color.a *= opacity;
+                    color
+                }),
+                border_radius: cosmic_theme.corner_radii.radius_s.into(),
+                ..Default::default()
+            }
+        }),
+        pressed: Box::new(move |_focused, theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::widget::button::Style {
+                background: Some(cosmic::iced_core::Background::Color({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.base.into();
+                    color.a *= opacity;
+                    color
+                })),
+                text_color: Some({
+                    let mut color: cosmic::iced_core::Color = cosmic_theme.accent.on.into();
+                    color.a *= opacity;
+                    color
+                }),
+                border_radius: cosmic_theme.corner_radii.radius_s.into(),
+                ..Default::default()
+            }
+        }),
+    }
 }
 
 use super::icon_toggle::icon_toggle;
@@ -1166,14 +1263,19 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     .into();
 
     // Common buttons with tooltips
+    let is_region_selected = matches!(choice, Choice::Rectangle(..));
     let btn_region = tooltip(
         button::custom(
             icon_with_opacity("screenshot-selection-symbolic", 64, content_opacity)
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0)),
         )
-        .selected(matches!(choice, Choice::Rectangle(..)))
-        .class(cosmic::theme::Button::Icon)
+        .selected(is_region_selected)
+        .class(if is_region_selected {
+            suggested_button_class_with_opacity(content_opacity)
+        } else {
+            cosmic::theme::Button::Icon
+        })
         .on_press(on_choice_change(Choice::Rectangle(
             Rect::default(),
             DragState::None,
@@ -1183,28 +1285,38 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
+    let is_window_selected = matches!(choice, Choice::Window(..));
     let btn_window = tooltip(
         button::custom(
             icon_with_opacity("screenshot-window-symbolic", 64, content_opacity)
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0)),
         )
-        .selected(matches!(choice, Choice::Window(..)))
-        .class(cosmic::theme::Button::Icon)
+        .selected(is_window_selected)
+        .class(if is_window_selected {
+            suggested_button_class_with_opacity(content_opacity)
+        } else {
+            cosmic::theme::Button::Icon
+        })
         .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
         .padding(space_xs),
         "Select Window (W)",
         tooltip::Position::Bottom,
     );
 
+    let is_screen_selected = matches!(choice, Choice::Output(..));
     let btn_screen = tooltip(
         button::custom(
             icon_with_opacity("screenshot-screen-symbolic", 64, content_opacity)
                 .width(Length::Fixed(40.0))
                 .height(Length::Fixed(40.0)),
         )
-        .selected(matches!(choice, Choice::Output(..)))
-        .class(cosmic::theme::Button::Icon)
+        .selected(is_screen_selected)
+        .class(if is_screen_selected {
+            suggested_button_class_with_opacity(content_opacity)
+        } else {
+            cosmic::theme::Button::Icon
+        })
         .on_press(on_choice_change(Choice::Output(None))) // Goes to picker mode
         .padding(space_xs),
         "Select Screen (S)",
@@ -1260,13 +1372,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Record button - enabled only when region is selected
     // Custom red circular button with themed border
     let record_icon = container(
-        icon::Icon::from(icon::from_name("media-record-symbolic").size(64))
-            .class({
-                let opacity = content_opacity;
-                cosmic::theme::Svg::Custom(Rc::new(move |_theme| cosmic::iced_widget::svg::Style {
-                    color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
-                }))
-            })
+        icon_with_opacity_and_color("media-record-symbolic", 64, content_opacity, Color::WHITE)
             .width(Length::Fixed(24.0))
             .height(Length::Fixed(24.0)),
     )
@@ -1321,15 +1427,14 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
 
     // Stop recording button - square stop icon in red circle
     let stop_icon = container(
-        icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(64))
-            .class({
-                let opacity = content_opacity;
-                cosmic::theme::Svg::Custom(Rc::new(move |_theme| cosmic::iced_widget::svg::Style {
-                    color: Some(Color::from_rgba(1.0, 1.0, 1.0, opacity)),
-                }))
-            })
-            .width(Length::Fixed(24.0))
-            .height(Length::Fixed(24.0)),
+        icon_with_opacity_and_color(
+            "media-playback-stop-symbolic",
+            64,
+            content_opacity,
+            Color::WHITE,
+        )
+        .width(Length::Fixed(24.0))
+        .height(Length::Fixed(24.0)),
     )
     .class({
         let opacity = content_opacity;
