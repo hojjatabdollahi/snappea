@@ -147,8 +147,8 @@ pub enum Msg {
     ToggleAnnotationMode,
     /// Stop the recording
     StopRecording,
-    /// Start dragging the toolbar
-    ToolbarDragStart(f32, f32),
+    /// Start dragging the toolbar (position will be captured on first move)
+    ToolbarDragStart,
     /// Update toolbar position while dragging
     ToolbarDragMove(f32, f32),
     /// Stop dragging the toolbar
@@ -451,19 +451,25 @@ impl cosmic::Application for App {
                 }
                 cosmic::iced::Task::none()
             }
-            Msg::ToolbarDragStart(x, y) => {
+            Msg::ToolbarDragStart => {
                 if let Some(indicator) = &mut self.recording_indicator {
                     indicator.toolbar_dragging = true;
-                    indicator.drag_offset = (
-                        x - indicator.toolbar_pos.0,
-                        y - indicator.toolbar_pos.1,
-                    );
+                    // drag_offset will be calculated on first move
+                    indicator.drag_offset = (0.0, 0.0);
                 }
                 cosmic::iced::Task::none()
             }
             Msg::ToolbarDragMove(x, y) => {
                 if let Some(indicator) = &mut self.recording_indicator {
                     if indicator.toolbar_dragging {
+                        // On first move, calculate the offset from cursor to toolbar top-left
+                        if indicator.drag_offset == (0.0, 0.0) {
+                            indicator.drag_offset = (
+                                x - indicator.toolbar_pos.0,
+                                y - indicator.toolbar_pos.1,
+                            );
+                        }
+                        // Update toolbar position
                         indicator.toolbar_pos = (
                             x - indicator.drag_offset.0,
                             y - indicator.drag_offset.1,
@@ -476,54 +482,79 @@ impl cosmic::Application for App {
                 if let Some(indicator) = &mut self.recording_indicator {
                     indicator.toolbar_dragging = false;
 
-                    // Only recreate the surface if NOT in annotation mode
-                    // (in annotation mode, input_zone is None so position doesn't matter)
-                    if !indicator.annotation_mode {
-                        // Recreate the layer surface with updated input zone for new toolbar position
-                        let old_window_id = indicator.window_id;
-                        let new_window_id = window::Id::unique();
-                        indicator.window_id = new_window_id;
+                    // Update toolbar_bounds to match new position
+                    let toolbar_width = 280.0f32;
+                    let toolbar_height = 72.0f32; // 56 + padding
+                    indicator.toolbar_bounds = Some(cosmic::iced_core::Rectangle {
+                        x: indicator.toolbar_pos.0,
+                        y: indicator.toolbar_pos.1,
+                        width: toolbar_width,
+                        height: toolbar_height,
+                    });
 
-                        let wl_output = indicator.output.clone();
-                        let toolbar_pos = indicator.toolbar_pos;
+                    // Always recreate the surface with updated input zone after drag
+                    let old_window_id = indicator.window_id;
+                    let new_window_id = window::Id::unique();
+                    indicator.window_id = new_window_id;
 
-                        // Toolbar dimensions - must match constants in render_recording_indicator
-                        let toolbar_width = 140.0f32;
-                        let toolbar_height = 56.0f32;
+                    let wl_output = indicator.output.clone();
+                    let toolbar_pos = indicator.toolbar_pos;
+                    let annotation_mode = indicator.annotation_mode;
+                    let region = indicator.region;
 
-                        use cosmic::iced_winit::commands::layer_surface::{
-                            destroy_layer_surface, get_layer_surface,
+                    use cosmic::iced_winit::commands::layer_surface::{
+                        destroy_layer_surface, get_layer_surface,
+                    };
+                    use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
+                        IcedOutput, SctkLayerSurfaceSettings,
+                    };
+                    use cosmic_client_toolkit::sctk::shell::wlr_layer::{
+                        Anchor, KeyboardInteractivity, Layer,
+                    };
+                    use cosmic::iced_core::layout::Limits;
+
+                    // Build input zones based on annotation mode
+                    let input_zone = if annotation_mode {
+                        // Annotation mode: capture region for drawing + toolbar for controls
+                        let region_rect = cosmic::iced_core::Rectangle {
+                            x: region.0 as f32,
+                            y: region.1 as f32,
+                            width: region.2 as f32,
+                            height: region.3 as f32,
                         };
-                        use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
-                            IcedOutput, SctkLayerSurfaceSettings,
+                        let toolbar_rect = cosmic::iced_core::Rectangle {
+                            x: toolbar_pos.0,
+                            y: toolbar_pos.1,
+                            width: toolbar_width,
+                            height: toolbar_height,
                         };
-                        use cosmic_client_toolkit::sctk::shell::wlr_layer::{
-                            Anchor, KeyboardInteractivity, Layer,
-                        };
-                        use cosmic::iced_core::layout::Limits;
+                        Some(vec![region_rect, toolbar_rect])
+                    } else {
+                        // No annotation mode: only capture toolbar
+                        Some(vec![cosmic::iced_core::Rectangle {
+                            x: toolbar_pos.0,
+                            y: toolbar_pos.1,
+                            width: toolbar_width,
+                            height: toolbar_height,
+                        }])
+                    };
 
-                        let destroy_task = destroy_layer_surface(old_window_id);
-                        let create_task = get_layer_surface(SctkLayerSurfaceSettings {
-                            id: new_window_id,
-                            layer: Layer::Overlay,
-                            keyboard_interactivity: KeyboardInteractivity::None,
-                            input_zone: Some(vec![cosmic::iced_core::Rectangle {
-                                x: toolbar_pos.0,
-                                y: toolbar_pos.1,
-                                width: toolbar_width,
-                                height: toolbar_height,
-                            }]),
-                            anchor: Anchor::all(),
-                            output: IcedOutput::Output(wl_output),
-                            namespace: "snappea-indicator".to_string(),
-                            size: Some((None, None)),
-                            exclusive_zone: -1,
-                            size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
-                            ..Default::default()
-                        });
+                    let destroy_task = destroy_layer_surface(old_window_id);
+                    let create_task = get_layer_surface(SctkLayerSurfaceSettings {
+                        id: new_window_id,
+                        layer: Layer::Overlay,
+                        keyboard_interactivity: KeyboardInteractivity::None,
+                        input_zone,
+                        anchor: Anchor::all(),
+                        output: IcedOutput::Output(wl_output),
+                        namespace: "snappea-indicator".to_string(),
+                        size: Some((None, None)),
+                        exclusive_zone: -1,
+                        size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                        ..Default::default()
+                    });
 
-                        return cosmic::Task::batch([destroy_task, create_task]);
-                    }
+                    return cosmic::Task::batch([destroy_task, create_task]);
                 }
                 cosmic::iced::Task::none()
             }
@@ -802,6 +833,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         pencil_popup_open: bool,
         pencil_popup_bounds: Option<cosmic::iced_core::Rectangle>,
         toolbar_bounds: Option<cosmic::iced_core::Rectangle>,
+        toolbar_dragging: bool,
     }
 
     /// State for tracking cursor position between events
@@ -868,6 +900,15 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 }
                 canvas::Event::Mouse(MouseEvent::CursorMoved { position }) => {
                     state.cursor_position = position;
+                    
+                    // Handle toolbar dragging - takes priority over annotation drawing
+                    if self.toolbar_dragging {
+                        return (
+                            canvas::event::Status::Captured,
+                            Some(Msg::ToolbarDragMove(position.x, position.y)),
+                        );
+                    }
+                    
                     // Don't capture movements if popup is open (even mid-stroke)
                     if self.annotation_mode && self.current_stroke.is_some() && !self.pencil_popup_open {
                         return (
@@ -880,6 +921,14 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                     }
                 }
                 canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
+                    // Handle toolbar drag end - takes priority
+                    if self.toolbar_dragging {
+                        return (
+                            canvas::event::Status::Captured,
+                            Some(Msg::ToolbarDragEnd),
+                        );
+                    }
+                    
                     // Don't capture release if popup is open (even mid-stroke)
                     if self.current_stroke.is_some() && !self.pencil_popup_open {
                         return (
@@ -1003,6 +1052,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         }
     }
 
+    let toolbar_dragging = indicator.toolbar_dragging;
+    
     let program = RecordingOverlay {
         region,
         border_visible: visible,
@@ -1014,6 +1065,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         pencil_popup_open,
         pencil_popup_bounds: indicator.pencil_popup_bounds,
         toolbar_bounds: indicator.toolbar_bounds,
+        toolbar_dragging,
     };
 
     let canvas_layer = canvas::Canvas::new(program)
@@ -1061,15 +1113,21 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         cosmic::widget::tooltip::Position::Bottom,
     );
 
-    // Drag handle on the left
+    // Drag handle on the left - wrapped in mouse_area for drag support
     const DRAG_ICON: &[u8] = include_bytes!("../../data/icons/hicolor/scalable/actions/drag.svg");
     let drag_handle_icon = cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(DRAG_ICON).symbolic(true))
         .size(40);
-    let drag_handle = cosmic::widget::container(drag_handle_icon)
+    let drag_handle_container = cosmic::widget::container(drag_handle_icon)
         .width(Length::Fixed(56.0))
         .height(Length::Fixed(56.0))
         .align_x(cosmic::iced_core::alignment::Horizontal::Center)
         .align_y(cosmic::iced_core::alignment::Vertical::Center);
+    
+    // Wrap drag handle in mouse_area to capture drag events
+    let drag_handle = cosmic::widget::mouse_area(drag_handle_container)
+        .on_press(Msg::ToolbarDragStart)
+        .on_release(Msg::ToolbarDragEnd)
+        .interaction(cosmic::iced_core::mouse::Interaction::Grab);
 
     // Pencil toggle button with indicator dot and popup support
     let btn_pencil: cosmic::Element<'static, Msg> = crate::widget::tool_button::build_tool_button(
@@ -1161,29 +1219,42 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
             }
         })));
 
-    // Toolbar layer - pushed to bottom with vertical_space, centered horizontally
-    let toolbar_layer = column![
-        cosmic::widget::vertical_space(),
-        cosmic::widget::container(toolbar_with_bg)
-            .center_x(Length::Fill)
-    ]
-    .padding([0, 0, 32, 0]) // 32px bottom margin
-    .width(Length::Fill)
-    .height(Length::Fill);
+    // Toolbar layer - positioned using toolbar_pos for drag support
+    // Use Space widgets to position toolbar at the desired location
+    let _output_size = indicator.output_size;
+    
+    // Create horizontal spacer to position toolbar
+    let left_space = cosmic::widget::horizontal_space().width(Length::Fixed(toolbar_pos.0.max(0.0)));
+    let top_space = cosmic::widget::vertical_space().height(Length::Fixed(toolbar_pos.1.max(0.0)));
+    
+    // Build the positioned toolbar
+    let toolbar_row = row![left_space, toolbar_with_bg, cosmic::widget::horizontal_space()]
+        .width(Length::Fill);
+    
+    let toolbar_layer = column![top_space, toolbar_row, cosmic::widget::vertical_space()]
+        .width(Length::Fill)
+        .height(Length::Fill);
 
     // Build stack with popup above toolbar if open
     // Build the final stack based on toolbar visibility
     if toolbar_visible {
         if let Some(popup) = pencil_popup {
-            // Popup layer - positioned ABOVE toolbar
-            let popup_layer = column![
-                cosmic::widget::vertical_space(),
-                cosmic::widget::container(popup)
-                    .center_x(Length::Fill)
-            ]
-            .padding([0, 0, 140, 0]) // 140px from bottom (32 + 56 toolbar + 52 gap)
-            .width(Length::Fill)
-            .height(Length::Fill);
+            // Popup layer - positioned ABOVE toolbar, following toolbar_pos
+            let popup_gap = 16.0_f32; // Gap between popup and toolbar
+            let popup_height = 200.0_f32; // Approximate popup height
+            let popup_top = (toolbar_pos.1 - popup_gap - popup_height).max(0.0);
+            
+            let popup_left_space = cosmic::widget::horizontal_space()
+                .width(Length::Fixed(toolbar_pos.0.max(0.0)));
+            let popup_top_space = cosmic::widget::vertical_space()
+                .height(Length::Fixed(popup_top));
+            
+            let popup_row = row![popup_left_space, popup, cosmic::widget::horizontal_space()]
+                .width(Length::Fill);
+            
+            let popup_layer = column![popup_top_space, popup_row, cosmic::widget::vertical_space()]
+                .width(Length::Fill)
+                .height(Length::Fill);
 
             stack![canvas_layer, toolbar_layer, popup_layer]
                 .width(Length::Fill)
