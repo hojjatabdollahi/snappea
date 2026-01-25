@@ -1127,7 +1127,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 crate::session::messages::CaptureMsg::StopRecording,
             )))
             .padding(0),
-        "Stop Recording",
+        cosmic::widget::text::body("Stop Recording"),
         cosmic::widget::tooltip::Position::Bottom,
     );
 
@@ -1178,7 +1178,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 crate::session::messages::CaptureMsg::HideToTray,
             )))
             .padding(8),
-        "Minimize to System Tray",
+        cosmic::widget::text::body("Minimize to System Tray"),
         cosmic::widget::tooltip::Position::Bottom,
     );
 

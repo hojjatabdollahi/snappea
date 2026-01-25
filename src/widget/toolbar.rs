@@ -6,7 +6,7 @@ use cosmic::iced::Length;
 use cosmic::iced_core::{layout, widget::Tree, Background, Border, Color, Layout, Size};
 use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
 use cosmic::iced_widget::{canvas, column, container, row};
-use cosmic::widget::{button, icon, tooltip};
+use cosmic::widget::{button, icon, text, tooltip};
 use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
 use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
@@ -1142,18 +1142,41 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         renderer: &cosmic::Renderer,
         translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
+        use cosmic::iced_core::overlay;
+
+        let mut children = layout.children();
+        let header_layout = children.next();
+        let body_layout = children.next();
+
         let (header_tree, body_tree) = tree.children.split_at_mut(1);
-        let header_overlay =
-            self.header
-                .as_widget_mut()
-                .overlay(&mut header_tree[0], layout, renderer, translation);
-        if header_overlay.is_some() {
-            return header_overlay;
+
+        // Collect all overlays from both header and body
+        let mut overlays = Vec::new();
+
+        if let Some(header_layout) = header_layout {
+            if let Some(overlay) = self.header.as_widget_mut().overlay(
+                &mut header_tree[0],
+                header_layout,
+                renderer,
+                translation,
+            ) {
+                overlays.push(overlay);
+            }
         }
 
-        self.body
-            .as_widget_mut()
-            .overlay(&mut body_tree[0], layout, renderer, translation)
+        if let Some(body_layout) = body_layout {
+            if let Some(overlay) = self.body.as_widget_mut().overlay(
+                &mut body_tree[0],
+                body_layout,
+                renderer,
+                translation,
+            ) {
+                overlays.push(overlay);
+            }
+        }
+
+        // Return combined overlays as a group
+        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
     }
 }
 
@@ -1239,7 +1262,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             on_toolbar_position(ToolbarPosition::Right),
         )
         .opacity(content_opacity),
-        "Move Toolbar (Ctrl+hjkl)",
+        text::body("Move Toolbar (Ctrl+hjkl)"),
         tooltip::Position::Bottom,
     )
     .into();
@@ -1259,7 +1282,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             toggle_widget
         },
-        "Screenshot / Video",
+        text::body("Screenshot / Video"),
         tooltip::Position::Bottom,
     )
     .into();
@@ -1283,7 +1306,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             DragState::None,
         )))
         .padding(space_xs),
-        "Select Region (R)",
+        text::body("Select Region (R)"),
         tooltip::Position::Bottom,
     );
 
@@ -1302,7 +1325,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press(on_window_mode) // Uses proper window mode handler with output index
         .padding(space_xs),
-        "Select Window (W)",
+        text::body("Select Window (W)"),
         tooltip::Position::Bottom,
     );
 
@@ -1321,7 +1344,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press(on_screen_mode) // Uses proper screen mode handler with output index
         .padding(space_xs),
-        "Select Screen (S)",
+        text::body("Select Screen (S)"),
         tooltip::Position::Bottom,
     );
 
@@ -1353,7 +1376,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_copy_to_clipboard)
         .padding(space_xs),
-        copy_tooltip,
+        text::body(copy_tooltip),
         tooltip::Position::Bottom,
     );
 
@@ -1367,7 +1390,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_save_to_pictures)
         .padding(space_xs),
-        save_tooltip,
+        text::body(save_tooltip),
         tooltip::Position::Bottom,
     );
 
@@ -1423,7 +1446,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_record_region))
             .padding(0),
-        record_tooltip,
+        text::body(record_tooltip),
         tooltip::Position::Bottom,
     );
 
@@ -1471,7 +1494,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press(on_stop_recording)
             .padding(0),
-        "Stop Recording",
+        text::body("Stop Recording"),
         tooltip::Position::Bottom,
     );
 
@@ -1533,7 +1556,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
             .padding(space_xs),
-            "Copy OCR Text (O)",
+            text::body("Copy OCR Text (O)"),
             tooltip::Position::Bottom,
         )
     } else if tesseract_available {
@@ -1546,7 +1569,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_ocr.clone()))
             .padding(space_xs),
-            "Recognize Text (O)",
+            text::body("Recognize Text (O)"),
             tooltip::Position::Bottom,
         )
     } else {
@@ -1559,7 +1582,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(None)
             .padding(space_xs),
-            "Install tesseract to enable OCR",
+            text::body("Install tesseract to enable OCR"),
             tooltip::Position::Bottom,
         )
     };
@@ -1576,7 +1599,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
             .padding(space_xs),
-            "Copy QR Code (Q)",
+            text::body("Copy QR Code (Q)"),
             tooltip::Position::Bottom,
         )
     } else {
@@ -1589,7 +1612,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_qr.clone()))
             .padding(space_xs),
-            "Scan QR Code (Q)",
+            text::body("Scan QR Code (Q)"),
             tooltip::Position::Bottom,
         )
     };
@@ -1609,7 +1632,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             })
             .on_press(on_settings_toggle.clone())
             .padding(space_xs),
-            "Settings",
+            text::body("Settings"),
             tooltip::Position::Bottom,
         );
         super::tool_button::RightClickWrapper::new(settings_btn, Some(on_settings_toggle)).into()
@@ -1624,7 +1647,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_cancel)
         .padding(space_xs),
-        "Cancel",
+        text::body("Cancel (Escape)"),
         tooltip::Position::Bottom,
     );
 
