@@ -25,6 +25,54 @@ pub struct CropRegion {
     pub height: u32,
 }
 
+/// Calculate clamped and aligned crop parameters for video encoding
+/// Returns (left, top, width, height, right, bottom) where right/bottom are the amounts to crop from those edges
+fn calculate_aligned_crop(
+    region: &CropRegion,
+    capture_width: u32,
+    capture_height: u32,
+) -> (u32, u32, u32, u32, u32, u32) {
+    // Clamp region to capture bounds to prevent overflow
+    let clamped_left = region.left.min(capture_width.saturating_sub(1));
+    let clamped_top = region.top.min(capture_height.saturating_sub(1));
+    let max_width = capture_width.saturating_sub(clamped_left);
+    let max_height = capture_height.saturating_sub(clamped_top);
+    let clamped_width = region.width.min(max_width).max(1);
+    let clamped_height = region.height.min(max_height).max(1);
+
+    // Round dimensions down to even numbers (required by most video encoders)
+    // This prevents green lines on the right/bottom edge caused by YUV padding
+    // We crop 1 extra pixel from the right/bottom if dimensions are odd
+    let aligned_width = (clamped_width & !1).max(2);
+    let aligned_height = (clamped_height & !1).max(2);
+
+    // Calculate right/bottom crop amounts
+    // right = total_width - left - desired_output_width
+    let right = capture_width
+        .saturating_sub(clamped_left)
+        .saturating_sub(aligned_width);
+    let bottom = capture_height
+        .saturating_sub(clamped_top)
+        .saturating_sub(aligned_height);
+
+    log::debug!(
+        "Crop alignment: input {}x{}, region ({},{} {}x{}) -> aligned {}x{}, crop l={} t={} r={} b={}",
+        capture_width, capture_height,
+        clamped_left, clamped_top, clamped_width, clamped_height,
+        aligned_width, aligned_height,
+        clamped_left, clamped_top, right, bottom
+    );
+
+    (
+        clamped_left,
+        clamped_top,
+        aligned_width,
+        aligned_height,
+        right,
+        bottom,
+    )
+}
+
 /// GStreamer pipeline for encoding screen capture to video file
 pub struct Pipeline {
     pipeline: gst::Pipeline,
@@ -103,24 +151,12 @@ impl Pipeline {
             .context("Failed to create filesink element")?;
 
         // Add cropping element if needed
-        if let Some(region) = crop {
-            // Clamp region to capture bounds to prevent overflow
-            let clamped_left = region.left.min(capture_width.saturating_sub(1));
-            let clamped_top = region.top.min(capture_height.saturating_sub(1));
-            let max_width = capture_width.saturating_sub(clamped_left);
-            let max_height = capture_height.saturating_sub(clamped_top);
-            let clamped_width = region.width.min(max_width).max(1);
-            let clamped_height = region.height.min(max_height).max(1);
-
-            let right = capture_width
-                .saturating_sub(clamped_left)
-                .saturating_sub(clamped_width);
-            let bottom = capture_height
-                .saturating_sub(clamped_top)
-                .saturating_sub(clamped_height);
+        if let Some(ref region) = crop {
+            let (clamped_left, clamped_top, clamped_width, clamped_height, right, bottom) =
+                calculate_aligned_crop(region, capture_width, capture_height);
 
             log::info!(
-                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
+                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{}) [even-aligned]",
                 region.left,
                 region.top,
                 region.width,
@@ -151,12 +187,24 @@ impl Pipeline {
                 clamped_height
             );
 
+            // Create capsfilter to enforce exact output dimensions
+            // This ensures the encoder receives the exact even-aligned dimensions
+            let scale_caps = gst::Caps::builder("video/x-raw")
+                .field("width", clamped_width as i32)
+                .field("height", clamped_height as i32)
+                .build();
+            let capsfilter = gst::ElementFactory::make("capsfilter")
+                .property("caps", &scale_caps)
+                .build()
+                .context("Failed to create capsfilter element")?;
+
             // Add elements to pipeline
             pipeline.add_many([
                 appsrc.upcast_ref(),
                 &videocrop,
                 &videoconvert,
                 &videoscale,
+                &capsfilter,
                 &encoder_elem,
             ])?;
             if let Some(ref parser) = parser_elem {
@@ -170,6 +218,7 @@ impl Pipeline {
                 &videocrop,
                 &videoconvert,
                 &videoscale,
+                &capsfilter,
                 &encoder_elem,
             ])?;
             if let Some(ref parser) = parser_elem {
@@ -316,24 +365,12 @@ impl Pipeline {
             .context("Failed to create filesink element")?;
 
         // Add cropping element if needed
-        if let Some(region) = crop {
-            // Clamp region to capture bounds to prevent overflow
-            let clamped_left = region.left.min(capture_width.saturating_sub(1));
-            let clamped_top = region.top.min(capture_height.saturating_sub(1));
-            let max_width = capture_width.saturating_sub(clamped_left);
-            let max_height = capture_height.saturating_sub(clamped_top);
-            let clamped_width = region.width.min(max_width).max(1);
-            let clamped_height = region.height.min(max_height).max(1);
-
-            let right = capture_width
-                .saturating_sub(clamped_left)
-                .saturating_sub(clamped_width);
-            let bottom = capture_height
-                .saturating_sub(clamped_top)
-                .saturating_sub(clamped_height);
+        if let Some(ref region) = crop {
+            let (clamped_left, clamped_top, clamped_width, clamped_height, right, bottom) =
+                calculate_aligned_crop(region, capture_width, capture_height);
 
             log::info!(
-                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
+                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{}) [even-aligned]",
                 region.left,
                 region.top,
                 region.width,
@@ -364,12 +401,24 @@ impl Pipeline {
                 clamped_height
             );
 
+            // Create capsfilter to enforce exact output dimensions
+            // This ensures the encoder receives the exact even-aligned dimensions
+            let scale_caps = gst::Caps::builder("video/x-raw")
+                .field("width", clamped_width as i32)
+                .field("height", clamped_height as i32)
+                .build();
+            let capsfilter = gst::ElementFactory::make("capsfilter")
+                .property("caps", &scale_caps)
+                .build()
+                .context("Failed to create capsfilter element")?;
+
             // Add elements to pipeline
             pipeline.add_many([
                 appsrc.upcast_ref(),
                 &videocrop,
                 &videoconvert,
                 &videoscale,
+                &capsfilter,
                 &encoder_elem,
             ])?;
             if let Some(ref parser) = parser_elem {
@@ -383,6 +432,7 @@ impl Pipeline {
                 &videocrop,
                 &videoconvert,
                 &videoscale,
+                &capsfilter,
                 &encoder_elem,
             ])?;
             if let Some(ref parser) = parser_elem {
