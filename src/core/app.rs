@@ -1239,15 +1239,31 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     // Build the final stack based on toolbar visibility
     if toolbar_visible {
         if let Some(popup) = pencil_popup {
-            // Popup layer - positioned ABOVE toolbar, following toolbar_pos
-            let popup_gap = 16.0_f32; // Gap between popup and toolbar
-            let popup_height = 200.0_f32; // Approximate popup height
-            let popup_top = (toolbar_pos.1 - popup_gap - popup_height).max(0.0);
+            // Popup layer - positioned relative to toolbar, above or below based on space
+            let popup_gap = 16.0_f32;      // Gap between popup and toolbar
+            let popup_height = 380.0_f32;  // Approximate popup height (must match screenshot/mod.rs)
+            let toolbar_height = 72.0_f32; // Toolbar height including padding
+            let output_size = indicator.output_size;
+            
+            // Determine if popup should appear above or below toolbar
+            let space_above = toolbar_pos.1;
+            let space_below = output_size.1 - toolbar_pos.1 - toolbar_height;
+            
+            let popup_y = if space_above >= popup_height + popup_gap {
+                // Place above toolbar
+                toolbar_pos.1 - popup_gap - popup_height
+            } else if space_below >= popup_height + popup_gap {
+                // Place below toolbar
+                toolbar_pos.1 + toolbar_height + popup_gap
+            } else {
+                // Not enough space either way, place above and let it clip at top
+                (toolbar_pos.1 - popup_gap - popup_height).max(0.0)
+            };
             
             let popup_left_space = cosmic::widget::horizontal_space()
                 .width(Length::Fixed(toolbar_pos.0.max(0.0)));
             let popup_top_space = cosmic::widget::vertical_space()
-                .height(Length::Fixed(popup_top));
+                .height(Length::Fixed(popup_y.max(0.0)));
             
             let popup_row = row![popup_left_space, popup, cosmic::widget::horizontal_space()]
                 .width(Length::Fill);

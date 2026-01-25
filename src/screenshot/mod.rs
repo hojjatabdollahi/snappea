@@ -618,16 +618,30 @@ fn handle_tool_msg(app: &mut App, msg: ToolMsg) -> cosmic::Task<crate::core::app
             }
 
             // Update popup bounds - must match actual rendered position
-            // Popup is centered horizontally and positioned 140px from bottom
+            // Popup follows toolbar position and appears above or below based on available space
             if indicator.pencil_popup_open {
                 let popup_width = 262.0_f32;  // 230 content + 16*2 padding
-                let popup_height = 310.0_f32; // Approximate height of popup content
-                let popup_bottom_margin = 140.0_f32; // Matches padding in render_recording_indicator
+                let popup_height = 380.0_f32; // Approximate height of popup content (increased to prevent overlap)
+                let popup_gap = 16.0_f32;     // Gap between popup and toolbar
+                let toolbar_height = 72.0_f32; // Toolbar height including padding
                 
-                // Centered horizontally on screen
-                let popup_x = (indicator.output_size.0 - popup_width) / 2.0;
-                // Positioned from bottom
-                let popup_y = indicator.output_size.1 - popup_bottom_margin - popup_height;
+                // Popup x follows toolbar x position
+                let popup_x = indicator.toolbar_pos.0.max(0.0);
+                
+                // Determine if popup should appear above or below toolbar
+                let space_above = indicator.toolbar_pos.1;
+                let space_below = indicator.output_size.1 - indicator.toolbar_pos.1 - toolbar_height;
+                
+                let popup_y = if space_above >= popup_height + popup_gap {
+                    // Place above toolbar
+                    indicator.toolbar_pos.1 - popup_gap - popup_height
+                } else if space_below >= popup_height + popup_gap {
+                    // Place below toolbar
+                    indicator.toolbar_pos.1 + toolbar_height + popup_gap
+                } else {
+                    // Not enough space either way, place above and let it clip at top
+                    (indicator.toolbar_pos.1 - popup_gap - popup_height).max(0.0)
+                };
 
                 indicator.pencil_popup_bounds = Some(cosmic::iced_core::Rectangle {
                     x: popup_x,
