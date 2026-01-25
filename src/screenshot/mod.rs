@@ -454,6 +454,7 @@ impl Screenshot {
                         pencil_thickness: config.pencil_thickness,
                         toolbar_bounds: None,
                         timeline: cosmic_time::Timeline::new(),
+                        hide_toolbar_to_tray: config.hide_toolbar_to_tray,
                     }
                 },
             }))
@@ -784,6 +785,14 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 // Persist to config
                 let mut config = crate::config::SnapPeaConfig::load();
                 config.video_show_cursor = args.ui.video_show_cursor;
+                config.save();
+                cosmic::Task::none()
+            }
+            SettingsMsg::ToggleHideToTray => {
+                args.ui.hide_toolbar_to_tray = !args.ui.hide_toolbar_to_tray;
+                // Persist to config
+                let mut config = crate::config::SnapPeaConfig::load();
+                config.hide_toolbar_to_tray = args.ui.hide_toolbar_to_tray;
                 config.save();
                 cosmic::Task::none()
             }
@@ -1213,6 +1222,21 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 cosmic::Task::none()
             };
 
+            // If hide_toolbar_to_tray is enabled, spawn tray and hide toolbar
+            if config.hide_toolbar_to_tray {
+                if let Some(ref tx) = app.tray_tx {
+                    log::info!("Creating system tray for recording (toolbar hidden)");
+                    let tray_handle = crate::tray::create_tray(true, tx.clone());
+                    app.tray_handle = Some(tray_handle);
+                    app.toolbar_visible = false;
+                } else {
+                    log::warn!("Tray sender not available, showing toolbar instead");
+                    app.toolbar_visible = true;
+                }
+            } else {
+                app.toolbar_visible = true;
+            }
+
             // Close screenshot UI and show indicator with toolbar
             cosmic::Task::batch(close_tasks).chain(indicator_task)
         }
@@ -1255,6 +1279,12 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 log::error!("Failed to stop recording: {}", e);
             }
 
+            // Clean up tray if active
+            if let Some(handle) = app.tray_handle.take() {
+                handle.shutdown();
+            }
+            app.toolbar_visible = true;
+
             // Destroy indicator overlay
             let indicator_task = if let Some(indicator) = app.recording_indicator.take() {
                 destroy_layer_surface(indicator.window_id)
@@ -1274,8 +1304,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 });
             }
 
-            // Clear output windows (they were destroyed when recording started)
-            app.outputs.clear();
+            // Note: Don't clear app.outputs - those are Wayland outputs that remain valid
+            // The window IDs in outputs are stale (windows were destroyed), but they'll be
+            // recreated with new IDs when the next screenshot session starts
 
             indicator_task
         }
@@ -2391,6 +2422,11 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
     ];
 
     if app.screenshot_args.replace(args).is_none() {
+        // Generate fresh window IDs for this session
+        for output in &mut app.outputs {
+            output.id = window::Id::unique();
+        }
+        
         let cmds: Vec<_> = app
             .outputs
             .iter()

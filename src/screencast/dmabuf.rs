@@ -38,8 +38,7 @@ pub struct DmabufContext {
 impl DmabufContext {
     /// Create a new DMA-buf context by opening a GPU render node
     pub fn new() -> Result<Self> {
-        let render_node = find_render_node()
-            .context("Failed to find GPU render node")?;
+        let render_node = find_render_node().context("Failed to find GPU render node")?;
 
         log::info!("Using GPU render node: {}", render_node.display());
 
@@ -88,11 +87,15 @@ impl DmabufContext {
                     [modifier].into_iter(),
                     usage,
                 )
-                .map_err(|e| anyhow::anyhow!("Failed to create GBM buffer object with modifier: {:?}", e))?
+                .map_err(|e| {
+                    anyhow::anyhow!("Failed to create GBM buffer object with modifier: {:?}", e)
+                })?
         };
 
         let stride = bo.stride();
-        let fd = bo.fd().map_err(|e| anyhow::anyhow!("Failed to export DMA-buf fd: {:?}", e))?;
+        let fd = bo
+            .fd()
+            .map_err(|e| anyhow::anyhow!("Failed to export DMA-buf fd: {:?}", e))?;
         // Get the actual modifier used by GBM (may differ from requested)
         let actual_modifier = bo.modifier();
 
@@ -148,7 +151,9 @@ fn find_render_node() -> Result<PathBuf> {
     let dri_path = PathBuf::from("/dev/dri");
 
     if !dri_path.exists() {
-        return Err(anyhow::anyhow!("/dev/dri does not exist - no GPU available?"));
+        return Err(anyhow::anyhow!(
+            "/dev/dri does not exist - no GPU available?"
+        ));
     }
 
     // Look for render nodes (renderD*)
@@ -160,7 +165,12 @@ fn find_render_node() -> Result<PathBuf> {
         if name_str.starts_with("renderD") {
             let path = entry.path();
             // Check if we can open it
-            if OpenOptions::new().read(true).write(true).open(&path).is_ok() {
+            if OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .is_ok()
+            {
                 return Ok(path);
             }
         }
@@ -174,7 +184,12 @@ fn find_render_node() -> Result<PathBuf> {
 
         if name_str.starts_with("card") {
             let path = entry.path();
-            if OpenOptions::new().read(true).write(true).open(&path).is_ok() {
+            if OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                .is_ok()
+            {
                 log::warn!("Using card node {} instead of render node", path.display());
                 return Ok(path);
             }
@@ -260,14 +275,28 @@ pub struct TripleBufferPool {
 
 impl TripleBufferPool {
     /// Create a new triple buffer pool
-    pub fn new(ctx: &DmabufContext, width: u32, height: u32, format: DrmFourcc, modifier: DrmModifier) -> Result<Self> {
-        log::info!("Allocating triple buffer pool: {}x{}, format={:?}", width, height, format);
+    pub fn new(
+        ctx: &DmabufContext,
+        width: u32,
+        height: u32,
+        format: DrmFourcc,
+        modifier: DrmModifier,
+    ) -> Result<Self> {
+        log::info!(
+            "Allocating triple buffer pool: {}x{}, format={:?}",
+            width,
+            height,
+            format
+        );
 
-        let buffer0 = ctx.allocate_buffer(width, height, format, modifier)
+        let buffer0 = ctx
+            .allocate_buffer(width, height, format, modifier)
             .context("Failed to allocate buffer 0")?;
-        let buffer1 = ctx.allocate_buffer(width, height, format, modifier)
+        let buffer1 = ctx
+            .allocate_buffer(width, height, format, modifier)
             .context("Failed to allocate buffer 1")?;
-        let buffer2 = ctx.allocate_buffer(width, height, format, modifier)
+        let buffer2 = ctx
+            .allocate_buffer(width, height, format, modifier)
             .context("Failed to allocate buffer 2")?;
 
         log::info!("Triple buffer pool allocated successfully");

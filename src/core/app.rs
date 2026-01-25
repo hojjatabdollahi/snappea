@@ -2,6 +2,7 @@ use crate::core::portal::{DBUS_NAME, DBUS_PATH};
 use crate::screenshot;
 use crate::session::messages;
 use crate::session::state::SettingsTab;
+use crate::tray::{self, TrayAction, TrayHandle};
 use cosmic::Task;
 use cosmic::iced_core::event::wayland::OutputEvent;
 use cosmic::widget::segmented_button;
@@ -10,6 +11,7 @@ use cosmic::{
     iced::window,
     iced_futures::{Subscription, event::listen_with},
 };
+use crossbeam_channel::{Receiver as CbReceiver, Sender as CbSender};
 use futures::SinkExt;
 use std::any::TypeId;
 use wayland_client::protocol::wl_output::WlOutput;
@@ -42,6 +44,14 @@ pub struct App {
     pub recording_indicator: Option<RecordingIndicator>,
     /// Settings tab segmented button model (stored here since it's not Send)
     pub settings_tab_model: segmented_button::SingleSelectModel,
+    /// Tray icon handle (only active during recording if hide_toolbar_to_tray is enabled)
+    pub tray_handle: Option<TrayHandle>,
+    /// Tray action receiver
+    pub tray_rx: Option<CbReceiver<TrayAction>>,
+    /// Tray action sender (kept for creating new tray instances)
+    pub tray_tx: Option<CbSender<TrayAction>>,
+    /// Whether the toolbar is currently visible (when using tray mode)
+    pub toolbar_visible: bool,
 }
 
 /// A single annotation stroke with fade state
@@ -143,6 +153,8 @@ pub enum Msg {
     ToolbarDragMove(f32, f32),
     /// Stop dragging the toolbar
     ToolbarDragEnd,
+    /// Tray action received
+    TrayAction(TrayAction),
 }
 
 impl cosmic::Application for App {
@@ -168,6 +180,9 @@ impl cosmic::Application for App {
     ) -> (Self, cosmic::iced::Task<cosmic::Action<Self::Message>>) {
         let wayland_conn = wayland_client::Connection::connect_to_env().unwrap();
         let wayland_helper = crate::wayland::WaylandHelper::new(wayland_conn);
+        // Create channel for tray communication
+        let (tray_tx, tray_rx) = crossbeam_channel::unbounded::<TrayAction>();
+        
         (
             Self {
                 core,
@@ -179,6 +194,10 @@ impl cosmic::Application for App {
                 tx: None,
                 recording_indicator: None,
                 settings_tab_model: create_settings_tab_model(),
+                tray_handle: None,
+                tray_rx: Some(tray_rx),
+                tray_tx: Some(tray_tx),
+                toolbar_visible: true,
             },
             cosmic::iced::Task::none(),
         )
@@ -194,7 +213,7 @@ impl cosmic::Application for App {
         } else if let Some(indicator) = &self.recording_indicator {
             if indicator.window_id == id {
                 // Render the blinking recording indicator
-                render_recording_indicator(indicator)
+                render_recording_indicator(indicator, self.toolbar_visible)
             } else {
                 cosmic::widget::horizontal_space()
                     .width(cosmic::iced_core::Length::Fixed(1.0))
@@ -243,6 +262,12 @@ impl cosmic::Application for App {
                 cosmic::iced::Task::none()
             }
             Msg::RecordingStopped => {
+                // Clean up tray if active
+                if let Some(handle) = self.tray_handle.take() {
+                    handle.shutdown();
+                }
+                self.toolbar_visible = true;
+                
                 if let Some(indicator) = self.recording_indicator.take() {
                     log::info!("Recording stopped, destroying indicator overlay");
                     return cosmic::iced_winit::commands::layer_surface::destroy_layer_surface(
@@ -502,6 +527,41 @@ impl cosmic::Application for App {
                 }
                 cosmic::iced::Task::none()
             }
+            Msg::TrayAction(action) => {
+                match action {
+                    TrayAction::StopRecording => {
+                        log::info!("Tray: Stop recording requested");
+                        // Clean up tray
+                        if let Some(handle) = self.tray_handle.take() {
+                            handle.shutdown();
+                        }
+                        // Stop recording via screenshot module
+                        return self.update(Msg::Screenshot(
+                            crate::session::messages::Msg::Capture(
+                                crate::session::messages::CaptureMsg::StopRecording
+                            )
+                        ));
+                    }
+                    TrayAction::ToggleToolbar => {
+                        log::info!("Tray: Toggle toolbar requested");
+                        self.toolbar_visible = !self.toolbar_visible;
+                        
+                        // Update tray state
+                        if let Some(ref handle) = self.tray_handle {
+                            let visible = self.toolbar_visible;
+                            handle.update(move |tray| {
+                                tray.set_toolbar_visible(visible);
+                            });
+                        }
+                        
+                        // Recreate the indicator surface with/without toolbar input zone
+                        if self.recording_indicator.is_some() {
+                            return cosmic::Task::done(cosmic::Action::App(Msg::ToggleAnnotationMode));
+                        }
+                    }
+                }
+                cosmic::iced::Task::none()
+            }
             Msg::Output(o_event, wl_output) => {
                 match o_event {
                     OutputEvent::Created(Some(info))
@@ -580,6 +640,11 @@ impl cosmic::Application for App {
                 _ => None,
             }),
         ];
+        
+        // Add tray subscription if we have a receiver
+        if let Some(ref rx) = self.tray_rx {
+            subscriptions.push(tray_subscription(rx.clone()));
+        }
 
         // Add timers and event listeners when recording indicator is active
         if self.recording_indicator.is_some() {
@@ -682,8 +747,36 @@ pub(crate) async fn process_changes(
     Ok(())
 }
 
+/// Subscription for receiving tray actions
+fn tray_subscription(rx: CbReceiver<TrayAction>) -> Subscription<Msg> {
+    struct TraySub;
+
+    Subscription::run_with_id(
+        TypeId::of::<TraySub>(),
+        cosmic::iced::stream::channel(10, move |mut output| async move {
+            use cosmic::iced_futures::futures::StreamExt;
+            
+            // Bridge the blocking crossbeam receiver into an async stream
+            let (mut tx, mut async_rx) =
+                cosmic::iced_futures::futures::channel::mpsc::channel::<TrayAction>(10);
+
+            std::thread::spawn(move || {
+                for action in rx.iter() {
+                    let _ = tx.try_send(action);
+                }
+            });
+
+            while let Some(action) = async_rx.next().await {
+                if output.send(Msg::TrayAction(action)).await.is_err() {
+                    break;
+                }
+            }
+        }),
+    )
+}
+
 /// Render the recording indicator overlay - a blinking red border and annotations
-fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element<'static, Msg> {
+fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: bool) -> cosmic::Element<'static, Msg> {
     use cosmic::iced_core::Length;
     use cosmic::iced_widget::canvas::{self, Geometry, Path, Stroke};
 
@@ -1053,23 +1146,32 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
     .height(Length::Fill);
 
     // Build stack with popup above toolbar if open
-    if let Some(popup) = pencil_popup {
-        // Popup layer - positioned ABOVE toolbar
-        let popup_layer = column![
-            cosmic::widget::vertical_space(),
-            cosmic::widget::container(popup)
-                .center_x(Length::Fill)
-        ]
-        .padding([0, 0, 140, 0]) // 140px from bottom (32 + 56 toolbar + 52 gap)
-        .width(Length::Fill)
-        .height(Length::Fill);
-
-        stack![canvas_layer, toolbar_layer, popup_layer]
+    // Build the final stack based on toolbar visibility
+    if toolbar_visible {
+        if let Some(popup) = pencil_popup {
+            // Popup layer - positioned ABOVE toolbar
+            let popup_layer = column![
+                cosmic::widget::vertical_space(),
+                cosmic::widget::container(popup)
+                    .center_x(Length::Fill)
+            ]
+            .padding([0, 0, 140, 0]) // 140px from bottom (32 + 56 toolbar + 52 gap)
             .width(Length::Fill)
-            .height(Length::Fill)
-            .into()
+            .height(Length::Fill);
+
+            stack![canvas_layer, toolbar_layer, popup_layer]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        } else {
+            stack![canvas_layer, toolbar_layer]
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
+        }
     } else {
-        stack![canvas_layer, toolbar_layer]
+        // No toolbar - just show canvas with red border and annotations
+        stack![canvas_layer]
             .width(Length::Fill)
             .height(Length::Fill)
             .into()

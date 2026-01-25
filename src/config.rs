@@ -220,6 +220,9 @@ pub struct SnapPeaConfig {
     /// Pencil line thickness in pixels
     #[serde(default = "default_pencil_thickness")]
     pub pencil_thickness: f32,
+    /// Whether to hide toolbar to system tray when recording
+    #[serde(default)]
+    pub hide_toolbar_to_tray: bool,
 }
 
 fn default_pencil_color() -> ShapeColor {
@@ -309,6 +312,7 @@ impl Default for SnapPeaConfig {
             pencil_color: default_pencil_color(),
             pencil_fade_duration: default_pencil_fade_duration(),
             pencil_thickness: default_pencil_thickness(),
+            hide_toolbar_to_tray: false,
         }
     }
 }

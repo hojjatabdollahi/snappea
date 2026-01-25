@@ -38,6 +38,10 @@ wayland-client = "0.31.11"
 wayland-protocols = "0.32.9"
 zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
 
+# System tray
+ksni = { version = "0.3.3", features = ["blocking"] }
+crossbeam-channel = "0.5"
+
 # Screen recording
 gstreamer = "0.23"
 gstreamer-app = "0.23"

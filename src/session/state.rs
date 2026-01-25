@@ -248,6 +248,8 @@ pub struct UiState {
     pub toolbar_bounds: Option<Rectangle>,
     /// Animation timeline for UI animations
     pub timeline: Timeline,
+    /// Whether to hide toolbar to system tray when recording
+    pub hide_toolbar_to_tray: bool,
 }
 
 impl UiState {

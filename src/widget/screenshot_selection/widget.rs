@@ -502,6 +502,8 @@ where
                 move |f| on_event_framerate(ScreenshotEvent::video_framerate_set(f)),
                 ui.video_show_cursor,
                 on_event(ScreenshotEvent::show_cursor_toggle()),
+                ui.hide_toolbar_to_tray,
+                on_event(ScreenshotEvent::hide_to_tray_toggle()),
                 space_s,
                 space_xs,
             ))

@@ -154,6 +154,8 @@ pub enum SettingsEvent {
     VideoFramerateSet(u32),
     /// Show cursor in recordings toggled
     ShowCursorToggle,
+    /// Hide toolbar to system tray when recording toggled
+    HideToTrayToggle,
     /// Toolbar hover state changed (for fade animation)
     ToolbarHoverChanged(bool),
     /// Toolbar bounds updated (output-local coordinates)
@@ -450,6 +452,10 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::ShowCursorToggle)
     }
 
+    pub fn hide_to_tray_toggle() -> Self {
+        Self::Settings(SettingsEvent::HideToTrayToggle)
+    }
+
     pub fn toolbar_hover_changed(is_hovered: bool) -> Self {
         Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered))
     }
@@ -660,6 +666,7 @@ impl ScreenshotEvent {
                 Msg::set_video_framerate(framerate)
             }
             Self::Settings(SettingsEvent::ShowCursorToggle) => Msg::toggle_show_cursor(),
+            Self::Settings(SettingsEvent::HideToTrayToggle) => Msg::toggle_hide_to_tray(),
             Self::Settings(SettingsEvent::ToolbarHoverChanged(is_hovered)) => {
                 Msg::toolbar_hover_changed(is_hovered)
             }

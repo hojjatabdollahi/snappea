@@ -8,9 +8,9 @@ use gstreamer_app as gst_app;
 use std::os::fd::RawFd;
 use std::path::{Path, PathBuf};
 
-use crate::config::Container;
-use super::encoder::EncoderInfo;
 use super::dmabuf::drm_format_to_gst_format;
+use super::encoder::EncoderInfo;
+use crate::config::Container;
 
 /// Region to crop from captured frame
 #[derive(Clone, Copy, Debug)]
@@ -83,12 +83,12 @@ impl Pipeline {
             super::encoder::Codec::H264 => Some(
                 gst::ElementFactory::make("h264parse")
                     .build()
-                    .context("Failed to create h264parse element")?
+                    .context("Failed to create h264parse element")?,
             ),
             super::encoder::Codec::H265 => Some(
                 gst::ElementFactory::make("h265parse")
                     .build()
-                    .context("Failed to create h265parse element")?
+                    .context("Failed to create h265parse element")?,
             ),
             _ => None,
         };
@@ -112,14 +112,25 @@ impl Pipeline {
             let clamped_width = region.width.min(max_width).max(1);
             let clamped_height = region.height.min(max_height).max(1);
 
-            let right = capture_width.saturating_sub(clamped_left).saturating_sub(clamped_width);
-            let bottom = capture_height.saturating_sub(clamped_top).saturating_sub(clamped_height);
+            let right = capture_width
+                .saturating_sub(clamped_left)
+                .saturating_sub(clamped_width);
+            let bottom = capture_height
+                .saturating_sub(clamped_top)
+                .saturating_sub(clamped_height);
 
             log::info!(
                 "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
-                region.left, region.top, region.width, region.height,
-                capture_width, capture_height,
-                clamped_left, clamped_top, clamped_width, clamped_height
+                region.left,
+                region.top,
+                region.width,
+                region.height,
+                capture_width,
+                capture_height,
+                clamped_left,
+                clamped_top,
+                clamped_width,
+                clamped_height
             );
 
             let videocrop = gst::ElementFactory::make("videocrop")
@@ -240,10 +251,13 @@ impl Pipeline {
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
-        let gst_format = drm_format_to_gst_format(drm_format)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format))?;
+        let gst_format = drm_format_to_gst_format(drm_format).ok_or_else(|| {
+            anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format)
+        })?;
 
-        let output_size = crop.map(|c| (c.width, c.height)).unwrap_or((capture_width, capture_height));
+        let output_size = crop
+            .map(|c| (c.width, c.height))
+            .unwrap_or((capture_width, capture_height));
         log::info!(
             "Creating DMA-buf pipeline: capture {}x{}, output {}x{} @ {} fps, format={:?} ({})",
             capture_width,
@@ -282,12 +296,12 @@ impl Pipeline {
             super::encoder::Codec::H264 => Some(
                 gst::ElementFactory::make("h264parse")
                     .build()
-                    .context("Failed to create h264parse element")?
+                    .context("Failed to create h264parse element")?,
             ),
             super::encoder::Codec::H265 => Some(
                 gst::ElementFactory::make("h265parse")
                     .build()
-                    .context("Failed to create h265parse element")?
+                    .context("Failed to create h265parse element")?,
             ),
             _ => None,
         };
@@ -311,14 +325,25 @@ impl Pipeline {
             let clamped_width = region.width.min(max_width).max(1);
             let clamped_height = region.height.min(max_height).max(1);
 
-            let right = capture_width.saturating_sub(clamped_left).saturating_sub(clamped_width);
-            let bottom = capture_height.saturating_sub(clamped_top).saturating_sub(clamped_height);
+            let right = capture_width
+                .saturating_sub(clamped_left)
+                .saturating_sub(clamped_width);
+            let bottom = capture_height
+                .saturating_sub(clamped_top)
+                .saturating_sub(clamped_height);
 
             log::info!(
                 "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{})",
-                region.left, region.top, region.width, region.height,
-                capture_width, capture_height,
-                clamped_left, clamped_top, clamped_width, clamped_height
+                region.left,
+                region.top,
+                region.width,
+                region.height,
+                capture_width,
+                capture_height,
+                clamped_left,
+                clamped_top,
+                clamped_width,
+                clamped_height
             );
 
             let videocrop = gst::ElementFactory::make("videocrop")
@@ -435,13 +460,14 @@ impl Pipeline {
     /// * `data` - Raw RGBA frame data
     /// * `timestamp` - Frame timestamp in nanoseconds
     pub fn push_frame(&self, data: &[u8], timestamp: u64) -> Result<()> {
-        let mut buffer = gst::Buffer::with_size(data.len())
-            .context("Failed to allocate GStreamer buffer")?;
+        let mut buffer =
+            gst::Buffer::with_size(data.len()).context("Failed to allocate GStreamer buffer")?;
 
         {
             let buffer_mut = buffer.get_mut().unwrap();
             buffer_mut.set_pts(gst::ClockTime::from_nseconds(timestamp));
-            let mut map = buffer_mut.map_writable()
+            let mut map = buffer_mut
+                .map_writable()
                 .context("Failed to map buffer for writing")?;
             map.copy_from_slice(data);
         }
@@ -482,13 +508,14 @@ impl Pipeline {
         }
 
         // Create GStreamer buffer with the data
-        let mut buffer = gst::Buffer::with_size(size)
-            .context("Failed to allocate GStreamer buffer")?;
+        let mut buffer =
+            gst::Buffer::with_size(size).context("Failed to allocate GStreamer buffer")?;
 
         {
             let buffer_mut = buffer.get_mut().unwrap();
             buffer_mut.set_pts(gst::ClockTime::from_nseconds(timestamp));
-            let mut map = buffer_mut.map_writable()
+            let mut map = buffer_mut
+                .map_writable()
                 .context("Failed to map buffer for writing")?;
 
             // Copy from DMA-buf to GStreamer buffer
@@ -512,7 +539,8 @@ impl Pipeline {
     /// Signal end of stream and finalize the video file
     pub fn finish(&self) -> Result<()> {
         log::info!("Sending EOS signal to pipeline...");
-        self.appsrc.end_of_stream()
+        self.appsrc
+            .end_of_stream()
             .map_err(|_| anyhow::anyhow!("Failed to send EOS"))?;
 
         // Wait for EOS to propagate through pipeline (30 seconds for long recordings)
@@ -535,7 +563,11 @@ impl Pipeline {
                     ));
                 }
                 MessageView::StateChanged(state_change) => {
-                    if state_change.src().map(|s| s.name().as_str() == "pipeline0").unwrap_or(false) {
+                    if state_change
+                        .src()
+                        .map(|s| s.name().as_str() == "pipeline0")
+                        .unwrap_or(false)
+                    {
                         log::debug!(
                             "Pipeline state changed: {:?} -> {:?}",
                             state_change.old(),
@@ -551,7 +583,8 @@ impl Pipeline {
             log::warn!("EOS timeout reached, forcing pipeline shutdown");
         }
 
-        self.pipeline.set_state(gst::State::Null)
+        self.pipeline
+            .set_state(gst::State::Null)
             .context("Failed to stop pipeline")?;
 
         // Verify output file exists and has data
@@ -569,8 +602,12 @@ impl Pipeline {
             ));
         }
 
-        let metadata = std::fs::metadata(&self.output_path)
-            .with_context(|| format!("Failed to read output file metadata: {}", self.output_path.display()))?;
+        let metadata = std::fs::metadata(&self.output_path).with_context(|| {
+            format!(
+                "Failed to read output file metadata: {}",
+                self.output_path.display()
+            )
+        })?;
 
         if metadata.len() == 0 {
             return Err(anyhow::anyhow!(

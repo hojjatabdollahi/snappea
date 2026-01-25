@@ -257,6 +257,8 @@ pub enum SettingsMsg {
     SetVideoFramerate(u32),
     /// Toggle showing cursor in recordings
     ToggleShowCursor,
+    /// Toggle hide toolbar to system tray when recording
+    ToggleHideToTray,
     /// Encoders have been detected asynchronously
     EncodersDetected(Vec<crate::screencast::encoder::EncoderInfo>),
     /// Animation timeline tick (window_id, instant)
@@ -547,6 +549,9 @@ impl Msg {
     }
     pub fn toggle_show_cursor() -> Self {
         Self::Settings(SettingsMsg::ToggleShowCursor)
+    }
+    pub fn toggle_hide_to_tray() -> Self {
+        Self::Settings(SettingsMsg::ToggleHideToTray)
     }
     pub fn timeline_tick(window_id: window::Id, instant: Instant) -> Self {
         Self::Settings(SettingsMsg::TimelineTick(window_id, instant))

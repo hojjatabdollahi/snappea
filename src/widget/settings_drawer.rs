@@ -1,10 +1,10 @@
 //! Settings drawer widget that opens relative to the toolbar
 
-use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
 use cosmic::widget::{container, radio, segmented_button, tab_bar, text};
+use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
@@ -37,6 +37,8 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     on_framerate_select: H,
     video_show_cursor: bool,
     on_show_cursor_toggle: Msg,
+    hide_toolbar_to_tray: bool,
+    on_hide_to_tray_toggle: Msg,
     space_s: u16,
     space_xs: u16,
 ) -> Element<'a, Msg>
@@ -181,6 +183,18 @@ where
     .align_y(cosmic::iced_core::Alignment::Center)
     .width(Length::Fill);
 
+    // Hide to system tray toggle
+    let hide_to_tray_row = row![
+        text::caption("Hide to tray when recording"),
+        cosmic::widget::horizontal_space(),
+        toggler(hide_toolbar_to_tray)
+            .on_toggle(move |_| on_hide_to_tray_toggle.clone())
+            .size(20.0),
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
     // About section
     const SNAPPEA_LOGO: &[u8] = include_bytes!("../../data/logo.svg");
     const GITHUB_ICON: &[u8] =
@@ -238,6 +252,8 @@ where
         framerate_row,
         cosmic::widget::divider::horizontal::light(),
         show_cursor_row,
+        cosmic::widget::divider::horizontal::light(),
+        hide_to_tray_row,
     ]
     .spacing(space_xs)
     .into();

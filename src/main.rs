@@ -9,6 +9,7 @@ mod render;
 mod screencast;
 mod screenshot;
 mod session;
+mod tray;
 mod wayland;
 mod widget;
 

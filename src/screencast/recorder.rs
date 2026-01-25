@@ -9,10 +9,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
-use crate::wayland::{CaptureSource, Rect, WaylandHelper};
-use super::dmabuf::{DmabufContext, TripleBufferPool, select_best_format, drm_format_to_gst_format};
-use super::pipeline::{Pipeline, CropRegion};
+use super::dmabuf::{
+    drm_format_to_gst_format, select_best_format, DmabufContext, TripleBufferPool,
+};
 use super::encoder::{detect_encoders, EncoderInfo};
+use super::pipeline::{CropRegion, Pipeline};
+use crate::wayland::{CaptureSource, Rect, WaylandHelper};
 
 /// Global flag for graceful shutdown on SIGTERM
 static STOP_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -81,7 +83,10 @@ pub fn start_recording(
 
     log::info!(
         "Available outputs: {:?}",
-        available_outputs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+        available_outputs
+            .iter()
+            .map(|(name, _)| name)
+            .collect::<Vec<_>>()
     );
 
     let output = available_outputs
@@ -92,7 +97,10 @@ pub fn start_recording(
             format!(
                 "Output '{}' not found. Available outputs: {:?}",
                 output_name,
-                available_outputs.iter().map(|(name, _)| name).collect::<Vec<_>>()
+                available_outputs
+                    .iter()
+                    .map(|(name, _)| name)
+                    .collect::<Vec<_>>()
             )
         })?;
 
@@ -108,7 +116,10 @@ pub fn start_recording(
 
         // Get ALL toplevels (including minimized windows, not just per-output)
         let toplevels = wayland_helper.all_toplevels();
-        log::info!("Found {} total toplevels (including minimized)", toplevels.len());
+        log::info!(
+            "Found {} total toplevels (including minimized)",
+            toplevels.len()
+        );
 
         if idx >= toplevels.len() {
             anyhow::bail!(
@@ -161,7 +172,11 @@ pub fn start_recording(
             )
         })?;
 
-    log::info!("Using encoder: {} ({:?})", encoder_info.gst_element, encoder_info.codec);
+    log::info!(
+        "Using encoder: {} ({:?})",
+        encoder_info.gst_element,
+        encoder_info.codec
+    );
 
     // Try to set up DMA-buf capture for zero-copy performance
     let dmabuf_context = match DmabufContext::new() {
@@ -170,20 +185,30 @@ pub fn start_recording(
             Some(ctx)
         }
         Err(e) => {
-            log::warn!("Failed to initialize DMA-buf context: {}. Falling back to SHM.", e);
+            log::warn!(
+                "Failed to initialize DMA-buf context: {}. Falling back to SHM.",
+                e
+            );
             None
         }
     };
 
     // Check for DMA-buf support from both compositor and Wayland protocol
     let wayland_dmabuf_supported = wayland_helper.has_dmabuf_support();
-    log::info!("Wayland linux-dmabuf protocol: {}", if wayland_dmabuf_supported { "available" } else { "not available" });
+    log::info!(
+        "Wayland linux-dmabuf protocol: {}",
+        if wayland_dmabuf_supported {
+            "available"
+        } else {
+            "not available"
+        }
+    );
 
     // Check for DMA-buf format support from screencopy
     let dmabuf_format = if wayland_dmabuf_supported {
-        dmabuf_context.as_ref().and_then(|ctx| {
-            select_dmabuf_format(&formats, &encoder_info, ctx)
-        })
+        dmabuf_context
+            .as_ref()
+            .and_then(|ctx| select_dmabuf_format(&formats, &encoder_info, ctx))
     } else {
         None
     };
@@ -214,7 +239,12 @@ pub fn start_recording(
 
     log::info!(
         "Scale calculation: buffer={}x{}, logical={}x{}, scale=({:.3}, {:.3})",
-        buffer_width, buffer_height, logical_width, logical_height, scale_x, scale_y
+        buffer_width,
+        buffer_height,
+        logical_width,
+        logical_height,
+        scale_x,
+        scale_y
     );
 
     // Scale the region from logical to physical coordinates
@@ -225,22 +255,38 @@ pub fn start_recording(
 
     log::info!(
         "Region scaling: logical ({}, {}, {}x{}) -> physical ({}, {}, {}x{})",
-        region_x, region_y, record_width, record_height,
-        physical_x, physical_y, physical_width, physical_height
+        region_x,
+        region_y,
+        record_width,
+        record_height,
+        physical_x,
+        physical_y,
+        physical_width,
+        physical_height
     );
 
     // Calculate crop region if recording a subset of the screen
     // For toplevel capture, we record the entire window (no crop)
     let crop = if toplevel_index.is_some() {
-        log::info!("Toplevel capture: recording entire window ({}x{})", buffer_width, buffer_height);
+        log::info!(
+            "Toplevel capture: recording entire window ({}x{})",
+            buffer_width,
+            buffer_height
+        );
         None
-    } else if physical_x != 0 || physical_y != 0
-        || physical_width != buffer_width || physical_height != buffer_height
+    } else if physical_x != 0
+        || physical_y != 0
+        || physical_width != buffer_width
+        || physical_height != buffer_height
     {
         log::info!(
             "Region differs from capture: physical region ({}, {}, {}x{}) vs capture ({}x{})",
-            physical_x, physical_y, physical_width, physical_height,
-            buffer_width, buffer_height
+            physical_x,
+            physical_y,
+            physical_width,
+            physical_height,
+            buffer_width,
+            buffer_height
         );
         Some(CropRegion {
             left: physical_x,
@@ -279,7 +325,8 @@ pub fn start_recording(
         .context("Failed to create GStreamer pipeline. Check logs for details.")?
     };
 
-    pipeline.start()
+    pipeline
+        .start()
         .context("Failed to start GStreamer pipeline")?;
     log::info!("Recording started successfully!");
 
@@ -296,7 +343,10 @@ pub fn start_recording(
         let ctx = dmabuf_context.as_ref().unwrap();
         log::info!(
             "Attempting triple buffer allocation: {}x{}, format={:?}, modifier={:?}",
-            buffer_width, buffer_height, drm_format, modifier
+            buffer_width,
+            buffer_height,
+            drm_format,
+            modifier
         );
         match TripleBufferPool::new(ctx, buffer_width, buffer_height, drm_format, modifier) {
             Ok(pool) => {
@@ -308,7 +358,10 @@ pub fn start_recording(
                 Some(pool)
             }
             Err(e) => {
-                log::warn!("Failed to allocate triple buffer pool: {}. Falling back to SHM.", e);
+                log::warn!(
+                    "Failed to allocate triple buffer pool: {}. Falling back to SHM.",
+                    e
+                );
                 None
             }
         }
@@ -350,7 +403,8 @@ pub fn start_recording(
             // Find output again in this thread
             let outputs = helper.outputs();
             let output = outputs.into_iter().find(|o| {
-                helper.output_info(o)
+                helper
+                    .output_info(o)
                     .and_then(|info| info.name.as_ref().map(|n| n == &output_name))
                     .unwrap_or(false)
             });
@@ -399,7 +453,8 @@ pub fn start_recording(
                 CaptureSource::Output(output)
             };
 
-            let mut session = helper.capture_source_session(capture_source.clone(), show_cursor_clone);
+            let mut session =
+                helper.capture_source_session(capture_source.clone(), show_cursor_clone);
 
             let mut consecutive_failures = 0u32;
             let mut last_error_log = std::time::Instant::now();
@@ -411,7 +466,10 @@ pub fn start_recording(
                     Ok(frame_data) => {
                         // Reset failure counter on success
                         if consecutive_failures > 0 {
-                            log::debug!("Capture thread: recovered after {} failures", consecutive_failures);
+                            log::debug!(
+                                "Capture thread: recovered after {} failures",
+                                consecutive_failures
+                            );
                             consecutive_failures = 0;
                         }
                         // Non-blocking send - if main thread is behind, we'll drop frames
@@ -438,13 +496,16 @@ pub fn start_recording(
                                 // Find the output again
                                 let outputs = helper.outputs();
                                 if let Some(fallback_output) = outputs.into_iter().find(|o| {
-                                    helper.output_info(o)
-                                        .and_then(|info| info.name.as_ref().map(|n| n == &output_name))
+                                    helper
+                                        .output_info(o)
+                                        .and_then(|info| {
+                                            info.name.as_ref().map(|n| n == &output_name)
+                                        })
                                         .unwrap_or(false)
                                 }) {
                                     session = helper.capture_source_session(
                                         CaptureSource::Output(fallback_output),
-                                        show_cursor_clone
+                                        show_cursor_clone,
                                     );
                                     fell_back_to_output = true;
                                     consecutive_failures = 0;
@@ -465,7 +526,7 @@ pub fn start_recording(
 
                         // Exponential backoff: 10ms, 20ms, 40ms, ... up to 500ms
                         let backoff = Duration::from_millis(
-                            (10 * (1 << consecutive_failures.min(6))).min(500)
+                            (10 * (1 << consecutive_failures.min(6))).min(500),
                         );
                         std::thread::sleep(backoff);
                     }
@@ -548,7 +609,8 @@ pub fn start_recording(
             let timestamp = frame_count * 1_000_000_000 / framerate as u64;
 
             let pool = buffer_pool.as_mut().unwrap();
-            match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp) {
+            match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
+            {
                 Ok(()) => {
                     consecutive_errors = 0;
                     frame_count += 1;
@@ -558,7 +620,8 @@ pub fn start_recording(
                         let fps = frame_count as f64 / elapsed.as_secs_f64();
                         log::info!(
                             "Recording: {} frames captured ({:.1} fps, DMA-buf)",
-                            frame_count, fps
+                            frame_count,
+                            fps
                         );
                     }
                 }
@@ -836,10 +899,16 @@ pub fn start_recording_thread(
     // Log capture source details
     match &capture_source {
         CaptureSource::Toplevel(handle) => {
-            log::info!("Creating screencopy session for TOPLEVEL (handle: {:?})", handle);
+            log::info!(
+                "Creating screencopy session for TOPLEVEL (handle: {:?})",
+                handle
+            );
         }
         CaptureSource::Output(output) => {
-            log::info!("Creating screencopy session for OUTPUT (output: {:?})", output);
+            log::info!(
+                "Creating screencopy session for OUTPUT (output: {:?})",
+                output
+            );
         }
         _ => {
             log::info!("Creating screencopy session for OTHER source");
@@ -871,7 +940,11 @@ pub fn start_recording_thread(
         .find(|e| e.gst_element == encoder)
         .with_context(|| format!("Encoder '{}' not available.", encoder))?;
 
-    log::info!("Using encoder: {} ({:?})", encoder_info.gst_element, encoder_info.codec);
+    log::info!(
+        "Using encoder: {} ({:?})",
+        encoder_info.gst_element,
+        encoder_info.codec
+    );
 
     // Calculate crop region if needed
     let (region_x, region_y, record_width, record_height) = region;
@@ -895,10 +968,16 @@ pub fn start_recording_thread(
 
     // For toplevel capture, record entire window (no crop)
     let crop = if is_toplevel {
-        log::info!("Toplevel capture: recording entire window ({}x{})", buffer_width, buffer_height);
+        log::info!(
+            "Toplevel capture: recording entire window ({}x{})",
+            buffer_width,
+            buffer_height
+        );
         None
-    } else if physical_x != 0 || physical_y != 0
-        || physical_width != buffer_width || physical_height != buffer_height
+    } else if physical_x != 0
+        || physical_y != 0
+        || physical_width != buffer_width
+        || physical_height != buffer_height
     {
         Some(CropRegion {
             left: physical_x,
@@ -923,7 +1002,8 @@ pub fn start_recording_thread(
     )
     .context("Failed to create GStreamer pipeline")?;
 
-    pipeline.start()
+    pipeline
+        .start()
         .context("Failed to start GStreamer pipeline")?;
     log::info!("Recording started successfully!");
 
@@ -957,20 +1037,29 @@ pub fn start_recording_thread(
             match capture_frame_shm(&wayland_helper, &session, &formats_clone) {
                 Ok(frame_data) => {
                     if consecutive_failures > 0 {
-                        log::debug!("Capture thread: recovered after {} failures", consecutive_failures);
+                        log::debug!(
+                            "Capture thread: recovered after {} failures",
+                            consecutive_failures
+                        );
                         consecutive_failures = 0;
                     }
 
                     // For toplevel capture, track if frames are changing
                     if is_toplevel_capture {
                         // Simple checksum of first 1KB to detect changes
-                        let checksum: u32 = frame_data.iter().take(1024).fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
+                        let checksum: u32 = frame_data
+                            .iter()
+                            .take(1024)
+                            .fold(0u32, |acc, &b| acc.wrapping_add(b as u32));
                         if let Some(prev) = last_checksum {
                             if prev == checksum {
                                 same_frame_count += 1;
                             } else {
                                 if same_frame_count > 0 {
-                                    log::debug!("Capture thread: frame changed after {} identical frames", same_frame_count);
+                                    log::debug!(
+                                        "Capture thread: frame changed after {} identical frames",
+                                        same_frame_count
+                                    );
                                 }
                                 same_frame_count = 0;
                             }
@@ -979,7 +1068,11 @@ pub fn start_recording_thread(
 
                         frame_count += 1;
                         if frame_count % 60 == 0 {
-                            log::debug!("Capture thread: {} frames captured, {} currently identical", frame_count, same_frame_count);
+                            log::debug!(
+                                "Capture thread: {} frames captured, {} currently identical",
+                                frame_count,
+                                same_frame_count
+                            );
                         }
                     }
 
@@ -991,7 +1084,8 @@ pub fn start_recording_thread(
                     if last_error_log.elapsed() > Duration::from_secs(2) {
                         log::warn!(
                             "Capture thread: frame capture failed ({} consecutive failures): {}",
-                            consecutive_failures, e
+                            consecutive_failures,
+                            e
                         );
                         last_error_log = std::time::Instant::now();
                     }
@@ -1004,9 +1098,8 @@ pub fn start_recording_thread(
                         break;
                     }
 
-                    let backoff = Duration::from_millis(
-                        (10 * (1 << consecutive_failures.min(6))).min(500)
-                    );
+                    let backoff =
+                        Duration::from_millis((10 * (1 << consecutive_failures.min(6))).min(500));
                     std::thread::sleep(backoff);
                 }
             }
@@ -1032,18 +1125,16 @@ pub fn start_recording_thread(
                 new_frames += 1;
                 data
             }
-            Err(_) => {
-                match &last_frame {
-                    Some(data) => {
-                        repeated_frames += 1;
-                        data.clone()
-                    }
-                    None => {
-                        std::thread::sleep(Duration::from_millis(1));
-                        continue;
-                    }
+            Err(_) => match &last_frame {
+                Some(data) => {
+                    repeated_frames += 1;
+                    data.clone()
                 }
-            }
+                None => {
+                    std::thread::sleep(Duration::from_millis(1));
+                    continue;
+                }
+            },
         };
 
         // Push frame to pipeline
@@ -1058,7 +1149,10 @@ pub fn start_recording_thread(
                     let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
                     log::info!(
                         "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
-                        frame_count, fps, capture_fps, repeated_frames
+                        frame_count,
+                        fps,
+                        capture_fps,
+                        repeated_frames
                     );
                 }
             }

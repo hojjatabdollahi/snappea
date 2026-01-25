@@ -43,7 +43,11 @@ pub struct EncoderInfo {
 impl EncoderInfo {
     /// Display name with hardware/software indicator
     pub fn display_name(&self) -> String {
-        let hw_indicator = if self.hardware { " (Hardware)" } else { " (Software)" };
+        let hw_indicator = if self.hardware {
+            " (Hardware)"
+        } else {
+            " (Software)"
+        };
         format!("{}{}", self.name, hw_indicator)
     }
 }
