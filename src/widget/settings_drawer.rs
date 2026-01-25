@@ -3,12 +3,18 @@
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
-use cosmic::widget::{container, radio, segmented_button, tab_bar, text};
+use cosmic::widget::{container, dropdown, radio, segmented_button, tab_bar, text};
 use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
 use crate::session::state::SettingsTab;
+
+/// Available framerate options
+const FRAMERATE_OPTIONS: &[u32] = &[24, 30, 60];
+
+/// All container format options
+const CONTAINER_OPTIONS: &[Container] = &[Container::Mp4, Container::Webm, Container::Mkv];
 
 /// Build the settings drawer element
 #[allow(clippy::too_many_arguments)]
@@ -43,9 +49,9 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     space_xs: u16,
 ) -> Element<'a, Msg>
 where
-    F: Fn(String) -> Msg + Clone + 'a,
-    G: Fn(Container) -> Msg + Clone + 'a,
-    H: Fn(u32) -> Msg + Clone + 'a,
+    F: Fn(String) -> Msg + Clone + Send + Sync + 'static,
+    G: Fn(Container) -> Msg + Clone + Send + Sync + 'static,
+    H: Fn(u32) -> Msg + Clone + Send + Sync + 'static,
 {
     // Build tab row using tab_bar style (looks like tabs instead of segmented control)
     // The callback receives the Entity, and the handler will look up the SettingsTab data
@@ -110,66 +116,67 @@ where
         .spacing(space_xs)
         .width(Length::Fill);
 
-    // Encoder selection
+    // Encoder selection using dropdown
     let encoder_label = text::body("Encoder:");
 
     // Find selected encoder index
     let selected_encoder_idx = available_encoders
         .iter()
-        .position(|(_, element)| Some(element.as_str()) == selected_encoder.as_deref())
-        .map(|i| i as u32);
+        .position(|(_, element)| Some(element.as_str()) == selected_encoder.as_deref());
 
-    // Build encoder radio buttons using indices - consume available_encoders
-    // Leak strings to get 'static lifetime for UI (acceptable - small strings, rarely used)
-    let mut encoder_column_items = column![].spacing(space_xs);
-    for (idx, (display, element)) in available_encoders.into_iter().enumerate() {
-        let idx_u32 = idx as u32;
-        let display_static: &'static str = Box::leak(display.into_boxed_str());
-        let on_select = on_encoder_select.clone();
-        encoder_column_items = encoder_column_items.push(
-            radio(
-                text::caption(display_static),
-                idx_u32,
-                selected_encoder_idx,
-                move |_idx: u32| on_select(element.clone()),
-            )
-            .size(14.0),
-        );
-    }
+    // Create list of display names for the dropdown (leak to get 'static lifetime)
+    let encoder_display_names: &'static [String] = Box::leak(
+        available_encoders
+            .iter()
+            .map(|(display, _)| display.clone())
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
+    );
 
-    // Container format selection
+    // Clone the encoder elements for the callback
+    let encoder_elements: Vec<String> = available_encoders
+        .iter()
+        .map(|(_, element)| element.clone())
+        .collect();
+
+    let encoder_dropdown = dropdown(encoder_display_names, selected_encoder_idx, move |idx| {
+        let element = encoder_elements.get(idx).cloned().unwrap_or_default();
+        on_encoder_select(element)
+    })
+    .width(Length::Fill);
+
+    // Container format selection using dropdown
     let container_label = text::body("Format:");
-    let mp4_radio = radio("MP4", Container::Mp4, Some(video_container), |c| {
-        on_container_select(c)
-    })
-    .size(14.0);
-    let webm_radio = radio("WebM", Container::Webm, Some(video_container), |c| {
-        on_container_select(c)
-    })
-    .size(14.0);
-    let mkv_radio = radio("MKV", Container::Mkv, Some(video_container), |c| {
-        on_container_select(c)
-    })
-    .size(14.0);
 
-    let container_row = row![mp4_radio, webm_radio, mkv_radio]
-        .spacing(space_s)
-        .align_y(cosmic::iced_core::Alignment::Center);
+    // Use static array for container names
+    static CONTAINER_NAMES: &[&str] = &["MP4", "WebM", "MKV"];
 
-    // Framerate selection
+    let selected_container_idx = CONTAINER_OPTIONS.iter().position(|c| *c == video_container);
+
+    let container_dropdown = dropdown(CONTAINER_NAMES, selected_container_idx, move |idx| {
+        let container = CONTAINER_OPTIONS
+            .get(idx)
+            .copied()
+            .unwrap_or(Container::Mp4);
+        on_container_select(container)
+    })
+    .width(Length::Fill);
+
+    // Framerate selection using dropdown
     let framerate_label = text::body("Framerate:");
-    let fps_30_radio = radio("30 fps", 30, Some(video_framerate), |fps| {
-        on_framerate_select(fps)
-    })
-    .size(14.0);
-    let fps_60_radio = radio("60 fps", 60, Some(video_framerate), |fps| {
-        on_framerate_select(fps)
-    })
-    .size(14.0);
 
-    let framerate_row = row![fps_30_radio, fps_60_radio]
-        .spacing(space_s)
-        .align_y(cosmic::iced_core::Alignment::Center);
+    // Use static array for framerate names
+    static FRAMERATE_NAMES: &[&str] = &["24 fps", "30 fps", "60 fps"];
+
+    let selected_framerate_idx = FRAMERATE_OPTIONS
+        .iter()
+        .position(|fps| *fps == video_framerate);
+
+    let framerate_dropdown = dropdown(FRAMERATE_NAMES, selected_framerate_idx, move |idx| {
+        let fps = FRAMERATE_OPTIONS.get(idx).copied().unwrap_or(30);
+        on_framerate_select(fps)
+    })
+    .width(Length::Fill);
 
     // Show cursor toggle
     let show_cursor_row = row![
@@ -241,14 +248,39 @@ where
     .spacing(space_xs)
     .into();
 
-    let video_tab_content: Element<'_, Msg> = column![
+    // Build rows with label and dropdown side by side
+    let encoder_row = row![
         encoder_label,
-        encoder_column_items,
-        cosmic::widget::divider::horizontal::light(),
+        cosmic::widget::horizontal_space(),
+        encoder_dropdown,
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
+    let container_row = row![
         container_label,
+        cosmic::widget::horizontal_space(),
+        container_dropdown,
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
+    let framerate_row = row![
+        framerate_label,
+        cosmic::widget::horizontal_space(),
+        framerate_dropdown,
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced_core::Alignment::Center)
+    .width(Length::Fill);
+
+    let video_tab_content: Element<'_, Msg> = column![
+        encoder_row,
+        cosmic::widget::divider::horizontal::light(),
         container_row,
         cosmic::widget::divider::horizontal::light(),
-        framerate_label,
         framerate_row,
         cosmic::widget::divider::horizontal::light(),
         show_cursor_row,

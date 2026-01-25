@@ -138,7 +138,7 @@ where
 
 impl<'a, E> ScreenshotSelectionWidget<'a, E>
 where
-    E: Fn(ScreenshotEvent) -> Msg + Clone + 'static,
+    E: Fn(ScreenshotEvent) -> Msg + Clone + Send + Sync + 'static,
 {
     /// Create a new widget
     #[allow(clippy::too_many_arguments)]
@@ -669,7 +669,7 @@ where
 impl<'a, E> cosmic::iced_core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
     for ScreenshotSelectionWidget<'a, E>
 where
-    E: Fn(ScreenshotEvent) -> Msg + Clone + 'static,
+    E: Fn(ScreenshotEvent) -> Msg + Clone + Send + Sync + 'static,
 {
     fn children(&self) -> Vec<Tree> {
         let mut children = vec![
@@ -2011,7 +2011,7 @@ where
 
 impl<'a, E> From<ScreenshotSelectionWidget<'a, E>> for Element<'a, Msg>
 where
-    E: Fn(ScreenshotEvent) -> Msg + Clone + 'static,
+    E: Fn(ScreenshotEvent) -> Msg + Clone + Send + Sync + 'static,
 {
     fn from(widget: ScreenshotSelectionWidget<'a, E>) -> Self {
         Self::new(widget)
