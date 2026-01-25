@@ -68,6 +68,8 @@ pub struct RecordingIndicator {
     pub output_name: String,
     /// Output for recreating the surface
     pub output: WlOutput,
+    /// Output size in logical pixels (for popup positioning)
+    pub output_size: (f32, f32),
     /// Recording region in output-local logical coordinates
     pub region: (i32, i32, u32, u32),
     /// Current blink state (true = visible border)
@@ -96,6 +98,10 @@ pub struct RecordingIndicator {
     pub toolbar_dragging: bool,
     /// Drag offset from toolbar top-left when drag started
     pub drag_offset: (f32, f32),
+    /// Whether pencil popup is open
+    pub pencil_popup_open: bool,
+    /// Pencil popup bounds for input zone calculation
+    pub pencil_popup_bounds: Option<cosmic::iced_core::Rectangle>,
 }
 
 #[derive(Debug, Clone)]
@@ -319,10 +325,11 @@ impl cosmic::Application for App {
                 cosmic::iced::Task::none()
             }
             Msg::ToggleAnnotationMode => {
+                // Note: annotation_mode is already set by the caller (ToggleRecordingAnnotation or PencilPopup handler)
+                // This message just recreates the layer surface with the updated input zone
                 if let Some(indicator) = &mut self.recording_indicator {
-                    indicator.annotation_mode = !indicator.annotation_mode;
                     log::info!(
-                        "Annotation mode toggled: {}",
+                        "Recreating annotation surface, mode: {}",
                         if indicator.annotation_mode { "ON" } else { "OFF" }
                     );
 
@@ -346,71 +353,47 @@ impl cosmic::Application for App {
                     use cosmic::iced_core::layout::Limits;
 
                     let input_zone = if annotation_mode {
+                        // Annotation mode: capture region for drawing + toolbar for controls
                         let region_rect = cosmic::iced_core::Rectangle {
                             x: indicator.region.0 as f32,
                             y: indicator.region.1 as f32,
                             width: indicator.region.2 as f32,
                             height: indicator.region.3 as f32,
                         };
-                        let mut zones = Vec::new();
 
+                        let mut zones = vec![region_rect];
+
+                        // ALWAYS add toolbar, even if it overlaps region
+                        // Widget stacking order (toolbar on top of canvas) ensures toolbar gets priority
                         if let Some(toolbar_bounds) = indicator.toolbar_bounds {
-                            if let Some(intersection) = region_rect.intersection(&toolbar_bounds) {
-                                let region_right = region_rect.x + region_rect.width;
-                                let region_bottom = region_rect.y + region_rect.height;
-                                let toolbar_right = intersection.x + intersection.width;
-                                let toolbar_bottom = intersection.y + intersection.height;
+                            zones.push(toolbar_bounds);
+                        }
 
-                                let top_height = intersection.y - region_rect.y;
-                                if top_height > 0.0 {
-                                    zones.push(cosmic::iced_core::Rectangle {
-                                        x: region_rect.x,
-                                        y: region_rect.y,
-                                        width: region_rect.width,
-                                        height: top_height,
-                                    });
-                                }
-
-                                let bottom_height = region_bottom - toolbar_bottom;
-                                if bottom_height > 0.0 {
-                                    zones.push(cosmic::iced_core::Rectangle {
-                                        x: region_rect.x,
-                                        y: toolbar_bottom,
-                                        width: region_rect.width,
-                                        height: bottom_height,
-                                    });
-                                }
-
-                                let left_width = intersection.x - region_rect.x;
-                                if left_width > 0.0 && intersection.height > 0.0 {
-                                    zones.push(cosmic::iced_core::Rectangle {
-                                        x: region_rect.x,
-                                        y: intersection.y,
-                                        width: left_width,
-                                        height: intersection.height,
-                                    });
-                                }
-
-                                let right_width = region_right - toolbar_right;
-                                if right_width > 0.0 && intersection.height > 0.0 {
-                                    zones.push(cosmic::iced_core::Rectangle {
-                                        x: toolbar_right,
-                                        y: intersection.y,
-                                        width: right_width,
-                                        height: intersection.height,
-                                    });
-                                }
-                            } else {
-                                zones.push(region_rect);
-                            }
-                        } else {
-                            zones.push(region_rect);
+                        // Add popup with HIGHEST priority (added last = checked first by Wayland)
+                        if let Some(popup_bounds) = indicator.pencil_popup_bounds {
+                            zones.push(popup_bounds);
                         }
 
                         Some(zones)
                     } else {
-                        // No input capture - click through (main UI handles controls)
-                        Some(vec![])
+                        // No annotation mode: capture toolbar + popup for controls
+                        // Desktop is fully interactive everywhere else
+                        let mut zones = Vec::new();
+
+                        if let Some(toolbar_bounds) = indicator.toolbar_bounds {
+                            zones.push(toolbar_bounds);
+                        }
+
+                        // Add popup with HIGHEST priority
+                        if let Some(popup_bounds) = indicator.pencil_popup_bounds {
+                            zones.push(popup_bounds);
+                        }
+
+                        if zones.is_empty() {
+                            Some(vec![])
+                        } else {
+                            Some(zones)
+                        }
                     };
 
                     let destroy_task = destroy_layer_surface(old_window_id);
@@ -712,6 +695,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
     let annotation_mode = indicator.annotation_mode;
     let pencil_color = indicator.pencil_color;
     let pencil_thickness = indicator.pencil_thickness;
+    let pencil_popup_open = indicator.pencil_popup_open;
+    let pencil_fade_duration = indicator.pencil_fade_duration;
 
     struct RecordingOverlay {
         region: (i32, i32, u32, u32),
@@ -721,6 +706,9 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
         annotation_mode: bool,
         pencil_color: crate::config::ShapeColor,
         pencil_thickness: f32,
+        pencil_popup_open: bool,
+        pencil_popup_bounds: Option<cosmic::iced_core::Rectangle>,
+        toolbar_bounds: Option<cosmic::iced_core::Rectangle>,
     }
 
     /// State for tracking cursor position between events
@@ -746,13 +734,34 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                 state.cursor_position = pos;
             }
 
-            // Check if annotation mode is active (controlled by main toolbar pencil button)
-            let can_draw = self.annotation_mode;
-
             match event {
                 canvas::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) => {
-                    // Start drawing if in annotation mode
-                    if can_draw {
+                    // Handle click-outside-to-close for popup
+                    if self.pencil_popup_open {
+                        if let Some(cursor_pos) = cursor.position() {
+                            let in_popup = self.pencil_popup_bounds
+                                .map(|b| b.contains(cursor_pos))
+                                .unwrap_or(false);
+                            let in_toolbar = self.toolbar_bounds
+                                .map(|b| b.contains(cursor_pos))
+                                .unwrap_or(false);
+
+                            // Close popup if clicking outside popup and toolbar
+                            if !in_popup && !in_toolbar {
+                                return (
+                                    canvas::event::Status::Captured,
+                                    Some(Msg::Screenshot(crate::session::messages::Msg::Tool(
+                                        crate::session::messages::ToolMsg::PencilPopup(
+                                            crate::session::messages::ToolPopupAction::Close
+                                        )
+                                    ))),
+                                );
+                            }
+                        }
+                    }
+
+                    // Start drawing if in annotation mode (and popup not handling the click)
+                    if self.annotation_mode && !self.pencil_popup_open {
                         return (
                             canvas::event::Status::Captured,
                             Some(Msg::IndicatorMouse(
@@ -766,7 +775,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                 }
                 canvas::Event::Mouse(MouseEvent::CursorMoved { position }) => {
                     state.cursor_position = position;
-                    if can_draw && self.current_stroke.is_some() {
+                    // Don't capture movements if popup is open (even mid-stroke)
+                    if self.annotation_mode && self.current_stroke.is_some() && !self.pencil_popup_open {
                         return (
                             canvas::event::Status::Captured,
                             Some(Msg::IndicatorMouse(
@@ -777,7 +787,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
                     }
                 }
                 canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
-                    if self.current_stroke.is_some() {
+                    // Don't capture release if popup is open (even mid-stroke)
+                    if self.current_stroke.is_some() && !self.pencil_popup_open {
                         return (
                             canvas::event::Status::Captured,
                             Some(Msg::IndicatorMouse(
@@ -907,10 +918,160 @@ fn render_recording_indicator(indicator: &RecordingIndicator) -> cosmic::Element
         annotation_mode,
         pencil_color,
         pencil_thickness,
+        pencil_popup_open,
+        pencil_popup_bounds: indicator.pencil_popup_bounds,
+        toolbar_bounds: indicator.toolbar_bounds,
     };
 
-    canvas::Canvas::new(program)
+    let canvas_layer = canvas::Canvas::new(program)
         .width(Length::Fill)
-        .height(Length::Fill)
-        .into()
+        .height(Length::Fill);
+
+    // Add toolbar with stop and pencil toggle buttons
+    use cosmic::widget::{button, container, icon};
+    use cosmic::iced_widget::row;
+    use cosmic::iced_core::Background;
+
+    let toolbar_pos = indicator.toolbar_pos;
+
+    // Stop button - red circle with stop icon
+    let stop_icon = container(
+        icon::Icon::from(icon::from_name("media-playback-stop-symbolic").size(24))
+            .width(Length::Fixed(24.0))
+            .height(Length::Fixed(24.0)),
+    )
+    .class(cosmic::theme::Container::Custom(Box::new(|_theme| {
+        cosmic::iced::widget::container::Style {
+            background: Some(Background::Color(cosmic::iced_core::Color::from_rgb(0.85, 0.2, 0.2))),
+            border: cosmic::iced_core::Border {
+                radius: 20.0.into(),
+                width: 2.0,
+                color: cosmic::iced_core::Color::WHITE,
+            },
+            ..Default::default()
+        }
+    })))
+    .padding(8)
+    .width(Length::Fixed(40.0))
+    .height(Length::Fixed(40.0))
+    .align_x(cosmic::iced_core::alignment::Horizontal::Center)
+    .align_y(cosmic::iced_core::alignment::Vertical::Center);
+
+    let btn_stop = cosmic::widget::tooltip(
+        button::custom(stop_icon)
+            .class(cosmic::theme::Button::Icon)
+            .on_press(Msg::Screenshot(crate::session::messages::Msg::Capture(
+                crate::session::messages::CaptureMsg::StopRecording,
+            )))
+            .padding(0),
+        "Stop Recording",
+        cosmic::widget::tooltip::Position::Bottom,
+    );
+
+    // Pencil toggle button with indicator dot and popup support
+    let btn_pencil: cosmic::Element<'static, Msg> = crate::widget::tool_button::build_tool_button(
+        "edit-symbolic",
+        "Freehand Annotation (right-click for options)",
+        1, // Single indicator dot (on/off state)
+        0, // Always show first dot as active when mode is on
+        annotation_mode,
+        pencil_popup_open,
+        true, // Always enabled during recording
+        Some(Msg::Screenshot(crate::session::messages::Msg::Capture(
+            crate::session::messages::CaptureMsg::ToggleRecordingAnnotation,
+        ))),
+        Some(Msg::Screenshot(crate::session::messages::Msg::Capture(
+            crate::session::messages::CaptureMsg::PencilRightClick,
+        ))),
+        8, // padding
+        1.0, // full opacity
+    );
+
+    // Build toolbar content
+    let toolbar_content = row![btn_pencil, btn_stop]
+        .spacing(8)
+        .align_y(cosmic::iced_core::Alignment::Center);
+
+    // Build pencil popup if open
+    let pencil_popup = if pencil_popup_open {
+        Some(crate::widget::tool_button::build_pencil_popup(
+            pencil_color,
+            pencil_fade_duration,
+            pencil_thickness,
+            true, // has annotations (always enable clear during recording)
+            &|c| Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SetPencilColor(c)
+            )),
+            |d| Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SetPencilFadeDuration(d)
+            )),
+            Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SavePencilFadeDuration
+            )),
+            |t| Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SetPencilThickness(t)
+            )),
+            Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SavePencilThickness
+            )),
+            Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::ClearPencilDrawings
+            )),
+            16, // space_s
+            8,  // space_xs
+        ))
+    } else {
+        None
+    };
+
+    // Stack canvas, toolbar, and popup with proper vertical positioning
+    use cosmic::iced_widget::{column, stack};
+
+    // Toolbar styled container
+    let toolbar_with_bg = cosmic::widget::container(toolbar_content)
+        .padding(8)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(cosmic_theme.background.component.base.into())),
+                border: cosmic::iced_core::Border {
+                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                    ..Default::default()
+                },
+                ..Default::default()
+            }
+        })));
+
+    // Toolbar layer - pushed to bottom with vertical_space, centered horizontally
+    let toolbar_layer = column![
+        cosmic::widget::vertical_space(),
+        cosmic::widget::container(toolbar_with_bg)
+            .center_x(Length::Fill)
+    ]
+    .padding([0, 0, 32, 0]) // 32px bottom margin
+    .width(Length::Fill)
+    .height(Length::Fill);
+
+    // Build stack with popup above toolbar if open
+    if let Some(popup) = pencil_popup {
+        // Popup layer - positioned ABOVE toolbar
+        let popup_layer = column![
+            cosmic::widget::vertical_space(),
+            cosmic::widget::container(popup)
+                .center_x(Length::Fill)
+        ]
+        .padding([0, 0, 140, 0]) // 140px from bottom (32 + 56 toolbar + 52 gap)
+        .width(Length::Fill)
+        .height(Length::Fill);
+
+        stack![canvas_layer, toolbar_layer, popup_layer]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    } else {
+        stack![canvas_layer, toolbar_layer]
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into()
+    }
 }

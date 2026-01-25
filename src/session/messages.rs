@@ -162,6 +162,8 @@ pub enum CaptureMsg {
     StopRecording,
     /// Toggle annotation mode during recording
     ToggleRecordingAnnotation,
+    /// Right-click on pencil button (opens config popup)
+    PencilRightClick,
     /// Toggle capture mode (screenshot vs video) - true = video mode
     ToggleCaptureMode(bool),
     /// Set selection choice

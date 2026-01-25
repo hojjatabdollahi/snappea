@@ -578,6 +578,71 @@ fn handle_draw_msg(app: &mut App, msg: DrawMsg) -> cosmic::Task<crate::core::app
 /// Handle Tool messages (popup and tool configuration)
 /// Delegates to the widget::tool_handlers module
 fn handle_tool_msg(app: &mut App, msg: ToolMsg) -> cosmic::Task<crate::core::app::Msg> {
+    // Handle PencilPopup actions for indicator overlay
+    if let ToolMsg::PencilPopup(action) = &msg {
+        if let Some(indicator) = &mut app.recording_indicator {
+            match action {
+                crate::session::messages::ToolPopupAction::Toggle => {
+                    indicator.pencil_popup_open = !indicator.pencil_popup_open;
+                    if indicator.pencil_popup_open {
+                        // DISABLE annotation mode when opening popup (prevent accidental drawing)
+                        indicator.annotation_mode = false;
+                        if let Some(args) = app.screenshot_args.as_mut() {
+                            args.ui.recording_annotation_mode = false;
+                        }
+                    } else {
+                        // ENABLE annotation mode when closing popup (ready to draw)
+                        indicator.annotation_mode = true;
+                        if let Some(args) = app.screenshot_args.as_mut() {
+                            args.ui.recording_annotation_mode = true;
+                        }
+                    }
+                }
+                crate::session::messages::ToolPopupAction::Open => {
+                    indicator.pencil_popup_open = true;
+                    // DISABLE annotation mode when opening popup
+                    indicator.annotation_mode = false;
+                    if let Some(args) = app.screenshot_args.as_mut() {
+                        args.ui.recording_annotation_mode = false;
+                    }
+                }
+                crate::session::messages::ToolPopupAction::Close => {
+                    indicator.pencil_popup_open = false;
+                    // ENABLE annotation mode when closing popup (ready to draw)
+                    indicator.annotation_mode = true;
+                    if let Some(args) = app.screenshot_args.as_mut() {
+                        args.ui.recording_annotation_mode = true;
+                    }
+                }
+            }
+
+            // Update popup bounds - must match actual rendered position
+            // Popup is centered horizontally and positioned 140px from bottom
+            if indicator.pencil_popup_open {
+                let popup_width = 262.0_f32;  // 230 content + 16*2 padding
+                let popup_height = 310.0_f32; // Approximate height of popup content
+                let popup_bottom_margin = 140.0_f32; // Matches padding in render_recording_indicator
+                
+                // Centered horizontally on screen
+                let popup_x = (indicator.output_size.0 - popup_width) / 2.0;
+                // Positioned from bottom
+                let popup_y = indicator.output_size.1 - popup_bottom_margin - popup_height;
+
+                indicator.pencil_popup_bounds = Some(cosmic::iced_core::Rectangle {
+                    x: popup_x,
+                    y: popup_y,
+                    width: popup_width,
+                    height: popup_height,
+                });
+            } else {
+                indicator.pencil_popup_bounds = None;
+            }
+
+            // Recreate surface with updated input_zone
+            return cosmic::Task::done(crate::core::app::Msg::ToggleAnnotationMode);
+        }
+    }
+
     // Handle ClearPencilDrawings specially since it needs access to recording_indicator
     if let ToolMsg::ClearPencilDrawings = &msg {
         if let Some(indicator) = &mut app.recording_indicator {
@@ -1057,7 +1122,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 local_region
             );
 
-            // Set recording mode in UI state - keep screenshot UI open
+            // Set recording mode in UI state
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.is_recording = true;
                 args.ui.recording_annotation_mode = false;
@@ -1065,18 +1130,45 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 args.close_all_popups();
             }
 
-            // Create recording indicator overlay (shows red border around recording area)
+            // Close screenshot UI windows - toolbar will be shown on indicator overlay
+            let close_tasks: Vec<_> = app.outputs.iter()
+                .map(|output| destroy_layer_surface(output.id))
+                .collect();
+
+            // Calculate toolbar position and bounds for the indicator
+            let output_size = selected_output
+                .map(|o| (o.logical_size.0 as f32, o.logical_size.1 as f32))
+                .unwrap_or((1920.0, 1080.0));
+
+            // Toolbar dimensions (must match rendering)
+            let toolbar_width = 280.0_f32;
+            let toolbar_height = 56.0_f32;
+            let toolbar_margin = 32.0_f32;
+
+            // Bottom center position
+            let toolbar_x = (output_size.0 - toolbar_width) / 2.0;
+            let toolbar_y = output_size.1 - toolbar_height - toolbar_margin;
+
+            let toolbar_input_bounds = cosmic::iced_core::Rectangle {
+                x: toolbar_x,
+                y: toolbar_y,
+                width: toolbar_width,
+                height: toolbar_height,
+            };
+
+            // Create recording indicator overlay (shows red border + toolbar)
             let indicator_id = window::Id::unique();
             let indicator_output = selected_output
                 .map(|o| o.output.clone())
                 .or_else(|| app.outputs.first().map(|o| o.output.clone()));
 
             let indicator_task = if let Some(wl_output) = indicator_output {
-                // Store the indicator state (no toolbar - main UI handles controls)
+                // Store the indicator state WITH toolbar
                 app.recording_indicator = Some(RecordingIndicator {
                     window_id: indicator_id,
                     output_name: output_name_for_indicator,
                     output: wl_output.clone(),
+                    output_size,
                     region: local_region,
                     blink_visible: true,
                     annotations: Vec::new(),
@@ -1087,30 +1179,32 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     pencil_color: config.pencil_color,
                     pencil_fade_duration: config.pencil_fade_duration,
                     pencil_thickness: config.pencil_thickness,
-                    toolbar_bounds,
-                    toolbar_pos: (0.0, 0.0), // Not used - main toolbar handles controls
+                    toolbar_bounds: Some(toolbar_input_bounds),
+                    toolbar_pos: (toolbar_x, toolbar_y),
                     toolbar_dragging: false,
                     drag_offset: (0.0, 0.0),
+                    pencil_popup_open: false,
+                    pencil_popup_bounds: None,
                 });
 
                 log::info!(
-                    "Creating recording indicator overlay: id={:?}, region={:?}",
+                    "Creating recording indicator with toolbar: id={:?}, region={:?}, toolbar={:?}",
                     indicator_id,
-                    local_region
+                    local_region,
+                    toolbar_input_bounds
                 );
 
-                // Create layer surface for the indicator on the Overlay layer
-                // Overlay layer is NOT captured by screencopy
-                // No input capture - the main UI handles all input
+                // Create layer surface for the indicator
+                // ONLY captures input in toolbar area - everything else clicks through!
                 get_layer_surface(SctkLayerSurfaceSettings {
                     id: indicator_id,
                     layer: Layer::Overlay,
-                    keyboard_interactivity: KeyboardInteractivity::None,
-                    input_zone: Some(vec![]), // No input capture - click through
-                    anchor: Anchor::all(),    // Cover full output
+                    keyboard_interactivity: KeyboardInteractivity::OnDemand, // For Escape key
+                    input_zone: Some(vec![toolbar_input_bounds]), // ONLY capture toolbar!
+                    anchor: Anchor::all(),
                     output: IcedOutput::Output(wl_output),
                     namespace: "snappea-indicator".to_string(),
-                    size: Some((None, None)), // Full output size
+                    size: Some((None, None)),
                     exclusive_zone: -1,
                     size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
                     ..Default::default()
@@ -1119,8 +1213,8 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 cosmic::Task::none()
             };
 
-            // Keep screenshot UI open - toolbar will show recording controls
-            indicator_task
+            // Close screenshot UI and show indicator with toolbar
+            cosmic::Task::batch(close_tasks).chain(indicator_task)
         }
         CaptureMsg::Choice(c) => handle_choice_inner(app, c),
         CaptureMsg::Location(loc) => handle_location_inner(app, loc),
@@ -1141,26 +1235,72 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             }
             cosmic::Task::none()
         }
+        CaptureMsg::PencilRightClick => {
+            // If popup is open, close it (and enable pencil). Otherwise open popup.
+            let action = if app.recording_indicator.as_ref().map_or(false, |i| i.pencil_popup_open) {
+                crate::session::messages::ToolPopupAction::Close
+            } else {
+                crate::session::messages::ToolPopupAction::Open
+            };
+            cosmic::Task::done(crate::core::app::Msg::Screenshot(
+                crate::session::messages::Msg::Tool(
+                    crate::session::messages::ToolMsg::PencilPopup(action)
+                )
+            ))
+        }
         CaptureMsg::StopRecording => {
             log::info!("Stop recording requested");
             // Stop the recording
             if let Err(e) = crate::screencast::stop_recording() {
                 log::error!("Failed to stop recording: {}", e);
             }
-            // Update UI state - go back to video mode
-            if let Some(args) = app.screenshot_args.as_mut() {
-                args.ui.is_recording = false;
-                args.ui.recording_annotation_mode = false;
+
+            // Destroy indicator overlay
+            let indicator_task = if let Some(indicator) = app.recording_indicator.take() {
+                destroy_layer_surface(indicator.window_id)
+            } else {
+                cosmic::Task::none()
+            };
+
+            // Clear screenshot session completely
+            // Screenshot windows were already destroyed when recording started
+            // Just clean up state so next PrintScreen works
+            if let Some(args) = app.screenshot_args.take() {
+                let tx = args.portal.tx;
+                tokio::spawn(async move {
+                    if let Err(_err) = tx.send(PortalResponse::Cancelled).await {
+                        log::error!("Failed to send screenshot event");
+                    }
+                });
             }
-            cosmic::Task::none()
+
+            // Clear output windows (they were destroyed when recording started)
+            app.outputs.clear();
+
+            indicator_task
         }
         CaptureMsg::ToggleRecordingAnnotation => {
+            // If popup is open, close it (and enable pencil)
+            if let Some(indicator) = app.recording_indicator.as_ref() {
+                if indicator.pencil_popup_open {
+                    log::info!("Pencil clicked while popup open - closing popup");
+                    return cosmic::Task::done(crate::core::app::Msg::Screenshot(
+                        crate::session::messages::Msg::Tool(
+                            crate::session::messages::ToolMsg::PencilPopup(
+                                crate::session::messages::ToolPopupAction::Close
+                            )
+                        )
+                    ));
+                }
+            }
+
+            // Normal toggle behavior
+            if let Some(indicator) = app.recording_indicator.as_mut() {
+                indicator.annotation_mode = !indicator.annotation_mode;
+                log::info!("Toggle annotation mode: {}", indicator.annotation_mode);
+            }
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.recording_annotation_mode = !args.ui.recording_annotation_mode;
-                log::info!(
-                    "Toggle recording annotation mode: UI state = {}",
-                    args.ui.recording_annotation_mode
-                );
             }
             // Return a task that sends ToggleAnnotationMode to properly
             // recreate the layer surface with correct input zone
@@ -1576,6 +1716,14 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
 }
 
 fn handle_cancel_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
+    // Stop recording if active
+    if crate::screencast::is_recording() {
+        log::info!("Canceling - stopping active recording");
+        if let Err(e) = crate::screencast::stop_recording() {
+            log::error!("Failed to stop recording: {}", e);
+        }
+    }
+
     let cmds = app.outputs.iter().map(|o| destroy_layer_surface(o.id));
     let Some(args) = app.screenshot_args.take() else {
         log::error!("Failed to find screenshot Args for Cancel message.");
