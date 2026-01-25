@@ -193,6 +193,8 @@ pub struct SessionState {
     pub highlighted_window_index: usize,
     pub focused_output_index: usize,
     pub also_copy_to_clipboard: bool,
+    /// Whether the mouse has entered any output yet (used to avoid showing wrong initial highlight)
+    pub has_mouse_entered: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

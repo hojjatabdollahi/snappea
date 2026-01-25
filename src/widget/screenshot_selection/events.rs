@@ -59,6 +59,8 @@ pub enum SelectionEvent {
     WindowSelected(String, usize),
     /// Screen mode activated for an output
     ScreenMode(usize),
+    /// Window mode activated for an output
+    WindowMode(usize),
     /// Selection confirmed (Enter pressed)
     Confirm,
 }
@@ -319,6 +321,10 @@ impl ScreenshotEvent {
 
     pub fn screen_mode(output_index: usize) -> Self {
         Self::Selection(SelectionEvent::ScreenMode(output_index))
+    }
+
+    pub fn window_mode(output_index: usize) -> Self {
+        Self::Selection(SelectionEvent::WindowMode(output_index))
     }
 
     pub fn confirm() -> Self {
@@ -596,6 +602,7 @@ impl ScreenshotEvent {
                 Msg::window_chosen(app_id, idx)
             }
             Self::Selection(SelectionEvent::ScreenMode(idx)) => Msg::screen_mode(idx),
+            Self::Selection(SelectionEvent::WindowMode(idx)) => Msg::window_mode(idx),
             Self::Selection(SelectionEvent::Confirm) => Msg::confirm(),
 
             // Detection events

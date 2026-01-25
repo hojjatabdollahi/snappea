@@ -67,6 +67,8 @@ pub struct OutputContext {
     pub current_output_index: usize,
     pub is_active_output: bool,
     pub has_confirmed_selection: bool,
+    /// Whether mouse has entered any output yet (for initial highlight)
+    pub has_mouse_entered: bool,
 }
 
 /// Check if a string looks like a URL
@@ -269,7 +271,10 @@ where
             )
             .into(),
             Choice::Output(None) => {
-                let is_focused = output_ctx.current_output_index == output_ctx.focused_output_index;
+                // Only show focus highlight after mouse has entered an output
+                // This prevents wrong initial highlight on first output
+                let is_focused = output_ctx.has_mouse_entered 
+                    && output_ctx.current_output_index == output_ctx.focused_output_index;
                 OutputSelection::new(on_event(ScreenshotEvent::output_changed(
                     output.output.clone(),
                 )))
@@ -293,8 +298,9 @@ where
                     .map(|x| x.as_slice())
                     .unwrap_or_default();
                 let total_img_width = imgs.iter().map(|img| img.width()).sum::<u32>().max(1);
-                let is_focused_output =
-                    output_ctx.current_output_index == output_ctx.focused_output_index;
+                // Only show focus highlight after mouse has entered an output
+                let is_focused_output = output_ctx.has_mouse_entered
+                    && output_ctx.current_output_index == output_ctx.focused_output_index;
 
                 let img_buttons = imgs.iter().enumerate().map(|(i, img)| {
                     let portion =
@@ -381,6 +387,8 @@ where
             space_xs,
             space_xxs,
             move |c| on_event_clone2(ScreenshotEvent::choice_changed(c)),
+            on_event(ScreenshotEvent::screen_mode(output_ctx.current_output_index)),
+            on_event(ScreenshotEvent::window_mode(output_ctx.current_output_index)),
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
             on_event(ScreenshotEvent::record_region()),

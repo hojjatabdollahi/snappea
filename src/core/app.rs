@@ -253,6 +253,11 @@ impl cosmic::Application for App {
                     self.tx = Some(tx);
                     Task::none()
                 }
+                screenshot::Event::RecordingStopped => {
+                    // Recording was stopped via PrintScreen key - clean up UI
+                    // This reuses the existing RecordingStopped handler
+                    return self.update(Msg::RecordingStopped);
+                }
             },
             Msg::Screenshot(m) => screenshot::update_msg(self, m).map(cosmic::Action::App),
             Msg::RecordingBlink => {
@@ -267,6 +272,14 @@ impl cosmic::Application for App {
                     handle.shutdown();
                 }
                 self.toolbar_visible = true;
+                
+                // Clean up screenshot_args and send Cancelled to portal
+                if let Some(args) = self.screenshot_args.take() {
+                    let tx = args.portal.tx;
+                    tokio::spawn(async move {
+                        let _ = tx.send(crate::core::portal::PortalResponse::Cancelled).await;
+                    });
+                }
                 
                 if let Some(indicator) = self.recording_indicator.take() {
                     log::info!("Recording stopped, destroying indicator overlay");
@@ -768,6 +781,11 @@ pub(crate) async fn process_changes(
                     screenshot::Event::Screenshot(args) => {
                         if let Err(err) = output.send(screenshot::Event::Screenshot(args)).await {
                             log::error!("Error sending screenshot event: {:?}", err);
+                        };
+                    }
+                    screenshot::Event::RecordingStopped => {
+                        if let Err(err) = output.send(screenshot::Event::RecordingStopped).await {
+                            log::error!("Error sending RecordingStopped event: {:?}", err);
                         };
                     }
                     screenshot::Event::Init(_) => {}

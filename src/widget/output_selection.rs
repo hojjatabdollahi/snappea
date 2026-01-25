@@ -229,10 +229,19 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         my_state.hovered = hovered;
 
         // Handle hover for focus tracking (in picker mode)
-        if hover_changed && hovered && self.picker_mode {
+        // Publish on_enter when:
+        // 1. Cursor just entered this output (hover_changed && hovered), OR
+        // 2. Cursor is over this output and we haven't published yet (initial detection)
+        //    This handles the case where cursor is already over an output when app starts
+        let should_publish_enter = self.picker_mode
+            && hovered
+            && (hover_changed || !my_state.entered_published);
+
+        if should_publish_enter {
             match event {
                 cosmic::iced_core::Event::Mouse(mouse::Event::CursorMoved { .. })
                 | cosmic::iced_core::Event::Mouse(mouse::Event::CursorEntered) => {
+                    my_state.entered_published = true;
                     shell.publish(self.on_enter.clone());
                     return cosmic::iced_core::event::Status::Captured;
                 }
@@ -258,6 +267,8 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
 #[derive(Debug, Clone, Copy, Default)]
 pub struct MyState {
     pub hovered: bool,
+    /// Whether we've published on_enter at least once (to detect initial cursor position)
+    pub entered_published: bool,
 }
 
 impl<'a, Message> From<OutputSelection<Message>> for cosmic::Element<'a, Message>

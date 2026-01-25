@@ -264,6 +264,8 @@ struct Output {
 pub enum Event {
     Screenshot(Args),
     Init(Sender<Event>),
+    /// Recording was stopped via PrintScreen - clean up indicator UI
+    RecordingStopped,
 }
 
 #[zbus::interface(name = "org.freedesktop.impl.portal.Screenshot")]
@@ -276,12 +278,20 @@ impl Screenshot {
         parent_window: &str,
         options: ScreenshotOptions,
     ) -> PortalResponse<ScreenshotResult> {
-        // Check if a recording is active and stop it
+        // Check if a recording is active - if so, just stop it and return
+        // The user needs to press PrintScreen again to get the screenshot UI
         if crate::screencast::is_recording() {
-            log::info!("Active recording detected, stopping before showing screenshot UI");
+            log::info!("Active recording detected, stopping recording (press PrintScreen again for screenshot UI)");
             if let Err(e) = crate::screencast::stop_recording() {
                 log::error!("Failed to stop recording: {}", e);
             }
+            // Send event to clean up indicator UI
+            if let Err(e) = self.tx.send(Event::RecordingStopped).await {
+                log::error!("Failed to send RecordingStopped event: {}", e);
+            }
+            // Return cancelled - the recording was stopped, but no screenshot taken
+            // User can press PrintScreen again to get the UI
+            return PortalResponse::Cancelled;
         }
 
         let mut outputs = Vec::new();
@@ -415,6 +425,7 @@ impl Screenshot {
                     highlighted_window_index: 0,
                     focused_output_index: 0,
                     also_copy_to_clipboard: false,
+                    has_mouse_entered: false,
                 },
                 detection: DetectionState::default(),
                 annotations: AnnotationState::default(),
@@ -521,6 +532,7 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         current_output_index: i,
         is_active_output,
         has_confirmed_selection,
+        has_mouse_entered: args.session.has_mouse_entered,
     };
 
     // Build widget with grouped state and single event handler
@@ -1852,10 +1864,10 @@ fn handle_output_changed_inner(
     if let Some(args) = app.screenshot_args.as_mut() {
         // Find the output index
         if let Some(output_index) = app.outputs.iter().position(|o| o.output == wl_output) {
-            // Only update highlight in picker mode (None means picker)
-            if matches!(args.session.choice, Choice::Output(None)) {
-                args.session.focused_output_index = output_index;
-            }
+            // Mark that mouse has entered an output (for initial highlight)
+            args.session.has_mouse_entered = true;
+            // Update focused_output_index to the output where mouse entered
+            args.session.focused_output_index = output_index;
         }
     }
     app.active_output = Some(wl_output);
@@ -2459,7 +2471,43 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
         fl!("save-to", "documents"),
     ];
 
-    if app.screenshot_args.replace(args).is_none() {
+    // Check if we need to create windows:
+    // - No previous args: create windows
+    // - Previous args existed but was recording (windows were destroyed): create windows
+    // - Previous args existed and windows are active: just update args
+    let old_args = app.screenshot_args.replace(args);
+    let need_windows = match &old_args {
+        None => true,
+        Some(old) => {
+            // If old session was recording, windows were destroyed so we need to recreate
+            old.ui.is_recording
+        }
+    };
+
+    // Clean up old portal response channel if we're replacing args
+    if let Some(old) = old_args {
+        let tx = old.portal.tx;
+        tokio::spawn(async move {
+            // Send cancelled to the old portal request so D-Bus doesn't hang
+            let _ = tx.send(PortalResponse::Cancelled).await;
+        });
+    }
+
+    // Clean up recording indicator if it's still active
+    // (This can happen if recording was stopped via D-Bus call rather than UI)
+    let indicator_cleanup = if let Some(indicator) = app.recording_indicator.take() {
+        // Also clean up tray
+        if let Some(handle) = app.tray_handle.take() {
+            handle.shutdown();
+        }
+        app.toolbar_visible = true;
+        destroy_layer_surface(indicator.window_id)
+    } else {
+        cosmic::Task::none()
+    };
+
+    if need_windows {
+        log::info!("Creating new screenshot windows");
         // Generate fresh window IDs for this session
         for output in &mut app.outputs {
             output.id = window::Id::unique();
@@ -2509,9 +2557,9 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
             },
         );
 
-        cosmic::Task::batch(cmds).chain(encoder_task)
+        indicator_cleanup.chain(cosmic::Task::batch(cmds)).chain(encoder_task)
     } else {
-        log::info!("Existing screenshot args updated");
-        cosmic::Task::none()
+        log::info!("Existing screenshot args updated (windows already exist)");
+        indicator_cleanup
     }
 }

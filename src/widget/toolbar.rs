@@ -1188,6 +1188,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     space_xs: u16,
     space_xxs: u16,
     on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
+    on_screen_mode: Msg,
+    on_window_mode: Msg,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
     on_record_region: Msg,
@@ -1298,7 +1300,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             cosmic::theme::Button::Icon
         })
-        .on_press(on_choice_change(Choice::Window(output_name.clone(), None)))
+        .on_press(on_window_mode) // Uses proper window mode handler with output index
         .padding(space_xs),
         "Select Window (W)",
         tooltip::Position::Bottom,
@@ -1317,7 +1319,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             cosmic::theme::Button::Icon
         })
-        .on_press(on_choice_change(Choice::Output(None))) // Goes to picker mode
+        .on_press(on_screen_mode) // Uses proper screen mode handler with output index
         .padding(space_xs),
         "Select Screen (S)",
         tooltip::Position::Bottom,

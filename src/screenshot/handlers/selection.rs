@@ -26,6 +26,8 @@ pub fn handle_select_window_mode(app: &mut App, output_index: usize) -> HandlerR
             args.session.choice = Choice::Window(output.name.clone(), None);
             args.session.focused_output_index = output_index;
             args.session.highlighted_window_index = 0;
+            // Mark that we have a valid focused output (from the button click location)
+            args.session.has_mouse_entered = true;
             args.clear_transient_state();
         }
     }
@@ -38,6 +40,8 @@ pub fn handle_select_screen_mode(app: &mut App, output_index: usize) -> HandlerR
         // Go to picker mode (None), not directly selecting a screen
         args.session.choice = Choice::Output(None);
         args.session.focused_output_index = output_index;
+        // Mark that we have a valid focused output (from the button click location)
+        args.session.has_mouse_entered = true;
         args.clear_transient_state();
     }
     cosmic::Task::none()
@@ -58,11 +62,12 @@ pub fn handle_navigate_left(app: &mut App) -> HandlerResult {
                         // Move to previous screen and select its last window
                         let start_index = args.session.focused_output_index;
                         loop {
-                            args.session.focused_output_index = if args.session.focused_output_index == 0 {
-                                output_count - 1
-                            } else {
-                                args.session.focused_output_index - 1
-                            };
+                            args.session.focused_output_index =
+                                if args.session.focused_output_index == 0 {
+                                    output_count - 1
+                                } else {
+                                    args.session.focused_output_index - 1
+                                };
 
                             let window_count = app
                                 .outputs
@@ -74,7 +79,9 @@ pub fn handle_navigate_left(app: &mut App) -> HandlerResult {
                             if window_count > 0 {
                                 // Found a screen with windows, select the last one
                                 args.session.highlighted_window_index = window_count - 1;
-                                if let Some(output) = app.outputs.get(args.session.focused_output_index) {
+                                if let Some(output) =
+                                    app.outputs.get(args.session.focused_output_index)
+                                {
                                     args.session.choice = Choice::Window(output.name.clone(), None);
                                 }
                                 break;
@@ -142,7 +149,9 @@ pub fn handle_navigate_right(app: &mut App) -> HandlerResult {
                             if window_count > 0 {
                                 // Found a screen with windows, select the first one
                                 args.session.highlighted_window_index = 0;
-                                if let Some(output) = app.outputs.get(args.session.focused_output_index) {
+                                if let Some(output) =
+                                    app.outputs.get(args.session.focused_output_index)
+                                {
                                     args.session.choice = Choice::Window(output.name.clone(), None);
                                 }
                                 break;
@@ -159,7 +168,8 @@ pub fn handle_navigate_right(app: &mut App) -> HandlerResult {
                 }
                 Choice::Output(None) => {
                     // In screen picker mode: move to next screen (just update index)
-                    args.session.focused_output_index = (args.session.focused_output_index + 1) % output_count;
+                    args.session.focused_output_index =
+                        (args.session.focused_output_index + 1) % output_count;
                     // Choice stays as None (picker mode)
                 }
                 _ => {}
@@ -176,7 +186,8 @@ pub fn handle_confirm_selection(app: &mut App) -> HandlerResult {
             Choice::Window(_, None) => {
                 // Confirm the highlighted window on the focused output
                 if let Some(output) = app.outputs.get(args.session.focused_output_index) {
-                    let window_count = args.capture
+                    let window_count = args
+                        .capture
                         .toplevel_images
                         .get(&output.name)
                         .map(|v| v.len())
