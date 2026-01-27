@@ -6,18 +6,17 @@
 
 A screenshot and screen recording tool for the COSMIC desktop environment with annotation capabilities.
 
-<p align="center">
-  <video src="data/demo.mp4" width="100%" autoplay loop muted playsinline>
-    Your browser does not support the video tag.
-  </video>
-</p>
+
+
+https://github.com/user-attachments/assets/8091f7e3-5ecb-4111-abaf-0fe365aa1e1d
+
 
 Disclaimer: This project is based on xdg-desktop-portal-cosmic with added features. It implements the same screenshot portal interface. When set up correctly, dbus messages sent by `cosmic-screenshot` will be handled by SnapPea instead of `xdg-desktop-portal-cosmic` (only Screenshot Portal messages).
 
 ## Features
 
 - Interactive screenshot selection
-- Screen recording with hardware acceleration
+- Screen recording with hardware acceleration (no audio yet)
   - Multiple container formats (MP4, WebM, MKV)
   - Configurable framerate (24/30/60 fps)
   - Hardware encoder selection
