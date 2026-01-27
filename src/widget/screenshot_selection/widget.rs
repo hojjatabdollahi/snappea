@@ -273,7 +273,7 @@ where
             Choice::Output(None) => {
                 // Only show focus highlight after mouse has entered an output
                 // This prevents wrong initial highlight on first output
-                let is_focused = output_ctx.has_mouse_entered 
+                let is_focused = output_ctx.has_mouse_entered
                     && output_ctx.current_output_index == output_ctx.focused_output_index;
                 OutputSelection::new(on_event(ScreenshotEvent::output_changed(
                     output.output.clone(),
@@ -387,8 +387,12 @@ where
             space_xs,
             space_xxs,
             move |c| on_event_clone2(ScreenshotEvent::choice_changed(c)),
-            on_event(ScreenshotEvent::screen_mode(output_ctx.current_output_index)),
-            on_event(ScreenshotEvent::window_mode(output_ctx.current_output_index)),
+            on_event(ScreenshotEvent::screen_mode(
+                output_ctx.current_output_index,
+            )),
+            on_event(ScreenshotEvent::window_mode(
+                output_ctx.current_output_index,
+            )),
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
             on_event(ScreenshotEvent::record_region()),
@@ -1348,9 +1352,7 @@ where
         if self.output_ctx.is_active_output {
             if matches!(event, Event::Mouse(_)) {
                 if let Some(menu_layout) = layout.children().nth(3) {
-                    shell.publish(self.emit(ScreenshotEvent::toolbar_bounds(
-                        menu_layout.bounds(),
-                    )));
+                    shell.publish(self.emit(ScreenshotEvent::toolbar_bounds(menu_layout.bounds())));
                 }
             }
         }
@@ -1364,9 +1366,7 @@ where
                     let toolbar_bounds = layout_children.get(3).map(|l| l.bounds());
 
                     // Check if click is inside toolbar or any open popup
-                    let inside_toolbar = toolbar_bounds
-                        .map(|b| b.contains(pos))
-                        .unwrap_or(false);
+                    let inside_toolbar = toolbar_bounds.map(|b| b.contains(pos)).unwrap_or(false);
 
                     // Also check for open popups
                     let inside_pencil_popup = if self.ui.pencil_popup_open {

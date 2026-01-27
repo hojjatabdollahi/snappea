@@ -10,8 +10,8 @@ use cosmic::{
     },
     iced_core::Renderer,
     iced_core::{
-        self, clipboard::DndSource, layout::Node, renderer::Quad, Border, Color, Length, Point,
-        Rectangle, Shadow, Size,
+        self, Border, Color, Length, Point, Rectangle, Shadow, Size, clipboard::DndSource,
+        layout::Node, renderer::Quad,
     },
     widget::{self, Widget},
 };

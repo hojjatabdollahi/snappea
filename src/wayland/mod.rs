@@ -25,7 +25,7 @@ use std::{
 };
 use wayland_client::{
     Connection, Dispatch, QueueHandle, WEnum,
-    globals::{registry_queue_init, GlobalList},
+    globals::{GlobalList, registry_queue_init},
     protocol::{wl_buffer, wl_output, wl_shm, wl_shm_pool},
 };
 use wayland_protocols::ext::{
@@ -33,8 +33,8 @@ use wayland_protocols::ext::{
     workspace::v1::client::ext_workspace_handle_v1,
 };
 use wayland_protocols::wp::linux_dmabuf::zv1::client::{
-    zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1},
     zwp_linux_buffer_params_v1::{self, ZwpLinuxBufferParamsV1},
+    zwp_linux_dmabuf_v1::{self, ZwpLinuxDmabufV1},
 };
 
 pub use cosmic_client_toolkit::screencopy::{CaptureSource, Rect};
@@ -287,7 +287,10 @@ impl WaylandHelper {
     }
 
     /// Get the toplevels (windows) visible on a specific output
-    pub fn output_toplevels(&self, output: &wl_output::WlOutput) -> Vec<ExtForeignToplevelHandleV1> {
+    pub fn output_toplevels(
+        &self,
+        output: &wl_output::WlOutput,
+    ) -> Vec<ExtForeignToplevelHandleV1> {
         self.inner
             .output_toplevels
             .lock()
@@ -368,7 +371,10 @@ impl WaylandHelper {
         Session(Arc::new_cyclic(|weak_session| {
             let options = if overlay_cursor {
                 let opts = CaptureOptions::PaintCursors;
-                log::info!("Creating screencopy session WITH cursor painting enabled (options bits: {:?})", opts.bits());
+                log::info!(
+                    "Creating screencopy session WITH cursor painting enabled (options bits: {:?})",
+                    opts.bits()
+                );
                 opts
             } else {
                 log::info!("Creating screencopy session WITHOUT cursor painting (options bits: 0)");
@@ -514,8 +520,8 @@ impl WaylandHelper {
         let modifier_lo = (modifier & 0xFFFFFFFF) as u32;
         params.add(
             fd,
-            0,                  // plane index
-            0,                  // offset
+            0, // plane index
+            0, // offset
             stride,
             modifier_hi,
             modifier_lo,
@@ -785,7 +791,11 @@ impl Dispatch<ZwpLinuxDmabufV1, ()> for AppData {
                 });
                 log::trace!("DMA-buf format: 0x{:08x}", format);
             }
-            zwp_linux_dmabuf_v1::Event::Modifier { format, modifier_hi, modifier_lo } => {
+            zwp_linux_dmabuf_v1::Event::Modifier {
+                format,
+                modifier_hi,
+                modifier_lo,
+            } => {
                 // Format + modifier event (v3+)
                 let modifier = ((modifier_hi as u64) << 32) | (modifier_lo as u64);
                 let mut state = app_data.wayland_helper.inner.dmabuf_state.lock().unwrap();

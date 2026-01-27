@@ -1,7 +1,9 @@
 //! System tray icon for recording indicator using StatusNotifierItem (ksni)
 
 use crossbeam_channel::Sender;
-use ksni::{blocking::TrayMethods, menu::StandardItem, Icon, MenuItem, Tray};
+use ksni::{Icon, MenuItem, Tray, blocking::TrayMethods, menu::StandardItem};
+
+use crate::fl;
 
 /// Actions that can be triggered from the tray menu
 #[derive(Debug, Clone)]
@@ -101,7 +103,7 @@ impl Tray for SnappeaTray {
     }
 
     fn title(&self) -> String {
-        "Snappea Recording".to_string()
+        fl!("tray-title")
     }
 
     fn icon_pixmap(&self) -> Vec<Icon> {
@@ -118,8 +120,8 @@ impl Tray for SnappeaTray {
 
     fn tool_tip(&self) -> ksni::ToolTip {
         ksni::ToolTip {
-            title: "Snappea - Recording".to_string(),
-            description: "Click to stop recording".to_string(),
+            title: fl!("tray-tooltip-title"),
+            description: fl!("tray-tooltip-desc"),
             icon_name: String::new(),
             icon_pixmap: Vec::new(),
         }
@@ -130,9 +132,16 @@ impl Tray for SnappeaTray {
         let tx_toolbar = self.tx.clone();
         let toolbar_visible = self.toolbar_visible;
 
+        let stop_label = fl!("stop-recording");
+        let toolbar_label = if toolbar_visible {
+            fl!("hide-toolbar")
+        } else {
+            fl!("show-toolbar")
+        };
+
         vec![
             MenuItem::Standard(StandardItem {
-                label: "Stop Recording".to_string(),
+                label: stop_label,
                 activate: Box::new(move |_| {
                     log::info!("Menu: Stop Recording clicked");
                     if let Err(e) = tx_stop.send(TrayAction::StopRecording) {
@@ -142,12 +151,7 @@ impl Tray for SnappeaTray {
                 ..Default::default()
             }),
             MenuItem::Standard(StandardItem {
-                label: if toolbar_visible {
-                    "Hide Toolbar"
-                } else {
-                    "Show Toolbar"
-                }
-                .to_string(),
+                label: toolbar_label,
                 activate: Box::new(move |_| {
                     log::info!("Menu: Toggle Toolbar clicked");
                     if let Err(e) = tx_toolbar.send(TrayAction::ToggleToolbar) {

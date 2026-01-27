@@ -1,8 +1,10 @@
 //! Configuration persistence for snappea settings
 
-use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, CosmicConfigEntry};
+use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
+
+use crate::fl;
 
 /// Serializable color representation for config storage
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -88,11 +90,11 @@ impl ShapeTool {
     }
 
     /// Get the tooltip text for this shape tool
-    pub fn tooltip(self) -> &'static str {
+    pub fn tooltip(self) -> String {
         match self {
-            ShapeTool::Arrow => "Draw Arrow (A, right-click for settings)",
-            ShapeTool::Circle => "Draw Circle (A, Ctrl for perfect, right-click for settings)",
-            ShapeTool::Rectangle => "Draw Rectangle (A, Ctrl for square, right-click for settings)",
+            ShapeTool::Arrow => fl!("draw-arrow"),
+            ShapeTool::Circle => fl!("draw-circle"),
+            ShapeTool::Rectangle => fl!("draw-rectangle"),
         }
     }
 }
@@ -133,10 +135,10 @@ impl RedactTool {
     }
 
     /// Get the tooltip text for this redact tool
-    pub fn tooltip(self) -> &'static str {
+    pub fn tooltip(self) -> String {
         match self {
-            RedactTool::Redact => "Redact (D, right-click for settings)",
-            RedactTool::Pixelate => "Pixelate (D, right-click for settings)",
+            RedactTool::Redact => fl!("redact-tool"),
+            RedactTool::Pixelate => fl!("pixelate-tool"),
         }
     }
 

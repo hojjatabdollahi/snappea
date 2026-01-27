@@ -10,9 +10,9 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use super::dmabuf::{
-    drm_format_to_gst_format, select_best_format, DmabufContext, TripleBufferPool,
+    DmabufContext, TripleBufferPool, drm_format_to_gst_format, select_best_format,
 };
-use super::encoder::{detect_encoders, EncoderInfo};
+use super::encoder::{EncoderInfo, detect_encoders};
 use super::pipeline::{CropRegion, Pipeline};
 use crate::wayland::{CaptureSource, Rect, WaylandHelper};
 
@@ -352,8 +352,13 @@ pub fn start_recording(
             Ok(pool) => {
                 log::info!(
                     "Allocated triple buffer pool: {}x{}, format={:?} (0x{:08x}), modifier=0x{:016x}, stride={}, size={}",
-                    pool.width(), pool.height(), pool.format(), pool.format() as u32,
-                    u64::from(pool.modifier()), pool.stride(), pool.size()
+                    pool.width(),
+                    pool.height(),
+                    pool.format(),
+                    pool.format() as u32,
+                    u64::from(pool.modifier()),
+                    pool.stride(),
+                    pool.size()
                 );
                 Some(pool)
             }
@@ -482,7 +487,8 @@ pub fn start_recording(
                         if last_error_log.elapsed() > Duration::from_secs(2) {
                             log::warn!(
                                 "Capture thread: frame capture failed ({} consecutive failures): {}",
-                                consecutive_failures, e
+                                consecutive_failures,
+                                e
                             );
                             last_error_log = std::time::Instant::now();
                         }
@@ -579,7 +585,10 @@ pub fn start_recording(
                         let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
                         log::info!(
                             "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
-                            frame_count, fps, capture_fps, repeated_frames
+                            frame_count,
+                            fps,
+                            capture_fps,
+                            repeated_frames
                         );
                     }
                 }

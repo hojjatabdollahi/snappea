@@ -5,8 +5,8 @@
 //!          SetVideoFramerate
 
 use crate::config::{Container, SaveLocation, SnapPeaConfig, ToolbarPosition};
-use crate::screenshot::handlers::HandlerResult;
 use crate::screenshot::Args;
+use crate::screenshot::handlers::HandlerResult;
 
 /// Handle ToolbarPositionChange message
 pub fn handle_toolbar_position_change(args: &mut Args, position: ToolbarPosition) -> HandlerResult {
@@ -87,18 +87,22 @@ pub fn handle_set_toolbar_opacity(args: &mut Args, opacity: f32) -> HandlerResul
             (opacity, save_id)
         },
         |(opacity, save_id)| {
-            crate::core::app::Msg::Screenshot(
-                crate::session::messages::Msg::Settings(
-                    crate::session::messages::SettingsMsg::SaveToolbarOpacityDebounced(opacity, save_id)
-                )
-            )
-        }
+            crate::core::app::Msg::Screenshot(crate::session::messages::Msg::Settings(
+                crate::session::messages::SettingsMsg::SaveToolbarOpacityDebounced(
+                    opacity, save_id,
+                ),
+            ))
+        },
     )
 }
 
 /// Handle SaveToolbarOpacityDebounced message
 /// Only saves to config if the save ID matches (no newer changes)
-pub fn handle_save_toolbar_opacity_debounced(args: &mut Args, opacity: f32, save_id: u64) -> HandlerResult {
+pub fn handle_save_toolbar_opacity_debounced(
+    args: &mut Args,
+    opacity: f32,
+    save_id: u64,
+) -> HandlerResult {
     // Only save if this is still the latest change (ID matches)
     if args.ui.toolbar_opacity_save_id == save_id {
         let mut config = SnapPeaConfig::load();

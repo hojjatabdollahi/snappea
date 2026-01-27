@@ -1,13 +1,14 @@
 //! Settings drawer widget that opens relative to the toolbar
 
+use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
 use cosmic::widget::{container, dropdown, radio, segmented_button, tab_bar, text};
-use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
 use crate::config::{Container, SaveLocation, ToolbarPosition};
+use crate::fl;
 use crate::session::state::SettingsTab;
 
 /// Available framerate options
@@ -62,7 +63,7 @@ where
 
     // Magnifier toggle row
     let magnifier_row = row![
-        text::body("Magnifier"),
+        text::body(fl!("magnifier")),
         cosmic::widget::horizontal_space(),
         toggler(magnifier_enabled)
             .on_toggle(move |_| on_magnifier_toggle.clone())
@@ -73,17 +74,17 @@ where
     .width(Length::Fill);
 
     // Save location section
-    let save_location_label = text::body("Save to:");
+    let save_location_label = text::body(fl!("save-location"));
 
     let pictures_radio = radio(
-        "Pictures",
+        text::body(fl!("pictures")),
         SaveLocation::Pictures,
         Some(save_location),
         move |_| on_save_location_pictures.clone(),
     );
 
     let documents_radio = radio(
-        "Documents",
+        text::body(fl!("documents")),
         SaveLocation::Documents,
         Some(save_location),
         move |_| on_save_location_documents.clone(),
@@ -95,7 +96,7 @@ where
 
     // Copy to clipboard on save toggle
     let copy_on_save_row = row![
-        text::body("Copy on save"),
+        text::body(fl!("copy-on-save")),
         cosmic::widget::horizontal_space(),
         toggler(copy_to_clipboard_on_save)
             .on_toggle(move |_| on_copy_on_save_toggle.clone())
@@ -106,7 +107,7 @@ where
     .width(Length::Fill);
 
     let opacity_percent = (toolbar_unhovered_opacity.clamp(0.1, 1.0) * 100.0).round() as i32;
-    let toolbar_opacity_label = text::body(format!("Toolbar opacity (idle): {}%", opacity_percent));
+    let toolbar_opacity_label = text::body(fl!("toolbar-opacity", percent = opacity_percent));
     let toolbar_opacity_slider = cosmic::widget::slider(20..=100, opacity_percent, move |v| {
         on_toolbar_opacity_change(v as f32 / 100.0)
     })
@@ -117,7 +118,7 @@ where
         .width(Length::Fill);
 
     // Encoder selection using dropdown
-    let encoder_label = text::body("Encoder:");
+    let encoder_label = text::body(fl!("encoder"));
 
     // Find selected encoder index
     let selected_encoder_idx = available_encoders
@@ -146,9 +147,9 @@ where
     .width(Length::Fill);
 
     // Container format selection using dropdown
-    let container_label = text::body("Format:");
+    let container_label = text::body(fl!("format"));
 
-    // Use static array for container names
+    // Use static array for container names (these are technical names, not translated)
     static CONTAINER_NAMES: &[&str] = &["MP4", "WebM", "MKV"];
 
     let selected_container_idx = CONTAINER_OPTIONS.iter().position(|c| *c == video_container);
@@ -163,7 +164,7 @@ where
     .width(Length::Fill);
 
     // Framerate selection using dropdown
-    let framerate_label = text::body("Framerate:");
+    let framerate_label = text::body(fl!("framerate"));
 
     // Use static array for framerate names
     static FRAMERATE_NAMES: &[&str] = &["24 fps", "30 fps", "60 fps"];
@@ -180,7 +181,7 @@ where
 
     // Show cursor toggle
     let show_cursor_row = row![
-        text::caption("Show cursor"),
+        text::caption(fl!("show-cursor")),
         cosmic::widget::horizontal_space(),
         toggler(video_show_cursor)
             .on_toggle(move |_| on_show_cursor_toggle.clone())
@@ -192,7 +193,7 @@ where
 
     // Hide to system tray toggle
     let hide_to_tray_row = row![
-        text::caption("Hide to tray when recording"),
+        text::caption(fl!("hide-to-tray")),
         cosmic::widget::horizontal_space(),
         toggler(hide_toolbar_to_tray)
             .on_toggle(move |_| on_hide_to_tray_toggle.clone())
@@ -218,13 +219,13 @@ where
         snappea_logo,
         column![
             row![
-                text::title4("SnapPea"),
+                text::title4(fl!("app-name")),
                 text::caption(format!("v{}", version)),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
             row![
-                text::caption("by Hojjat Abdollahi"),
+                text::caption(fl!("app-author")),
                 cosmic::widget::button::icon(
                     cosmic::widget::icon::from_svg_bytes(GITHUB_ICON).symbolic(true)
                 )

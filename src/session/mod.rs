@@ -9,5 +9,5 @@
 //! Currently not fully integrated.
 
 pub mod messages;
-pub mod state;
 pub mod shortcuts;
+pub mod state;

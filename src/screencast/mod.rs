@@ -14,5 +14,5 @@ pub use encoder::best_encoder;
 pub use pipeline::{CropRegion, Pipeline};
 pub use recorder::{start_recording, start_recording_thread};
 pub use state::{
-    cancel_recording, is_recording, set_recording, stop_recording, RecordingHandle, RecordingState,
+    RecordingHandle, RecordingState, cancel_recording, is_recording, set_recording, stop_recording,
 };

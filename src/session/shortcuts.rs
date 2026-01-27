@@ -101,7 +101,9 @@ pub fn handle_key_event(
             Some(Msg::cycle_redact_tool())
         }
         // D: toggle current redact tool
-        Key::Character(c) if c.as_str() == "d" && has_selection => Some(Msg::redact_tool_mode_toggle()),
+        Key::Character(c) if c.as_str() == "d" && has_selection => {
+            Some(Msg::redact_tool_mode_toggle())
+        }
         // OCR shortcut: if result exists, copy and close; otherwise start OCR
         Key::Character(c) if c.as_str() == "o" && has_ocr_result => Some(Msg::ocr_copy_and_close()),
         Key::Character(c) if c.as_str() == "o" && has_selection => Some(Msg::ocr_requested()),
