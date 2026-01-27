@@ -4,9 +4,13 @@
 
 # SnapPea
 
-A screenshot portal implementation for the COSMIC desktop environment with annotation capabilities.
+A screenshot and screen recording tool for the COSMIC desktop environment with annotation capabilities.
 
-![SnapPea Demo](data/demo.gif)
+<p align="center">
+  <video src="data/demo.mp4" width="100%" autoplay loop muted playsinline>
+    Your browser does not support the video tag.
+  </video>
+</p>
 
 Disclaimer: This project is based on xdg-desktop-portal-cosmic with added features. It implements the same screenshot portal interface. When set up correctly, dbus messages sent by `cosmic-screenshot` will be handled by SnapPea instead of `xdg-desktop-portal-cosmic` (only Screenshot Portal messages).
 
@@ -14,7 +18,12 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 
 - Interactive screenshot selection
 - Screen recording with hardware acceleration
-- Annotation tools: arrows, circles, squares
+  - Multiple container formats (MP4, WebM, MKV)
+  - Configurable framerate (24/30/60 fps)
+  - Hardware encoder selection
+  - Cursor visibility toggle
+  - Live annotations while recording
+- Annotation tools: arrows, circles, squares, freehand drawing
 - Text recognition (OCR)
 - QR code detection
 - Redaction and pixelation
@@ -63,4 +72,4 @@ sudo just uninstall
 Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf` if you set it.
 
 ## Why SnapPea?
-It Snaps Pics!
+It Snaps Pics and it's snappy!
