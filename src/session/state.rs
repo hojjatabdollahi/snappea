@@ -252,6 +252,8 @@ pub struct UiState {
     pub timeline: Timeline,
     /// Whether to hide toolbar to system tray when recording
     pub hide_toolbar_to_tray: bool,
+    /// Move offset for dragging selection rectangle (cursor pos relative to rect top-left when move started)
+    pub move_offset: Option<(i32, i32)>,
 }
 
 impl UiState {

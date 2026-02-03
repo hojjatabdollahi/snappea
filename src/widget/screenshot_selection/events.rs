@@ -63,6 +63,8 @@ pub enum SelectionEvent {
     WindowMode(usize),
     /// Selection confirmed (Enter pressed)
     Confirm,
+    /// Set move offset for dragging selection rectangle
+    SetMoveOffset(Option<(i32, i32)>),
 }
 
 /// Detection feature events
@@ -329,6 +331,10 @@ impl ScreenshotEvent {
 
     pub fn confirm() -> Self {
         Self::Selection(SelectionEvent::Confirm)
+    }
+
+    pub fn set_move_offset(offset: Option<(i32, i32)>) -> Self {
+        Self::Selection(SelectionEvent::SetMoveOffset(offset))
     }
 
     // Detection events
@@ -604,6 +610,7 @@ impl ScreenshotEvent {
             Self::Selection(SelectionEvent::ScreenMode(idx)) => Msg::screen_mode(idx),
             Self::Selection(SelectionEvent::WindowMode(idx)) => Msg::window_mode(idx),
             Self::Selection(SelectionEvent::Confirm) => Msg::confirm(),
+            Self::Selection(SelectionEvent::SetMoveOffset(offset)) => Msg::set_move_offset(offset),
 
             // Detection events
             Self::Detection(DetectionEvent::OcrRequested) => Msg::ocr_requested(),

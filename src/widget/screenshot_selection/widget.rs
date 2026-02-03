@@ -248,6 +248,8 @@ where
 
         // Build fg_element
         let on_event_clone = on_event.clone();
+        let on_event_clone2 = on_event.clone();
+        let move_offset = ui.move_offset;
         let fg_element: Element<'a, Msg> = match choice.clone() {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -258,6 +260,7 @@ where
                 move |s, r| {
                     on_event_clone(ScreenshotEvent::choice_changed(Choice::Rectangle(r, s)))
                 },
+                move |offset| on_event_clone2(ScreenshotEvent::set_move_offset(offset)),
                 &screenshot_image.rgba,
                 image_scale,
                 annotations.arrow_mode,
@@ -268,6 +271,7 @@ where
                 ui.shape_popup_open || ui.redact_popup_open || ui.settings_drawer_open,
                 ui.magnifier_enabled,
                 ui.is_recording,
+                move_offset,
             )
             .into(),
             Choice::Output(None) => {
@@ -1868,22 +1872,55 @@ where
             children.push(popup);
         }
 
-        let layout = layout.children().collect::<Vec<_>>();
-        for (i, (layout, child)) in layout
-            .into_iter()
-            .zip(children.into_iter())
+        let layout_children = layout.children().collect::<Vec<_>>();
+        
+        // First check popups (indices > 3) - they overlay everything
+        for (i, (child_layout, child)) in layout_children
+            .iter()
+            .zip(children.iter())
             .enumerate()
             .rev()
+            .skip_while(|(i, _)| *i <= 3) // Skip bg, fg, shapes, menu - check popups first
         {
             let tree = &state.children[i];
             let interaction = child
                 .as_widget()
-                .mouse_interaction(tree, layout, cursor, viewport, renderer);
-            if cursor.is_over(layout.bounds()) {
+                .mouse_interaction(tree, *child_layout, cursor, viewport, renderer);
+            if cursor.is_over(child_layout.bounds()) {
                 return interaction;
             }
         }
-        cosmic::iced::mouse::Interaction::default()
+
+        // Check menu_element (toolbar) - index 3
+        // Return its cursor even if default (Idle) since toolbar should show normal arrow
+        if layout_children.len() > 3 {
+            let menu_layout = layout_children[3];
+            if cursor.is_over(menu_layout.bounds()) {
+                let tree = &state.children[3];
+                let interaction = children[3]
+                    .as_widget()
+                    .mouse_interaction(tree, menu_layout, cursor, viewport, renderer);
+                return interaction;
+            }
+        }
+
+        // Then check fg_element (RectangleSelection) for move/resize cursors
+        // This is index 1
+        if layout_children.len() > 1 {
+            let fg_layout = layout_children[1];
+            let tree = &state.children[1];
+            let interaction = children[1]
+                .as_widget()
+                .mouse_interaction(tree, fg_layout, cursor, viewport, renderer);
+            if cursor.is_over(fg_layout.bounds())
+                && interaction != cosmic::iced::mouse::Interaction::default()
+            {
+                return interaction;
+            }
+        }
+
+        // Default to crosshair for rectangle selection area
+        cosmic::iced::mouse::Interaction::Crosshair
     }
 
     fn overlay<'b>(

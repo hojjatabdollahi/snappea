@@ -10,8 +10,8 @@ use cosmic::{
     },
     iced_core::Renderer,
     iced_core::{
-        self, Border, Color, Length, Point, Rectangle, Shadow, Size, clipboard::DndSource,
-        layout::Node, renderer::Quad,
+        self, clipboard::DndSource, layout::Node, renderer::Quad, Border, Color, Length, Point,
+        Rectangle, Shadow, Size,
     },
     widget::{self, Widget},
 };
@@ -56,6 +56,7 @@ pub struct RectangleSelection<'a, Msg> {
     rectangle_selection: Rect,
     window_id: iced_core::window::Id,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
+    on_move_offset: Box<dyn Fn(Option<(i32, i32)>) -> Msg>,
     drag_state: DragState,
     widget_id: widget::Id,
     drag_id: u128,
@@ -79,6 +80,8 @@ pub struct RectangleSelection<'a, Msg> {
     magnifier_enabled: bool,
     /// Whether recording is active (hide selection UI)
     is_recording: bool,
+    /// Move offset for dragging: (cursor_x - rect_left, cursor_y - rect_top) when move started
+    move_offset: Option<(i32, i32)>,
     _phantom: std::marker::PhantomData<Msg>,
 }
 
@@ -91,6 +94,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         window_id: iced_core::window::Id,
         drag_id: u128,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
+        on_move_offset: impl Fn(Option<(i32, i32)>) -> Msg + 'static,
         screenshot_image: &'a image::RgbaImage,
         image_scale: f32,
         arrow_mode: bool,
@@ -101,9 +105,11 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         popup_open: bool,
         magnifier_enabled: bool,
         is_recording: bool,
+        move_offset: Option<(i32, i32)>,
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
+            on_move_offset: Box::new(on_move_offset),
             drag_state: drag_direction,
             rectangle_selection,
             output_rect,
@@ -120,6 +126,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             popup_open,
             magnifier_enabled,
             is_recording,
+            move_offset,
             _phantom: std::marker::PhantomData,
         }
     }
@@ -226,6 +233,13 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         if cursor.is_over(e_edge_rect) {
             return DragState::E;
         };
+
+        // Check if cursor is inside the selection rectangle (for moving)
+        // Only allow move when selection has meaningful size (> 5x5)
+        if inner_rect.width > 5.0 && inner_rect.height > 5.0 && cursor.is_over(inner_rect) {
+            return DragState::Move;
+        }
+
         DragState::None
     }
 
@@ -236,8 +250,29 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         let d_y = self.output_rect.top + y;
 
         let prev_state = self.drag_state;
+
+        // Handle Move state separately - translate the entire rectangle
+        if prev_state == DragState::Move {
+            if let Some((offset_x, offset_y)) = self.move_offset {
+                let new_left = d_x - offset_x;
+                let new_top = d_y - offset_y;
+                let width = prev.right - prev.left;
+                let height = prev.bottom - prev.top;
+
+                let new_rect = Rect {
+                    left: new_left,
+                    top: new_top,
+                    right: new_left + width,
+                    bottom: new_top + height,
+                };
+                self.rectangle_selection = new_rect;
+                shell.publish((self.on_rectangle)(DragState::Move, new_rect));
+            }
+            return;
+        }
+
         let reflection_point = match prev_state {
-            DragState::None => return,
+            DragState::None | DragState::Move => return,
             DragState::NW => (prev.right, prev.bottom),
             DragState::N => (0, prev.bottom),
             DragState::NE => (prev.left, prev.bottom),
@@ -277,7 +312,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
                 }
             }
 
-            DragState::None => DragState::None,
+            DragState::None | DragState::Move => DragState::None,
         };
         let top_left = match new_drag_state {
             DragState::NW => (d_x, d_y),
@@ -288,7 +323,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             DragState::E => (reflection_point.0, prev.top),
             DragState::S => (prev.left, reflection_point.1),
             DragState::W => (d_x, prev.top),
-            DragState::None => (prev.left, prev.top),
+            DragState::None | DragState::Move => (prev.left, prev.top),
         };
 
         let bottom_right = match new_drag_state {
@@ -300,7 +335,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             DragState::E => (d_x, prev.bottom),
             DragState::S => (prev.right, d_y),
             DragState::W => (reflection_point.0, prev.bottom),
-            DragState::None => (prev.right, prev.bottom),
+            DragState::None | DragState::Move => (prev.right, prev.bottom),
         };
         let new_rect = Rect {
             left: top_left.0,
@@ -368,6 +403,13 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             }
             DragState::N | DragState::S => iced_core::mouse::Interaction::ResizingVertically,
             DragState::E | DragState::W => iced_core::mouse::Interaction::ResizingHorizontally,
+            DragState::Move => {
+                if self.drag_state == DragState::Move {
+                    iced_core::mouse::Interaction::Grabbing
+                } else {
+                    iced_core::mouse::Interaction::Grab
+                }
+            }
         }
     }
 
@@ -412,6 +454,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     }
                     OfferEvent::Drop => {
                         self.drag_state = DragState::None;
+                        // Clear move offset when drag ends
+                        shell.publish((self.on_move_offset)(None));
                         // Only keep rectangle if it has meaningful dimensions (> 5x5)
                         let rect = self.rectangle_selection;
                         let width = (rect.right - rect.left).abs();
@@ -433,6 +477,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     SourceEvent::Finished | SourceEvent::Cancelled | SourceEvent::Dropped
                 ) {
                     self.drag_state = DragState::None;
+                    // Clear move offset when drag ends
+                    shell.publish((self.on_move_offset)(None));
                     // Only keep rectangle if it has meaningful dimensions (> 5x5)
                     let rect = self.rectangle_selection;
                     let width = (rect.right - rect.left).abs();
@@ -480,6 +526,8 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         pos.x += self.output_rect.left as f32;
                         pos.y += self.output_rect.top as f32;
                         self.drag_state = DragState::SE;
+                        // Clear any previous move offset when starting a new selection
+                        shell.publish((self.on_move_offset)(None));
                         shell.publish((self.on_rectangle)(
                             DragState::SE,
                             Rect {
@@ -489,8 +537,20 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                                 bottom: pos.y as i32 + 1,
                             },
                         ));
+                    } else if s == DragState::Move {
+                        // Compute move offset: cursor position relative to rect top-left
+                        let pos = cursor.position().unwrap_or_default();
+                        let cursor_x = self.output_rect.left + pos.x as i32;
+                        let cursor_y = self.output_rect.top + pos.y as i32;
+                        let offset_x = cursor_x - self.rectangle_selection.left;
+                        let offset_y = cursor_y - self.rectangle_selection.top;
+                        self.drag_state = DragState::Move;
+                        shell.publish((self.on_move_offset)(Some((offset_x, offset_y))));
+                        shell.publish((self.on_rectangle)(s, self.rectangle_selection));
                     } else {
                         self.drag_state = s;
+                        // Clear move offset for resize operations
+                        shell.publish((self.on_move_offset)(None));
                         shell.publish((self.on_rectangle)(s, self.rectangle_selection));
                     }
                     return cosmic::iced_core::event::Status::Captured;
@@ -627,7 +687,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     self.rectangle_selection.left,
                     (self.rectangle_selection.top + self.rectangle_selection.bottom) / 2,
                 )),
-                DragState::None => None,
+                DragState::None | DragState::Move => None,
             };
 
             if let Some((drag_x, drag_y)) = drag_corner {

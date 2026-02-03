@@ -462,6 +462,7 @@ impl Screenshot {
                         toolbar_bounds: None,
                         timeline: cosmic_time::Timeline::new(),
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
+                        move_offset: None,
                     }
                 },
             }))
@@ -858,6 +859,10 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             SettingsMsg::TimelineTick(_window_id, instant) => {
                 // Update the timeline's current time for animation interpolation
                 args.ui.timeline.now(instant);
+                cosmic::Task::none()
+            }
+            SettingsMsg::SetMoveOffset(offset) => {
+                args.ui.move_offset = offset;
                 cosmic::Task::none()
             }
         }

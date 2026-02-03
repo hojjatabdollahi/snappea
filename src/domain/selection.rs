@@ -24,6 +24,8 @@ pub enum DragState {
     SW,
     /// West edge
     W,
+    /// Move the entire rectangle
+    Move,
 }
 
 impl From<u8> for DragState {
@@ -38,6 +40,7 @@ impl From<u8> for DragState {
             6 => DragState::S,
             7 => DragState::SW,
             8 => DragState::W,
+            9 => DragState::Move,
             _ => DragState::None,
         }
     }
@@ -55,6 +58,7 @@ impl From<DragState> for u8 {
             DragState::S => 6,
             DragState::SW => 7,
             DragState::W => 8,
+            DragState::Move => 9,
         }
     }
 }

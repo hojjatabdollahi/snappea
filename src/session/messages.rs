@@ -265,6 +265,8 @@ pub enum SettingsMsg {
     EncodersDetected(Vec<crate::screencast::encoder::EncoderInfo>),
     /// Animation timeline tick (window_id, instant)
     TimelineTick(window::Id, Instant),
+    /// Set move offset for dragging selection rectangle
+    SetMoveOffset(Option<(i32, i32)>),
 }
 
 // ============================================================================
@@ -557,5 +559,8 @@ impl Msg {
     }
     pub fn timeline_tick(window_id: window::Id, instant: Instant) -> Self {
         Self::Settings(SettingsMsg::TimelineTick(window_id, instant))
+    }
+    pub fn set_move_offset(offset: Option<(i32, i32)>) -> Self {
+        Self::Settings(SettingsMsg::SetMoveOffset(offset))
     }
 }
