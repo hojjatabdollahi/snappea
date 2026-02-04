@@ -19,8 +19,30 @@ fn main() -> cosmic::iced::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     localize::localize();
 
-    // Check for --record subcommand
     let args: Vec<String> = env::args().collect();
+
+    // Check for --help flag
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        println!("SnapPea - Screenshot and Screen Recording for Linux/Wayland");
+        println!();
+        println!("Usage: snappea [OPTION]");
+        println!();
+        println!("Options:");
+        println!("  --portal        Run as D-Bus portal service (for desktop integration)");
+        println!("  --record        Start screen recording (requires additional arguments)");
+        println!("  --help, -h      Show this help message");
+        println!();
+        println!("When run without arguments, opens the screenshot UI directly.");
+        println!("Use --portal for D-Bus portal mode (system integration).");
+        return Ok(());
+    }
+
+    // Check for --portal flag (D-Bus portal mode)
+    if args.len() > 1 && args[1] == "--portal" {
+        return core::app::run();
+    }
+
+    // Check for --record subcommand
     if args.len() > 1 && args[1] == "--record" {
         // Parse arguments
         let mut output_file = None;
@@ -179,6 +201,8 @@ fn main() -> cosmic::iced::Result {
         return Ok(());
     }
 
-    // Normal UI mode
-    core::app::run()
+    // Default: Direct screenshot mode (no D-Bus portal)
+    core::app::run_with_flags(core::app::AppFlags {
+        direct_screenshot: true,
+    })
 }

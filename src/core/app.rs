@@ -17,11 +17,22 @@ use futures::SinkExt;
 use std::any::TypeId;
 use wayland_client::protocol::wl_output::WlOutput;
 
+/// Flags for app initialization
+#[derive(Clone, Debug, Default)]
+pub struct AppFlags {
+    /// If true, take a screenshot directly without D-Bus portal
+    pub direct_screenshot: bool,
+}
+
 pub(crate) fn run() -> cosmic::iced::Result {
+    run_with_flags(AppFlags::default())
+}
+
+pub(crate) fn run_with_flags(flags: AppFlags) -> cosmic::iced::Result {
     let settings = cosmic::app::Settings::default()
         .no_main_window(true)
         .exit_on_close(false);
-    cosmic::app::run::<App>(settings, ())
+    cosmic::app::run::<App>(settings, flags)
 }
 
 /// Create a new settings tab segmented button model
@@ -53,6 +64,8 @@ pub struct App {
     pub tray_tx: Option<CbSender<TrayAction>>,
     /// Whether the toolbar is currently visible (when using tray mode)
     pub toolbar_visible: bool,
+    /// Whether running in direct screenshot mode (no D-Bus portal)
+    pub direct_screenshot: bool,
 }
 
 /// A single annotation stroke with fade state
@@ -161,7 +174,7 @@ pub enum Msg {
 impl cosmic::Application for App {
     type Executor = cosmic::executor::Default;
 
-    type Flags = ();
+    type Flags = AppFlags;
 
     type Message = Msg;
 
@@ -177,7 +190,7 @@ impl cosmic::Application for App {
 
     fn init(
         core: app::Core,
-        _flags: Self::Flags,
+        flags: Self::Flags,
     ) -> (Self, cosmic::iced::Task<cosmic::Action<Self::Message>>) {
         let wayland_conn = wayland_client::Connection::connect_to_env().unwrap();
         let wayland_helper = crate::wayland::WaylandHelper::new(wayland_conn);
@@ -199,6 +212,7 @@ impl cosmic::Application for App {
                 tray_rx: Some(tray_rx),
                 tray_tx: Some(tray_tx),
                 toolbar_visible: true,
+                direct_screenshot: flags.direct_screenshot,
             },
             cosmic::iced::Task::none(),
         )
@@ -680,8 +694,15 @@ impl cosmic::Application for App {
     }
 
     fn subscription(&self) -> cosmic::iced_futures::Subscription<Self::Message> {
+        // Use direct screenshot subscription if in direct mode, otherwise portal subscription
+        let screenshot_sub = if self.direct_screenshot {
+            direct_screenshot_subscription(self.wayland_helper.clone()).map(Msg::Portal)
+        } else {
+            portal_subscription(self.wayland_helper.clone()).map(Msg::Portal)
+        };
+
         let mut subscriptions = vec![
-            portal_subscription(self.wayland_helper.clone()).map(Msg::Portal),
+            screenshot_sub,
             listen_with(|e, _, _| match e {
                 cosmic::iced_core::Event::PlatformSpecific(
                     cosmic::iced_core::event::PlatformSpecific::Wayland(
@@ -809,6 +830,191 @@ pub(crate) async fn process_changes(
         }
     };
     Ok(())
+}
+
+/// Subscription for direct screenshot mode (no D-Bus portal)
+/// Captures screens immediately on startup and triggers the UI
+pub(crate) fn direct_screenshot_subscription(
+    helper: crate::wayland::WaylandHelper,
+) -> cosmic::iced::Subscription<screenshot::Event> {
+    use crate::capture::image::ScreenshotImage;
+    use crate::wayland::CaptureSource;
+    use futures::stream::StreamExt;
+
+    struct DirectScreenshotSubscription;
+    Subscription::run_with_id(
+        TypeId::of::<DirectScreenshotSubscription>(),
+        cosmic::iced_futures::stream::channel(10, |mut output| async move {
+            use crate::config::SnapPeaConfig;
+            use crate::core::portal::PortalResponse;
+            use crate::domain::{Choice, DragState, Rect};
+            use crate::screenshot::portal::ScreenshotResult;
+            use crate::session::state::{
+                AnnotationState, CaptureData, DetectionState, PortalContext, SessionState, UiState,
+            };
+            use crate::screenshot::portal::ScreenshotOptions;
+            use std::collections::HashMap;
+
+            // Create a dummy channel for portal context (not used in direct mode, but required for Args)
+            let (tx, _rx) = tokio::sync::mpsc::channel::<PortalResponse<ScreenshotResult>>(1);
+
+            // Create a channel for the Init event
+            let (init_tx, _init_rx) = tokio::sync::mpsc::channel(1);
+
+            // Send Init event first
+            _ = output.send(screenshot::Event::Init(init_tx)).await;
+
+            // Small delay to let the app initialize
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+            // Capture screenshots
+            let outputs: Vec<_> = helper
+                .outputs()
+                .into_iter()
+                .filter_map(|wl_output| {
+                    let info = helper.output_info(&wl_output)?;
+                    Some((
+                        wl_output,
+                        info.name.clone()?,
+                        info.logical_position?,
+                        info.logical_size?,
+                        info.scale_factor,
+                    ))
+                })
+                .collect();
+
+            if outputs.is_empty() {
+                log::error!("No outputs found for direct screenshot");
+                return;
+            }
+
+            // Capture output images
+            let mut output_images = HashMap::new();
+            for (wl_output, name, _, _, _) in &outputs {
+                if let Some(frame) = helper
+                    .capture_source_shm(CaptureSource::Output(wl_output.clone()), false)
+                    .await
+                {
+                    match ScreenshotImage::new(frame) {
+                        Ok(img) => {
+                            output_images.insert(name.clone(), img);
+                        }
+                        Err(e) => {
+                            log::error!("Failed to create screenshot image for {}: {}", name, e);
+                        }
+                    }
+                } else {
+                    log::error!("Failed to capture output {}", name);
+                }
+            }
+
+            // Capture toplevel images
+            let mut toplevel_images: HashMap<String, Vec<ScreenshotImage>> = HashMap::new();
+            for (wl_output, name, _, _, _) in &outputs {
+                let imgs: Vec<ScreenshotImage> = helper
+                    .capture_output_toplevels_shm(wl_output, false)
+                    .filter_map(|img| async { ScreenshotImage::new(img).ok() })
+                    .collect()
+                    .await;
+                toplevel_images.insert(name.clone(), imgs);
+            }
+
+            // Build global indices for toplevels
+            let all_toplevels = helper.all_toplevels();
+            let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
+                .iter()
+                .map(|(wl_output, name, _, _, _)| {
+                    let output_toplevels = helper.output_toplevels(wl_output);
+                    let global_indices: Vec<usize> = output_toplevels
+                        .iter()
+                        .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
+                        .collect();
+                    (name.clone(), global_indices)
+                })
+                .collect();
+
+            let config = SnapPeaConfig::load();
+            let choice = Choice::Rectangle(Rect::default(), DragState::default());
+
+            // Create screenshot Args
+            let args = screenshot::Args {
+                portal: PortalContext {
+                    handle: zbus::zvariant::ObjectPath::try_from("/direct/screenshot").unwrap(),
+                    app_id: "direct".to_string(),
+                    parent_window: String::new(),
+                    options: ScreenshotOptions {
+                        modal: None,
+                        interactive: Some(true),
+                        choose_destination: None,
+                    },
+                    tx,
+                },
+                capture: CaptureData {
+                    output_images,
+                    toplevel_images,
+                    toplevel_global_indices,
+                },
+                session: SessionState {
+                    choice,
+                    action: crate::domain::Action::ReturnPath,
+                    location: crate::domain::ImageSaveLocation::Pictures,
+                    highlighted_window_index: 0,
+                    focused_output_index: 0,
+                    also_copy_to_clipboard: false,
+                    has_mouse_entered: false,
+                },
+                detection: DetectionState::default(),
+                annotations: AnnotationState::default(),
+                ui: UiState {
+                    toolbar_position: config.toolbar_position,
+                    settings_drawer_open: false,
+                    settings_tab: crate::session::state::SettingsTab::General,
+                    primary_shape_tool: config.primary_shape_tool,
+                    shape_popup_open: false,
+                    shape_color: config.shape_color,
+                    shape_shadow: config.shape_shadow,
+                    primary_redact_tool: config.primary_redact_tool,
+                    redact_popup_open: false,
+                    pixelation_block_size: config.pixelation_block_size,
+                    magnifier_enabled: config.magnifier_enabled,
+                    save_location_setting: config.save_location,
+                    custom_save_path: config.custom_save_path.clone(),
+                    video_save_location_setting: config.video_save_location,
+                    video_custom_save_path: config.video_custom_save_path.clone(),
+                    copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+                    toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
+                    toolbar_is_hovered: false,
+                    toolbar_opacity_save_id: 0,
+                    tesseract_available: crate::capture::ocr::is_tesseract_available(),
+                    available_encoders: Vec::new(),
+                    encoder_displays: Vec::new(),
+                    selected_encoder: config.video_encoder.clone(),
+                    video_container: config.video_container,
+                    video_framerate: config.video_framerate,
+                    video_show_cursor: config.video_show_cursor,
+                    is_video_mode: false,
+                    is_recording: false,
+                    recording_annotation_mode: false,
+                    pencil_popup_open: false,
+                    pencil_color: config.pencil_color,
+                    pencil_fade_duration: config.pencil_fade_duration,
+                    pencil_thickness: config.pencil_thickness,
+                    toolbar_bounds: None,
+                    timeline: cosmic_time::Timeline::new(),
+                    hide_toolbar_to_tray: config.hide_toolbar_to_tray,
+                    move_offset: None,
+                },
+            };
+
+            // Send the screenshot event to trigger the UI
+            if let Err(e) = output.send(screenshot::Event::Screenshot(args)).await {
+                log::error!("Failed to send direct screenshot event: {}", e);
+            }
+
+            // Keep the subscription alive (but idle) - the app handles everything else
+            futures::future::pending::<()>().await;
+        }),
+    )
 }
 
 /// Subscription for receiving tray actions
