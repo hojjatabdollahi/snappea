@@ -1,6 +1,6 @@
 [package]
 name = "snappea"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Screenshot portal implementation for COSMIC desktop"
@@ -20,14 +20,14 @@ dirs = "6.0.0"
 env_logger = "0.11.8"
 futures = "0.3"
 image = "0.25"
-tiny-skia = "0.11"
+tiny-skia = "0.12"
 libc = "0.2"
 log = "0.4.28"
 memmap2 = "0.9.8"
 # OCR backends
 rusty-tesseract = "1.1.10"
 png = "0.18"
-rfd = "0.15"
+rfd = "0.17"
 rqrr = "0.10"
 rustix = { version = "1.1", features = ["fs"] }
 nix = { version = "0.31", features = ["signal", "process"] }
