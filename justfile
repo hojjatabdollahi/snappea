@@ -50,11 +50,13 @@ clean:
 run *args:
     cargo run {{args}}
 
-# Install files (standalone mode - no D-Bus portal)
+# Install files
 install:
     install -Dm0755 {{bin-src}} {{bin-dst}}
     install -Dm0644 {{desktop-src}} {{desktop-dst}}
     install -Dm0644 {{appicon-src}} {{appicon-dst}}
+    install -Dm0644 {{portal-src}} {{portal-dst}}
+    install -Dm0644 {{service-src}} {{service-dst}}
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/ocr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/qr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/arrow-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
@@ -63,10 +65,13 @@ install:
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/redact-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/pixelate-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/pixelate-symbolic.svg
 
-# Install with D-Bus portal support (for system screenshot integration)
-install-portal: install
-    install -Dm0644 {{portal-src}} {{portal-dst}}
-    install -Dm0644 {{service-src}} {{service-dst}}
+# Install portal config to use SnapPea as the default screenshot tool
+install-portal:
+    mkdir -p ~/.config/xdg-desktop-portal
+    echo '[preferred]' > ~/.config/xdg-desktop-portal/portals.conf
+    echo 'org.freedesktop.impl.portal.Screenshot=snappea' >> ~/.config/xdg-desktop-portal/portals.conf
+    @echo "Portal config installed to ~/.config/xdg-desktop-portal/portals.conf"
+    @echo "Run 'systemctl --user restart xdg-desktop-portal' to apply changes"
 
 # Uninstall files
 uninstall:
@@ -82,3 +87,8 @@ uninstall:
     rm -f {{icons-dst}}/hicolor/scalable/actions/square-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/redact-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/pixelate-symbolic.svg
+    @if [ -f ~/.config/xdg-desktop-portal/portals.conf ] && grep -q "snappea" ~/.config/xdg-desktop-portal/portals.conf 2>/dev/null; then \
+        echo ""; \
+        echo "Note: Portal config file exists at ~/.config/xdg-desktop-portal/portals.conf"; \
+        echo "You may want to remove the snappea entry or delete the file if no longer needed."; \
+    fi
