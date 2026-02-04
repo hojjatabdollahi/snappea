@@ -32,16 +32,42 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 
 ## Installation
 
-Build and install with [just](https://github.com/casey/just):
+Build with [just](https://github.com/casey/just):
 
 ```sh
 just
+```
+
+### Option 1: Standalone Mode (Recommended)
+
+Install SnapPea as a standalone application:
+
+```sh
 sudo just install
 ```
 
+This installs the binary to `/usr/bin/snappea` and adds a desktop entry to your application menu.
 
-> [!IMPORTANT]
-To override the default screenshot portal, create or edit `~/.config/xdg-desktop-portal/portals.conf`:
+**Setting up a keyboard shortcut:**
+
+1. Open **Settings** > **Keyboard** > **Keyboard Shortcuts** > **Custom Shortcuts**
+2. Add a new shortcut:
+   - Name: `SnapPea` (or `Screenshot`)
+   - Command: `snappea`
+   - Shortcut: `Print` (or your preferred key)
+
+> [!NOTE]
+> In standalone mode, running `snappea` multiple times communicates with the existing instance. If you're recording and press the shortcut again, it will stop the recording.
+
+### Option 2: Portal Mode (System Integration)
+
+Install SnapPea as a screenshot portal to replace the default COSMIC screenshot tool:
+
+```sh
+sudo just install-portal
+```
+
+Then configure xdg-desktop-portal to use SnapPea. Create or edit `~/.config/xdg-desktop-portal/portals.conf`:
 
 ```ini
 [preferred]
@@ -54,21 +80,33 @@ Reload xdg-desktop-portal to apply changes:
 systemctl --user restart xdg-desktop-portal
 ```
 
+Now pressing `Print Screen` will open SnapPea instead of the default screenshot tool.
 
-To enable OCR install [tesseract-ocr](https://github.com/tesseract-ocr/tesseract) and the desired language packs.
+> [!NOTE]
+> Portal mode runs SnapPea as a D-Bus service. The system automatically launches it when you press Print Screen.
+
+### Optional: OCR Support
+
+To enable text recognition (OCR), install [tesseract-ocr](https://github.com/tesseract-ocr/tesseract):
 
 ```bash
+# Debian/Ubuntu
 sudo apt install tesseract-ocr
+
+# Fedora
+sudo dnf install tesseract
+
+# Arch
+sudo pacman -S tesseract
 ```
 
-
-To uninstall:
+### Uninstalling
 
 ```sh
 sudo just uninstall
 ```
 
-Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf` if you set it.
+If you used portal mode, also remove the override from `~/.config/xdg-desktop-portal/portals.conf`.
 
 ## Why SnapPea?
 It Snaps Pics and it's snappy!

@@ -1,3 +1,4 @@
+use crate::core::control::{ControlCommand, ControlInterface, CONTROL_PATH};
 use crate::core::portal::{DBUS_NAME, DBUS_PATH};
 use crate::fl;
 use crate::screenshot;
@@ -169,6 +170,8 @@ pub enum Msg {
     ToolbarDragEnd,
     /// Tray action received
     TrayAction(TrayAction),
+    /// D-Bus control command received
+    Control(ControlCommand),
 }
 
 impl cosmic::Application for App {
@@ -630,6 +633,41 @@ impl cosmic::Application for App {
                 }
                 cosmic::iced::Task::none()
             }
+            Msg::Control(cmd) => {
+                match cmd {
+                    ControlCommand::TakeScreenshot => {
+                        log::info!("Control: Take screenshot requested");
+                        // Trigger a new screenshot capture
+                        // This will be handled by the direct_screenshot_subscription
+                        // For now, we need to trigger a new capture
+                        if let Some(tx) = &self.tx {
+                            let tx = tx.clone();
+                            let helper = self.wayland_helper.clone();
+                            tokio::spawn(async move {
+                                // Trigger a new screenshot by sending the appropriate event
+                                // This simulates what would happen on PrintScreen
+                                trigger_screenshot(helper, tx).await;
+                            });
+                        }
+                    }
+                    ControlCommand::ToggleRecording => {
+                        log::info!("Control: Toggle recording requested");
+                        if crate::screencast::is_recording() {
+                            // Stop recording
+                            return self.update(Msg::Screenshot(
+                                crate::session::messages::Msg::Capture(
+                                    crate::session::messages::CaptureMsg::StopRecording,
+                                ),
+                            ));
+                        }
+                    }
+                    ControlCommand::Quit => {
+                        log::info!("Control: Quit requested");
+                        std::process::exit(0);
+                    }
+                }
+                cosmic::iced::Task::none()
+            }
             Msg::Output(o_event, wl_output) => {
                 match o_event {
                     OutputEvent::Created(Some(info))
@@ -696,9 +734,15 @@ impl cosmic::Application for App {
     fn subscription(&self) -> cosmic::iced_futures::Subscription<Self::Message> {
         // Use direct screenshot subscription if in direct mode, otherwise portal subscription
         let screenshot_sub = if self.direct_screenshot {
-            direct_screenshot_subscription(self.wayland_helper.clone()).map(Msg::Portal)
+            direct_screenshot_subscription(self.wayland_helper.clone()).map(|e| match e {
+                PortalEvent::Screenshot(se) => Msg::Portal(se),
+                PortalEvent::Control(cmd) => Msg::Control(cmd),
+            })
         } else {
-            portal_subscription(self.wayland_helper.clone()).map(Msg::Portal)
+            portal_subscription(self.wayland_helper.clone()).map(|e| match e {
+                PortalEvent::Screenshot(se) => Msg::Portal(se),
+                PortalEvent::Control(cmd) => Msg::Control(cmd),
+            })
         };
 
         let mut subscriptions = vec![
@@ -765,17 +809,24 @@ impl cosmic::Application for App {
     }
 }
 
+/// Events from the portal subscription (includes both screenshot and control events)
+pub enum PortalEvent {
+    Screenshot(screenshot::Event),
+    Control(ControlCommand),
+}
+
 pub enum SubscriptionState {
     Init,
     Waiting(
         zbus::Connection,
         tokio::sync::mpsc::Receiver<screenshot::Event>,
+        tokio::sync::mpsc::Receiver<ControlCommand>,
     ),
 }
 
 pub(crate) fn portal_subscription(
     helper: crate::wayland::WaylandHelper,
-) -> cosmic::iced::Subscription<screenshot::Event> {
+) -> cosmic::iced::Subscription<PortalEvent> {
     struct PortalSubscription;
     Subscription::run_with_id(
         TypeId::of::<PortalSubscription>(),
@@ -793,12 +844,13 @@ pub(crate) fn portal_subscription(
 
 pub(crate) async fn process_changes(
     state: &mut SubscriptionState,
-    output: &mut futures::channel::mpsc::Sender<screenshot::Event>,
+    output: &mut futures::channel::mpsc::Sender<PortalEvent>,
     wayland_helper: &crate::wayland::WaylandHelper,
 ) -> anyhow::Result<()> {
     match state {
         SubscriptionState::Init => {
             let (tx, rx) = tokio::sync::mpsc::channel(10);
+            let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel(10);
 
             let connection = zbus::connection::Builder::session()?
                 .name(DBUS_NAME)?
@@ -806,25 +858,36 @@ pub(crate) async fn process_changes(
                     DBUS_PATH,
                     screenshot::Screenshot::new(wayland_helper.clone(), tx.clone()),
                 )?
+                .serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx))?
                 .build()
                 .await?;
-            _ = output.send(screenshot::Event::Init(tx)).await;
-            *state = SubscriptionState::Waiting(connection, rx);
+            log::info!("D-Bus interfaces registered: portal at {}, control at {}", DBUS_PATH, CONTROL_PATH);
+            _ = output.send(PortalEvent::Screenshot(screenshot::Event::Init(tx))).await;
+            *state = SubscriptionState::Waiting(connection, rx, ctrl_rx);
         }
-        SubscriptionState::Waiting(_conn, rx) => {
-            while let Some(event) = rx.recv().await {
-                match event {
-                    screenshot::Event::Screenshot(args) => {
-                        if let Err(err) = output.send(screenshot::Event::Screenshot(args)).await {
-                            log::error!("Error sending screenshot event: {:?}", err);
-                        };
+        SubscriptionState::Waiting(_conn, rx, ctrl_rx) => {
+            loop {
+                tokio::select! {
+                    Some(event) = rx.recv() => {
+                        match event {
+                            screenshot::Event::Screenshot(args) => {
+                                if let Err(err) = output.send(PortalEvent::Screenshot(screenshot::Event::Screenshot(args))).await {
+                                    log::error!("Error sending screenshot event: {:?}", err);
+                                };
+                            }
+                            screenshot::Event::RecordingStopped => {
+                                if let Err(err) = output.send(PortalEvent::Screenshot(screenshot::Event::RecordingStopped)).await {
+                                    log::error!("Error sending RecordingStopped event: {:?}", err);
+                                };
+                            }
+                            screenshot::Event::Init(_) => {}
+                        }
                     }
-                    screenshot::Event::RecordingStopped => {
-                        if let Err(err) = output.send(screenshot::Event::RecordingStopped).await {
-                            log::error!("Error sending RecordingStopped event: {:?}", err);
-                        };
+                    Some(cmd) = ctrl_rx.recv() => {
+                        if let Err(err) = output.send(PortalEvent::Control(cmd)).await {
+                            log::error!("Error sending control command: {:?}", err);
+                        }
                     }
-                    screenshot::Event::Init(_) => {}
                 }
             }
         }
@@ -836,7 +899,7 @@ pub(crate) async fn process_changes(
 /// Captures screens immediately on startup and triggers the UI
 pub(crate) fn direct_screenshot_subscription(
     helper: crate::wayland::WaylandHelper,
-) -> cosmic::iced::Subscription<screenshot::Event> {
+) -> cosmic::iced::Subscription<PortalEvent> {
     use crate::capture::image::ScreenshotImage;
     use crate::wayland::CaptureSource;
     use futures::stream::StreamExt;
@@ -861,8 +924,48 @@ pub(crate) fn direct_screenshot_subscription(
             // Create a channel for the Init event
             let (init_tx, _init_rx) = tokio::sync::mpsc::channel(1);
 
+            // Create control interface channel
+            let (ctrl_tx, mut ctrl_rx) = tokio::sync::mpsc::channel::<ControlCommand>(10);
+
+            // Register D-Bus control interface (no portal interface in direct mode)
+            let _connection = match zbus::connection::Builder::session() {
+                Ok(builder) => {
+                    match builder.name(DBUS_NAME) {
+                        Ok(builder) => {
+                            match builder.serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx)) {
+                                Ok(builder) => match builder.build().await {
+                                    Ok(conn) => {
+                                        log::info!(
+                                            "D-Bus control interface registered at {}",
+                                            CONTROL_PATH
+                                        );
+                                        Some(conn)
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to build D-Bus connection: {}", e);
+                                        None
+                                    }
+                                },
+                                Err(e) => {
+                                    log::warn!("Failed to serve D-Bus interface: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to claim D-Bus name: {}", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to setup D-Bus control interface: {}", e);
+                    None
+                }
+            };
+
             // Send Init event first
-            _ = output.send(screenshot::Event::Init(init_tx)).await;
+            _ = output.send(PortalEvent::Screenshot(screenshot::Event::Init(init_tx))).await;
 
             // Small delay to let the app initialize
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -1007,12 +1110,16 @@ pub(crate) fn direct_screenshot_subscription(
             };
 
             // Send the screenshot event to trigger the UI
-            if let Err(e) = output.send(screenshot::Event::Screenshot(args)).await {
+            if let Err(e) = output.send(PortalEvent::Screenshot(screenshot::Event::Screenshot(args))).await {
                 log::error!("Failed to send direct screenshot event: {}", e);
             }
 
-            // Keep the subscription alive (but idle) - the app handles everything else
-            futures::future::pending::<()>().await;
+            // Keep the subscription alive and handle control commands
+            while let Some(cmd) = ctrl_rx.recv().await {
+                if output.send(PortalEvent::Control(cmd)).await.is_err() {
+                    break;
+                }
+            }
         }),
     )
 }
@@ -1550,5 +1657,230 @@ fn render_recording_indicator(
             .width(Length::Fill)
             .height(Length::Fill)
             .into()
+    }
+}
+
+/// Subscription for D-Bus control interface
+/// This always runs to allow external processes to control the app
+pub(crate) fn control_subscription() -> Subscription<Msg> {
+    struct ControlSub;
+
+    Subscription::run_with_id(
+        TypeId::of::<ControlSub>(),
+        cosmic::iced_futures::stream::channel(10, |mut output| async move {
+            let (cmd_tx, mut cmd_rx) = tokio::sync::mpsc::channel::<ControlCommand>(10);
+
+            // Try to register the D-Bus control interface
+            let connection = match zbus::connection::Builder::session() {
+                Ok(builder) => {
+                    match builder.name(DBUS_NAME) {
+                        Ok(builder) => {
+                            match builder.serve_at(CONTROL_PATH, ControlInterface::new(cmd_tx)) {
+                                Ok(builder) => match builder.build().await {
+                                    Ok(conn) => {
+                                        log::info!(
+                                            "D-Bus control interface registered at {}",
+                                            CONTROL_PATH
+                                        );
+                                        Some(conn)
+                                    }
+                                    Err(e) => {
+                                        log::warn!("Failed to build D-Bus connection: {}", e);
+                                        None
+                                    }
+                                },
+                                Err(e) => {
+                                    log::warn!("Failed to serve D-Bus interface: {}", e);
+                                    None
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Failed to claim D-Bus name: {}", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    log::warn!("Failed to setup D-Bus control interface: {}", e);
+                    None
+                }
+            };
+
+            // Keep connection alive and forward commands
+            if connection.is_some() {
+                while let Some(cmd) = cmd_rx.recv().await {
+                    if output.send(Msg::Control(cmd)).await.is_err() {
+                        break;
+                    }
+                }
+            } else {
+                // No D-Bus connection, just keep the subscription alive
+                futures::future::pending::<()>().await;
+            }
+        }),
+    )
+}
+
+/// Trigger a screenshot capture (called from D-Bus control command)
+async fn trigger_screenshot(
+    helper: crate::wayland::WaylandHelper,
+    tx: tokio::sync::mpsc::Sender<screenshot::Event>,
+) {
+    use crate::capture::image::ScreenshotImage;
+    use crate::config::SnapPeaConfig;
+    use crate::core::portal::PortalResponse;
+    use crate::domain::{Choice, DragState, Rect};
+    use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
+    use crate::session::state::{
+        AnnotationState, CaptureData, DetectionState, PortalContext, SessionState, UiState,
+    };
+    use crate::wayland::CaptureSource;
+    use futures::StreamExt;
+    use std::collections::HashMap;
+
+    // Create a dummy channel for portal context
+    let (portal_tx, _portal_rx) = tokio::sync::mpsc::channel::<PortalResponse<ScreenshotResult>>(1);
+
+    // Capture screenshots
+    let outputs: Vec<_> = helper
+        .outputs()
+        .into_iter()
+        .filter_map(|wl_output| {
+            let info = helper.output_info(&wl_output)?;
+            Some((
+                wl_output,
+                info.name.clone()?,
+                info.logical_position?,
+                info.logical_size?,
+                info.scale_factor,
+            ))
+        })
+        .collect();
+
+    if outputs.is_empty() {
+        log::error!("No outputs found for screenshot");
+        return;
+    }
+
+    // Capture output images
+    let mut output_images = HashMap::new();
+    for (wl_output, name, _, _, _) in &outputs {
+        if let Some(frame) = helper
+            .capture_source_shm(CaptureSource::Output(wl_output.clone()), false)
+            .await
+        {
+            match ScreenshotImage::new(frame) {
+                Ok(img) => {
+                    output_images.insert(name.clone(), img);
+                }
+                Err(e) => {
+                    log::error!("Failed to create screenshot image for {}: {}", name, e);
+                }
+            }
+        }
+    }
+
+    // Capture toplevel images
+    let mut toplevel_images: HashMap<String, Vec<ScreenshotImage>> = HashMap::new();
+    for (wl_output, name, _, _, _) in &outputs {
+        let imgs: Vec<ScreenshotImage> = helper
+            .capture_output_toplevels_shm(wl_output, false)
+            .filter_map(|img| async { ScreenshotImage::new(img).ok() })
+            .collect()
+            .await;
+        toplevel_images.insert(name.clone(), imgs);
+    }
+
+    // Build global indices for toplevels
+    let all_toplevels = helper.all_toplevels();
+    let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
+        .iter()
+        .map(|(wl_output, name, _, _, _)| {
+            let output_toplevels = helper.output_toplevels(wl_output);
+            let global_indices: Vec<usize> = output_toplevels
+                .iter()
+                .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
+                .collect();
+            (name.clone(), global_indices)
+        })
+        .collect();
+
+    let config = SnapPeaConfig::load();
+    let choice = Choice::Rectangle(Rect::default(), DragState::default());
+
+    // Create screenshot Args
+    let args = screenshot::Args {
+        portal: PortalContext {
+            handle: zbus::zvariant::ObjectPath::try_from("/control/screenshot").unwrap(),
+            app_id: "control".to_string(),
+            parent_window: String::new(),
+            options: ScreenshotOptions {
+                modal: None,
+                interactive: Some(true),
+                choose_destination: None,
+            },
+            tx: portal_tx,
+        },
+        capture: CaptureData {
+            output_images,
+            toplevel_images,
+            toplevel_global_indices,
+        },
+        session: SessionState {
+            choice,
+            action: crate::domain::Action::ReturnPath,
+            location: crate::domain::ImageSaveLocation::Pictures,
+            highlighted_window_index: 0,
+            focused_output_index: 0,
+            also_copy_to_clipboard: false,
+            has_mouse_entered: false,
+        },
+        detection: DetectionState::default(),
+        annotations: AnnotationState::default(),
+        ui: UiState {
+            toolbar_position: config.toolbar_position,
+            settings_drawer_open: false,
+            settings_tab: crate::session::state::SettingsTab::General,
+            primary_shape_tool: config.primary_shape_tool,
+            shape_popup_open: false,
+            shape_color: config.shape_color,
+            shape_shadow: config.shape_shadow,
+            primary_redact_tool: config.primary_redact_tool,
+            redact_popup_open: false,
+            pixelation_block_size: config.pixelation_block_size,
+            magnifier_enabled: config.magnifier_enabled,
+            save_location_setting: config.save_location,
+            custom_save_path: config.custom_save_path.clone(),
+            video_save_location_setting: config.video_save_location,
+            video_custom_save_path: config.video_custom_save_path.clone(),
+            copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
+            toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
+            toolbar_is_hovered: false,
+            toolbar_opacity_save_id: 0,
+            tesseract_available: crate::capture::ocr::is_tesseract_available(),
+            available_encoders: Vec::new(),
+            encoder_displays: Vec::new(),
+            selected_encoder: config.video_encoder.clone(),
+            video_container: config.video_container,
+            video_framerate: config.video_framerate,
+            video_show_cursor: config.video_show_cursor,
+            is_video_mode: false,
+            is_recording: false,
+            recording_annotation_mode: false,
+            pencil_popup_open: false,
+            pencil_color: config.pencil_color,
+            pencil_fade_duration: config.pencil_fade_duration,
+            pencil_thickness: config.pencil_thickness,
+            toolbar_bounds: None,
+            timeline: cosmic_time::Timeline::new(),
+            hide_toolbar_to_tray: config.hide_toolbar_to_tray,
+            move_offset: None,
+        },
+    };
+
+    // Send the screenshot event
+    if let Err(e) = tx.send(screenshot::Event::Screenshot(args)).await {
+        log::error!("Failed to send screenshot event: {}", e);
     }
 }
