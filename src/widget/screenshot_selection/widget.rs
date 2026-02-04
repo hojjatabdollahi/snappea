@@ -1869,10 +1869,6 @@ where
             }
         }
 
-        if self.is_any_drawing_mode() && cursor.position().is_some() {
-            return cosmic::iced::mouse::Interaction::Crosshair;
-        }
-
         let mut children: Vec<&Element<'_, Msg>> = vec![
             &self.bg_element,
             &self.fg_element,
@@ -1913,6 +1909,7 @@ where
 
         // Check menu_element (toolbar) - index 3
         // Return its cursor even if default (Idle) since toolbar should show normal arrow
+        // This must be checked BEFORE drawing mode to keep toolbar usable
         if layout_children.len() > 3 {
             let menu_layout = layout_children[3];
             if cursor.is_over(menu_layout.bounds()) {
@@ -1921,6 +1918,28 @@ where
                     .as_widget()
                     .mouse_interaction(tree, menu_layout, cursor, viewport, renderer);
                 return interaction;
+            }
+        }
+
+        // If in drawing mode (annotation active), show appropriate cursor based on position
+        if self.is_any_drawing_mode() {
+            if let Some(cursor_pos) = cursor.position() {
+                // Check if cursor is inside the selection region
+                if let Some((x, y, w, h)) = self.selection_rect {
+                    let selection_bounds = cosmic::iced_core::Rectangle {
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    };
+                    if selection_bounds.contains(cursor_pos) {
+                        return cosmic::iced::mouse::Interaction::Crosshair;
+                    } else {
+                        return cosmic::iced::mouse::Interaction::NotAllowed;
+                    }
+                }
+                // No selection, show crosshair everywhere
+                return cosmic::iced::mouse::Interaction::Crosshair;
             }
         }
 
