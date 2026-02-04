@@ -106,7 +106,13 @@ app-author = by Hojjat Abdollahi
 save-location = Save to:
 pictures = Pictures
 documents = Documents
+custom = Custom
+browse = Browse...
 copy-on-save = Copy on save
+
+# Settings drawer - Video save location
+video-save-location = Save videos to:
+videos = Videos
 
 # Settings drawer - Video
 encoder = Encoder:

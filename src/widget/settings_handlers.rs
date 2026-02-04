@@ -4,7 +4,7 @@
 //!          SetSaveLocation, ToggleCopyOnSave, SetVideoEncoder, SetVideoContainer,
 //!          SetVideoFramerate
 
-use crate::config::{Container, SaveLocation, SnapPeaConfig, ToolbarPosition};
+use crate::config::{Container, SaveLocationChoice, SnapPeaConfig, ToolbarPosition, VideoSaveLocationChoice};
 use crate::screenshot::Args;
 use crate::screenshot::handlers::HandlerResult;
 
@@ -42,7 +42,7 @@ pub fn handle_toggle_magnifier(args: &mut Args) -> HandlerResult {
 
 /// Handle SetSaveLocationPictures message
 pub fn handle_set_save_location_pictures(args: &mut Args) -> HandlerResult {
-    args.ui.save_location_setting = SaveLocation::Pictures;
+    args.ui.save_location_setting = SaveLocationChoice::Pictures;
     let mut config = SnapPeaConfig::load();
     config.save_location = args.ui.save_location_setting;
     config.save();
@@ -51,12 +51,54 @@ pub fn handle_set_save_location_pictures(args: &mut Args) -> HandlerResult {
 
 /// Handle SetSaveLocationDocuments message
 pub fn handle_set_save_location_documents(args: &mut Args) -> HandlerResult {
-    args.ui.save_location_setting = SaveLocation::Documents;
+    args.ui.save_location_setting = SaveLocationChoice::Documents;
     let mut config = SnapPeaConfig::load();
     config.save_location = args.ui.save_location_setting;
     config.save();
     cosmic::Task::none()
 }
+
+/// Handle SetSaveLocationCustom message
+pub fn handle_set_save_location_custom(args: &mut Args) -> HandlerResult {
+    args.ui.save_location_setting = SaveLocationChoice::Custom;
+    let mut config = SnapPeaConfig::load();
+    config.save_location = args.ui.save_location_setting;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetCustomSavePath message
+pub fn handle_set_custom_save_path(args: &mut Args, path: String) -> HandlerResult {
+    args.ui.custom_save_path = path.clone();
+    let mut config = SnapPeaConfig::load();
+    config.custom_save_path = path;
+    config.save();
+    cosmic::Task::none()
+}
+
+// Note: BrowseSaveLocation is handled specially in screenshot/mod.rs
+// to support hiding/restoring the overlay when the file dialog opens.
+
+/// Handle SetVideoSaveLocation message
+pub fn handle_set_video_save_location(args: &mut Args, loc: VideoSaveLocationChoice) -> HandlerResult {
+    args.ui.video_save_location_setting = loc;
+    let mut config = SnapPeaConfig::load();
+    config.video_save_location = loc;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetVideoCustomSavePath message
+pub fn handle_set_video_custom_save_path(args: &mut Args, path: String) -> HandlerResult {
+    args.ui.video_custom_save_path = path.clone();
+    let mut config = SnapPeaConfig::load();
+    config.video_custom_save_path = path;
+    config.save();
+    cosmic::Task::none()
+}
+
+// Note: BrowseVideoSaveLocation is handled specially in screenshot/mod.rs
+// to support hiding/restoring the overlay when the file dialog opens.
 
 /// Handle ToggleCopyOnSave message
 pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {

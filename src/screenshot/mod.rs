@@ -24,14 +24,13 @@ use crate::capture::ocr::{
     run_ocr_on_image_with_status,
 };
 use crate::capture::qr::{DetectedQrCode, detect_qr_codes_at_resolution, is_duplicate_qr};
-use crate::config::{SaveLocation, SnapPeaConfig};
+use crate::config::{SaveLocationChoice, SnapPeaConfig};
 use crate::core::app::{App, OutputState, RecordingIndicator};
 use crate::core::portal::PortalResponse;
 pub use crate::domain::{Action, Choice, DragState, ImageSaveLocation, Rect, RectDimension};
 use crate::render::image::draw_annotations_in_order;
 use crate::session::messages::{
-    CaptureMsg, DetectMsg, Direction, DrawMsg, Msg, OcrMsg, QrMsg, SaveLocationChoice, SelectMsg,
-    SettingsMsg, ToolMsg,
+    CaptureMsg, DetectMsg, Direction, DrawMsg, Msg, OcrMsg, QrMsg, SelectMsg, SettingsMsg, ToolMsg,
 };
 use crate::session::state::{
     AnnotationState, CaptureData, DetectionState, PortalContext, SessionState, UiState,
@@ -136,15 +135,19 @@ impl Screenshot {
         Ok(write_png(buffer, img)?)
     }
 
-    pub fn get_img_path(location: ImageSaveLocation) -> Option<PathBuf> {
-        let mut path = match location {
-            ImageSaveLocation::Pictures => {
+    pub fn get_img_path(location: ImageSaveLocation, custom_dir: Option<&str>) -> Option<PathBuf> {
+        let mut path = match (location, custom_dir) {
+            (_, Some(custom)) if !custom.is_empty() => {
+                // Use custom directory if provided and non-empty
+                Some(PathBuf::from(custom))
+            }
+            (ImageSaveLocation::Pictures, _) => {
                 dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
             }
-            ImageSaveLocation::Documents => {
+            (ImageSaveLocation::Documents, _) => {
                 dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")))
             }
-            ImageSaveLocation::Clipboard => None,
+            (ImageSaveLocation::Clipboard, _) => None,
         }?;
         let name = chrono::Local::now()
             .format("Screenshot_%Y-%m-%d_%H-%M-%S.png")
@@ -441,6 +444,9 @@ impl Screenshot {
                         pixelation_block_size: config.pixelation_block_size,
                         magnifier_enabled: config.magnifier_enabled,
                         save_location_setting: config.save_location,
+                        custom_save_path: config.custom_save_path.clone(),
+                        video_save_location_setting: config.video_save_location,
+                        video_custom_save_path: config.video_custom_save_path.clone(),
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
                         toolbar_is_hovered: false,
@@ -768,6 +774,86 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
         return cosmic::Task::none();
     }
 
+    // Handle BrowseSaveLocation specially - need to hide overlay, open dialog, then restore
+    if let SettingsMsg::BrowseSaveLocation = msg {
+        // Destroy layer surfaces (but keep screenshot_args intact)
+        let destroy_tasks: Vec<_> = app
+            .outputs
+            .iter()
+            .map(|o| destroy_layer_surface(o.id))
+            .collect();
+
+        // Open file dialog and send result
+        let dialog_task = cosmic::Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("Select save location for screenshots")
+                    .pick_folder()
+                    .await
+                    .map(|handle| handle.path().to_string_lossy().to_string())
+            },
+            |result| {
+                crate::core::app::Msg::Screenshot(crate::session::messages::Msg::browse_save_location_result(result))
+            },
+        );
+
+        return cosmic::Task::batch(destroy_tasks).chain(dialog_task);
+    }
+
+    // Handle BrowseSaveLocationResult - restore overlay and optionally set path
+    if let SettingsMsg::BrowseSaveLocationResult(path) = msg {
+        // If a path was selected, update settings
+        if let Some(path) = path {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.custom_save_path = path.clone();
+                let mut config = SnapPeaConfig::load();
+                config.custom_save_path = path;
+                config.save();
+            }
+        }
+
+        // Recreate layer surfaces
+        return recreate_screenshot_surfaces(app);
+    }
+
+    // Handle BrowseVideoSaveLocation specially - same pattern
+    if let SettingsMsg::BrowseVideoSaveLocation = msg {
+        let destroy_tasks: Vec<_> = app
+            .outputs
+            .iter()
+            .map(|o| destroy_layer_surface(o.id))
+            .collect();
+
+        let dialog_task = cosmic::Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("Select save location for videos")
+                    .pick_folder()
+                    .await
+                    .map(|handle| handle.path().to_string_lossy().to_string())
+            },
+            |result| {
+                crate::core::app::Msg::Screenshot(crate::session::messages::Msg::browse_video_save_location_result(result))
+            },
+        );
+
+        return cosmic::Task::batch(destroy_tasks).chain(dialog_task);
+    }
+
+    // Handle BrowseVideoSaveLocationResult - restore overlay and optionally set path
+    if let SettingsMsg::BrowseVideoSaveLocationResult(path) = msg {
+        if let Some(path) = path {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.video_custom_save_path = path.clone();
+                let mut config = SnapPeaConfig::load();
+                config.video_custom_save_path = path;
+                config.save();
+            }
+        }
+
+        return recreate_screenshot_surfaces(app);
+    }
+
     with_args!(app, |args| {
         match msg {
             SettingsMsg::ToolbarPosition(pos) => {
@@ -785,7 +871,35 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 SaveLocationChoice::Documents => {
                     settings_handlers::handle_set_save_location_documents(args)
                 }
+                SaveLocationChoice::Custom => {
+                    settings_handlers::handle_set_save_location_custom(args)
+                }
             },
+            SettingsMsg::SetCustomSavePath(path) => {
+                settings_handlers::handle_set_custom_save_path(args, path)
+            }
+            SettingsMsg::BrowseSaveLocation => {
+                // Already handled above (special handling for overlay hide/restore)
+                cosmic::Task::none()
+            }
+            SettingsMsg::BrowseSaveLocationResult(_) => {
+                // Already handled above
+                cosmic::Task::none()
+            }
+            SettingsMsg::SetVideoSaveLocation(loc) => {
+                settings_handlers::handle_set_video_save_location(args, loc)
+            }
+            SettingsMsg::SetVideoCustomSavePath(path) => {
+                settings_handlers::handle_set_video_custom_save_path(args, path)
+            }
+            SettingsMsg::BrowseVideoSaveLocation => {
+                // Already handled above (special handling for overlay hide/restore)
+                cosmic::Task::none()
+            }
+            SettingsMsg::BrowseVideoSaveLocationResult(_) => {
+                // Already handled above
+                cosmic::Task::none()
+            }
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
             SettingsMsg::SettingsTabActivated(_) => {
                 // Already handled above
@@ -903,8 +1017,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         CaptureMsg::SaveToPictures => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.session.location = match args.ui.save_location_setting {
-                    SaveLocation::Pictures => ImageSaveLocation::Pictures,
-                    SaveLocation::Documents => ImageSaveLocation::Documents,
+                    SaveLocationChoice::Pictures => ImageSaveLocation::Pictures,
+                    SaveLocationChoice::Documents => ImageSaveLocation::Documents,
+                    SaveLocationChoice::Custom => {
+                        // For custom save location, we use Pictures as the base
+                        // but the actual path is handled in save_screenshot
+                        ImageSaveLocation::Pictures
+                    }
                 };
                 if args.ui.copy_to_clipboard_on_save {
                     args.session.also_copy_to_clipboard = true;
@@ -1500,6 +1619,7 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
         capture,
         session,
         annotations: args_annotations,
+        ui,
         ..
     } = args;
     let tx = portal.tx;
@@ -1513,8 +1633,16 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
     // Only use annotations up to annotation_index (respects undo)
     let annotations = &annotations[..annotation_index];
 
+    // Determine custom save path based on save location setting
+    let custom_dir = match ui.save_location_setting {
+        SaveLocationChoice::Custom if !ui.custom_save_path.is_empty() => {
+            Some(ui.custom_save_path.as_str())
+        }
+        _ => None,
+    };
+
     let mut success = true;
-    let image_path = Screenshot::get_img_path(location);
+    let image_path = Screenshot::get_img_path(location, custom_dir);
 
     match choice {
         Choice::Output(Some(output_name)) => {
@@ -2640,4 +2768,36 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
         log::info!("Existing screenshot args updated (windows already exist)");
         indicator_cleanup
     }
+}
+
+/// Recreate screenshot layer surfaces after they were temporarily destroyed
+/// (e.g., to show a file dialog).
+/// This generates new window IDs and creates new layer surfaces.
+fn recreate_screenshot_surfaces(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
+    // Generate fresh window IDs for this session
+    for output in &mut app.outputs {
+        output.id = window::Id::unique();
+    }
+
+    let cmds: Vec<_> = app
+        .outputs
+        .iter()
+        .map(|OutputState { output, id, .. }| {
+            get_layer_surface(SctkLayerSurfaceSettings {
+                id: *id,
+                layer: Layer::Overlay,
+                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                input_zone: None,
+                anchor: Anchor::all(),
+                output: IcedOutput::Output(output.clone()),
+                namespace: "snappea".to_string(),
+                size: Some((None, None)),
+                exclusive_zone: -1,
+                size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                ..Default::default()
+            })
+        })
+        .collect();
+
+    cosmic::Task::batch(cmds)
 }

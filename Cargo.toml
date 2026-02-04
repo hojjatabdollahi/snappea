@@ -27,6 +27,7 @@ memmap2 = "0.9.8"
 # OCR backends
 rusty-tesseract = "1.1.10"
 png = "0.18"
+rfd = "0.15"
 rqrr = "0.10"
 rustix = { version = "1.1", features = ["fs"] }
 nix = { version = "0.31", features = ["signal", "process"] }

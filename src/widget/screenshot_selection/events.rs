@@ -144,6 +144,16 @@ pub enum SettingsEvent {
     SaveLocationPictures,
     /// Save location set to Documents
     SaveLocationDocuments,
+    /// Save location set to Custom
+    SaveLocationCustom,
+    /// Browse for custom save location (screenshots)
+    BrowseSaveLocation,
+    /// Video save location set to Videos
+    VideoSaveLocationVideos,
+    /// Video save location set to Custom
+    VideoSaveLocationCustom,
+    /// Browse for custom save location (videos)
+    BrowseVideoSaveLocation,
     /// Copy on save toggled
     CopyOnSaveToggle,
     /// Settings tab activated (by entity from segmented button)
@@ -436,6 +446,26 @@ impl ScreenshotEvent {
         Self::Settings(SettingsEvent::SaveLocationDocuments)
     }
 
+    pub fn save_location_custom() -> Self {
+        Self::Settings(SettingsEvent::SaveLocationCustom)
+    }
+
+    pub fn browse_save_location() -> Self {
+        Self::Settings(SettingsEvent::BrowseSaveLocation)
+    }
+
+    pub fn video_save_location_videos() -> Self {
+        Self::Settings(SettingsEvent::VideoSaveLocationVideos)
+    }
+
+    pub fn video_save_location_custom() -> Self {
+        Self::Settings(SettingsEvent::VideoSaveLocationCustom)
+    }
+
+    pub fn browse_video_save_location() -> Self {
+        Self::Settings(SettingsEvent::BrowseVideoSaveLocation)
+    }
+
     pub fn copy_on_save_toggle() -> Self {
         Self::Settings(SettingsEvent::CopyOnSaveToggle)
     }
@@ -662,6 +692,17 @@ impl ScreenshotEvent {
             }
             Self::Settings(SettingsEvent::SaveLocationDocuments) => {
                 Msg::set_save_location_documents()
+            }
+            Self::Settings(SettingsEvent::SaveLocationCustom) => Msg::set_save_location_custom(),
+            Self::Settings(SettingsEvent::BrowseSaveLocation) => Msg::browse_save_location(),
+            Self::Settings(SettingsEvent::VideoSaveLocationVideos) => {
+                Msg::set_video_save_location_videos()
+            }
+            Self::Settings(SettingsEvent::VideoSaveLocationCustom) => {
+                Msg::set_video_save_location_custom()
+            }
+            Self::Settings(SettingsEvent::BrowseVideoSaveLocation) => {
+                Msg::browse_video_save_location()
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
             Self::Settings(SettingsEvent::TabActivated(entity)) => {

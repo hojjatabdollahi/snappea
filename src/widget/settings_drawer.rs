@@ -1,13 +1,13 @@
 //! Settings drawer widget that opens relative to the toolbar
 
-use cosmic::Element;
 use cosmic::iced::Length;
 use cosmic::iced_core::Border;
 use cosmic::iced_widget::{column, row, toggler};
 use cosmic::widget::{container, dropdown, radio, segmented_button, tab_bar, text};
+use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
-use crate::config::{Container, SaveLocation, ToolbarPosition};
+use crate::config::{Container, SaveLocationChoice, ToolbarPosition, VideoSaveLocationChoice};
 use crate::fl;
 use crate::session::state::SettingsTab;
 
@@ -23,9 +23,18 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     _toolbar_position: ToolbarPosition,
     magnifier_enabled: bool,
     on_magnifier_toggle: Msg,
-    save_location: SaveLocation,
+    save_location: SaveLocationChoice,
+    custom_save_path: &'a str,
     on_save_location_pictures: Msg,
     on_save_location_documents: Msg,
+    on_save_location_custom: Msg,
+    on_browse_save_location: Msg,
+    // Video save location
+    video_save_location: VideoSaveLocationChoice,
+    video_custom_save_path: &'a str,
+    on_video_save_location_videos: Msg,
+    on_video_save_location_custom: Msg,
+    on_browse_video_save_location: Msg,
     copy_to_clipboard_on_save: bool,
     on_copy_on_save_toggle: Msg,
     on_github_click: Msg,
@@ -78,21 +87,46 @@ where
 
     let pictures_radio = radio(
         text::body(fl!("pictures")),
-        SaveLocation::Pictures,
+        SaveLocationChoice::Pictures,
         Some(save_location),
         move |_| on_save_location_pictures.clone(),
     );
 
     let documents_radio = radio(
         text::body(fl!("documents")),
-        SaveLocation::Documents,
+        SaveLocationChoice::Documents,
         Some(save_location),
         move |_| on_save_location_documents.clone(),
     );
 
-    let save_location_row = row![pictures_radio, documents_radio,]
-        .spacing(space_s)
-        .align_y(cosmic::iced_core::Alignment::Center);
+    let custom_radio = radio(
+        text::body(fl!("custom")),
+        SaveLocationChoice::Custom,
+        Some(save_location),
+        move |_| on_save_location_custom.clone(),
+    );
+
+    let save_location_row = cosmic::widget::flex_row(vec![
+        pictures_radio.into(),
+        documents_radio.into(),
+        custom_radio.into(),
+    ])
+    .row_spacing(space_xs)
+    .column_spacing(space_s);
+
+    // Custom path display and browse button (only shown when Custom is selected)
+    let custom_path_row: Element<'_, Msg> = if save_location == SaveLocationChoice::Custom {
+        let path_display = text::body(custom_save_path).width(Length::Fill);
+        let browse_button = cosmic::widget::button::standard(fl!("browse"))
+            .on_press(on_browse_save_location.clone());
+        row![path_display, browse_button]
+            .spacing(space_s)
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .width(Length::Fill)
+            .into()
+    } else {
+        cosmic::widget::horizontal_space().width(0).into()
+    };
 
     // Copy to clipboard on save toggle
     let copy_on_save_row = row![
@@ -116,6 +150,43 @@ where
     let toolbar_opacity_section = column![toolbar_opacity_label, toolbar_opacity_slider]
         .spacing(space_xs)
         .width(Length::Fill);
+
+    // Video save location section
+    let video_save_location_label = text::body(fl!("video-save-location"));
+
+    let videos_radio = radio(
+        text::body(fl!("videos")),
+        VideoSaveLocationChoice::Videos,
+        Some(video_save_location),
+        move |_| on_video_save_location_videos.clone(),
+    );
+
+    let video_custom_radio = radio(
+        text::body(fl!("custom")),
+        VideoSaveLocationChoice::Custom,
+        Some(video_save_location),
+        move |_| on_video_save_location_custom.clone(),
+    );
+
+    let video_save_location_row =
+        cosmic::widget::flex_row(vec![videos_radio.into(), video_custom_radio.into()])
+            .row_spacing(space_xs)
+            .column_spacing(space_s);
+
+    // Video custom path display and browse button (only shown when Custom is selected)
+    let video_custom_path_row: Element<'_, Msg> =
+        if video_save_location == VideoSaveLocationChoice::Custom {
+            let path_display = text::body(video_custom_save_path).width(Length::Fill);
+            let browse_button = cosmic::widget::button::standard(fl!("browse"))
+                .on_press(on_browse_video_save_location.clone());
+            row![path_display, browse_button]
+                .spacing(space_s)
+                .align_y(cosmic::iced_core::Alignment::Center)
+                .width(Length::Fill)
+                .into()
+        } else {
+            cosmic::widget::horizontal_space().width(0).into()
+        };
 
     // Encoder selection using dropdown
     let encoder_label = text::body(fl!("encoder"));
@@ -243,6 +314,7 @@ where
     let picture_tab_content: Element<'_, Msg> = column![
         save_location_label,
         save_location_row,
+        custom_path_row,
         cosmic::widget::divider::horizontal::light(),
         copy_on_save_row,
     ]
@@ -278,6 +350,10 @@ where
     .width(Length::Fill);
 
     let video_tab_content: Element<'_, Msg> = column![
+        video_save_location_label,
+        video_save_location_row,
+        video_custom_path_row,
+        cosmic::widget::divider::horizontal::light(),
         encoder_row,
         cosmic::widget::divider::horizontal::light(),
         container_row,

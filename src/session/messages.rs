@@ -221,12 +221,8 @@ pub enum DetectMsg {
 // Settings/UI Types
 // ============================================================================
 
-/// Save location for screenshots
-#[derive(Debug, Clone, Copy)]
-pub enum SaveLocationChoice {
-    Pictures,
-    Documents,
-}
+// Re-export SaveLocationChoice and VideoSaveLocationChoice from config
+pub use crate::config::{SaveLocationChoice, VideoSaveLocationChoice};
 
 /// Settings and UI messages
 #[derive(Debug, Clone)]
@@ -239,6 +235,20 @@ pub enum SettingsMsg {
     ToggleMagnifier,
     /// Set save location
     SetSaveLocation(SaveLocationChoice),
+    /// Set custom save path for screenshots
+    SetCustomSavePath(String),
+    /// Browse for custom save location for screenshots (hides overlay, opens dialog)
+    BrowseSaveLocation,
+    /// Browse result: restore overlay and optionally set path
+    BrowseSaveLocationResult(Option<String>),
+    /// Set video save location
+    SetVideoSaveLocation(VideoSaveLocationChoice),
+    /// Set custom save path for videos
+    SetVideoCustomSavePath(String),
+    /// Browse for custom save location for videos (hides overlay, opens dialog)
+    BrowseVideoSaveLocation,
+    /// Browse video result: restore overlay and optionally set path
+    BrowseVideoSaveLocationResult(Option<String>),
     /// Toggle copy to clipboard on save
     ToggleCopyOnSave,
     /// Settings tab activated (by segmented button entity)
@@ -526,6 +536,37 @@ impl Msg {
     }
     pub fn set_save_location_documents() -> Self {
         Self::Settings(SettingsMsg::SetSaveLocation(SaveLocationChoice::Documents))
+    }
+    pub fn set_save_location_custom() -> Self {
+        Self::Settings(SettingsMsg::SetSaveLocation(SaveLocationChoice::Custom))
+    }
+    pub fn set_custom_save_path(path: String) -> Self {
+        Self::Settings(SettingsMsg::SetCustomSavePath(path))
+    }
+    pub fn browse_save_location() -> Self {
+        Self::Settings(SettingsMsg::BrowseSaveLocation)
+    }
+    pub fn browse_save_location_result(path: Option<String>) -> Self {
+        Self::Settings(SettingsMsg::BrowseSaveLocationResult(path))
+    }
+    pub fn set_video_save_location_videos() -> Self {
+        Self::Settings(SettingsMsg::SetVideoSaveLocation(
+            VideoSaveLocationChoice::Videos,
+        ))
+    }
+    pub fn set_video_save_location_custom() -> Self {
+        Self::Settings(SettingsMsg::SetVideoSaveLocation(
+            VideoSaveLocationChoice::Custom,
+        ))
+    }
+    pub fn set_video_custom_save_path(path: String) -> Self {
+        Self::Settings(SettingsMsg::SetVideoCustomSavePath(path))
+    }
+    pub fn browse_video_save_location() -> Self {
+        Self::Settings(SettingsMsg::BrowseVideoSaveLocation)
+    }
+    pub fn browse_video_save_location_result(path: Option<String>) -> Self {
+        Self::Settings(SettingsMsg::BrowseVideoSaveLocationResult(path))
     }
     pub fn toggle_copy_on_save() -> Self {
         Self::Settings(SettingsMsg::ToggleCopyOnSave)
