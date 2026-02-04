@@ -1337,6 +1337,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             log::info!("Capture mode toggled: is_video_mode = {}", is_video);
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.is_video_mode = is_video;
+                // Close all popups and disable all annotation modes when switching
+                args.close_all_popups();
+                args.disable_all_modes();
                 // Set up the animation chain
                 let chain = if is_video {
                     crate::widget::icon_toggle::toggle_to_video()
