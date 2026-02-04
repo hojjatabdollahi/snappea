@@ -4,6 +4,8 @@ use cosmic::cosmic_config::{self, cosmic_config_derive::CosmicConfigEntry, Cosmi
 use cosmic::iced::Color;
 use serde::{Deserialize, Serialize};
 
+use crate::fl;
+
 /// Serializable color representation for config storage
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct ShapeColor {
@@ -51,12 +53,21 @@ impl ShapeColor {
     }
 }
 
-/// Save location for screenshots (Pictures or Documents)
+/// Save location choice for UI selection
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum SaveLocation {
+pub enum SaveLocationChoice {
     #[default]
     Pictures,
     Documents,
+    Custom,
+}
+
+/// Save location choice for videos
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub enum VideoSaveLocationChoice {
+    #[default]
+    Videos,
+    Custom,
 }
 
 /// Shape annotation tool type (for split button selection)
@@ -88,11 +99,11 @@ impl ShapeTool {
     }
 
     /// Get the tooltip text for this shape tool
-    pub fn tooltip(self) -> &'static str {
+    pub fn tooltip(self) -> String {
         match self {
-            ShapeTool::Arrow => "Draw Arrow (A, right-click for settings)",
-            ShapeTool::Circle => "Draw Circle (A, Ctrl for perfect, right-click for settings)",
-            ShapeTool::Rectangle => "Draw Rectangle (A, Ctrl for square, right-click for settings)",
+            ShapeTool::Arrow => fl!("draw-arrow"),
+            ShapeTool::Circle => fl!("draw-circle"),
+            ShapeTool::Rectangle => fl!("draw-rectangle"),
         }
     }
 }
@@ -133,10 +144,10 @@ impl RedactTool {
     }
 
     /// Get the tooltip text for this redact tool
-    pub fn tooltip(self) -> &'static str {
+    pub fn tooltip(self) -> String {
         match self {
-            RedactTool::Redact => "Redact (D, right-click for settings)",
-            RedactTool::Pixelate => "Pixelate (D, right-click for settings)",
+            RedactTool::Redact => fl!("redact-tool"),
+            RedactTool::Pixelate => fl!("pixelate-tool"),
         }
     }
 
@@ -184,8 +195,17 @@ impl Container {
 pub struct SnapPeaConfig {
     /// Whether to show the magnifier when dragging selection corners
     pub magnifier_enabled: bool,
-    /// Where to save screenshots (Pictures or Documents folder)
-    pub save_location: SaveLocation,
+    /// Where to save screenshots (Pictures, Documents, or Custom)
+    pub save_location: SaveLocationChoice,
+    /// Custom path for saving screenshots (used when save_location is Custom)
+    #[serde(default = "default_custom_save_path")]
+    pub custom_save_path: String,
+    /// Where to save videos (Videos or Custom)
+    #[serde(default)]
+    pub video_save_location: VideoSaveLocationChoice,
+    /// Custom path for saving videos (used when video_save_location is Custom)
+    #[serde(default = "default_video_custom_save_path")]
+    pub video_custom_save_path: String,
     /// Whether to also copy to clipboard when saving to file
     pub copy_to_clipboard_on_save: bool,
     /// Primary shape tool shown in the button
@@ -245,6 +265,20 @@ fn default_toolbar_unhovered_opacity() -> f32 {
     0.5
 }
 
+fn default_custom_save_path() -> String {
+    dirs::picture_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string()
+}
+
+fn default_video_custom_save_path() -> String {
+    dirs::video_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .to_string_lossy()
+        .to_string()
+}
+
 impl SnapPeaConfig {
     /// Configuration ID for cosmic-config
     pub const ID: &'static str = "io.github.hojjatabdollahi.snappea";
@@ -287,7 +321,11 @@ impl Default for SnapPeaConfig {
             // Magnifier enabled by default for precise selection
             magnifier_enabled: true,
             // Default to Pictures folder
-            save_location: SaveLocation::Pictures,
+            save_location: SaveLocationChoice::Pictures,
+            custom_save_path: default_custom_save_path(),
+            // Video save location defaults
+            video_save_location: VideoSaveLocationChoice::Videos,
+            video_custom_save_path: default_video_custom_save_path(),
             // Don't copy to clipboard by default when saving
             copy_to_clipboard_on_save: false,
             // Default to Arrow as primary shape tool

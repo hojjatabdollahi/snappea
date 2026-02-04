@@ -4,9 +4,9 @@
 //!          SetSaveLocation, ToggleCopyOnSave, SetVideoEncoder, SetVideoContainer,
 //!          SetVideoFramerate
 
-use crate::config::{Container, SaveLocation, SnapPeaConfig, ToolbarPosition};
-use crate::screenshot::handlers::HandlerResult;
+use crate::config::{Container, SaveLocationChoice, SnapPeaConfig, ToolbarPosition, VideoSaveLocationChoice};
 use crate::screenshot::Args;
+use crate::screenshot::handlers::HandlerResult;
 
 /// Handle ToolbarPositionChange message
 pub fn handle_toolbar_position_change(args: &mut Args, position: ToolbarPosition) -> HandlerResult {
@@ -42,7 +42,7 @@ pub fn handle_toggle_magnifier(args: &mut Args) -> HandlerResult {
 
 /// Handle SetSaveLocationPictures message
 pub fn handle_set_save_location_pictures(args: &mut Args) -> HandlerResult {
-    args.ui.save_location_setting = SaveLocation::Pictures;
+    args.ui.save_location_setting = SaveLocationChoice::Pictures;
     let mut config = SnapPeaConfig::load();
     config.save_location = args.ui.save_location_setting;
     config.save();
@@ -51,12 +51,54 @@ pub fn handle_set_save_location_pictures(args: &mut Args) -> HandlerResult {
 
 /// Handle SetSaveLocationDocuments message
 pub fn handle_set_save_location_documents(args: &mut Args) -> HandlerResult {
-    args.ui.save_location_setting = SaveLocation::Documents;
+    args.ui.save_location_setting = SaveLocationChoice::Documents;
     let mut config = SnapPeaConfig::load();
     config.save_location = args.ui.save_location_setting;
     config.save();
     cosmic::Task::none()
 }
+
+/// Handle SetSaveLocationCustom message
+pub fn handle_set_save_location_custom(args: &mut Args) -> HandlerResult {
+    args.ui.save_location_setting = SaveLocationChoice::Custom;
+    let mut config = SnapPeaConfig::load();
+    config.save_location = args.ui.save_location_setting;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetCustomSavePath message
+pub fn handle_set_custom_save_path(args: &mut Args, path: String) -> HandlerResult {
+    args.ui.custom_save_path = path.clone();
+    let mut config = SnapPeaConfig::load();
+    config.custom_save_path = path;
+    config.save();
+    cosmic::Task::none()
+}
+
+// Note: BrowseSaveLocation is handled specially in screenshot/mod.rs
+// to support hiding/restoring the overlay when the file dialog opens.
+
+/// Handle SetVideoSaveLocation message
+pub fn handle_set_video_save_location(args: &mut Args, loc: VideoSaveLocationChoice) -> HandlerResult {
+    args.ui.video_save_location_setting = loc;
+    let mut config = SnapPeaConfig::load();
+    config.video_save_location = loc;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle SetVideoCustomSavePath message
+pub fn handle_set_video_custom_save_path(args: &mut Args, path: String) -> HandlerResult {
+    args.ui.video_custom_save_path = path.clone();
+    let mut config = SnapPeaConfig::load();
+    config.video_custom_save_path = path;
+    config.save();
+    cosmic::Task::none()
+}
+
+// Note: BrowseVideoSaveLocation is handled specially in screenshot/mod.rs
+// to support hiding/restoring the overlay when the file dialog opens.
 
 /// Handle ToggleCopyOnSave message
 pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {
@@ -87,18 +129,22 @@ pub fn handle_set_toolbar_opacity(args: &mut Args, opacity: f32) -> HandlerResul
             (opacity, save_id)
         },
         |(opacity, save_id)| {
-            crate::core::app::Msg::Screenshot(
-                crate::session::messages::Msg::Settings(
-                    crate::session::messages::SettingsMsg::SaveToolbarOpacityDebounced(opacity, save_id)
-                )
-            )
-        }
+            crate::core::app::Msg::Screenshot(crate::session::messages::Msg::Settings(
+                crate::session::messages::SettingsMsg::SaveToolbarOpacityDebounced(
+                    opacity, save_id,
+                ),
+            ))
+        },
     )
 }
 
 /// Handle SaveToolbarOpacityDebounced message
 /// Only saves to config if the save ID matches (no newer changes)
-pub fn handle_save_toolbar_opacity_debounced(args: &mut Args, opacity: f32, save_id: u64) -> HandlerResult {
+pub fn handle_save_toolbar_opacity_debounced(
+    args: &mut Args,
+    opacity: f32,
+    save_id: u64,
+) -> HandlerResult {
     // Only save if this is still the latest change (ID matches)
     if args.ui.toolbar_opacity_save_id == save_id {
         let mut config = SnapPeaConfig::load();

@@ -57,10 +57,18 @@ fn calculate_aligned_crop(
 
     log::debug!(
         "Crop alignment: input {}x{}, region ({},{} {}x{}) -> aligned {}x{}, crop l={} t={} r={} b={}",
-        capture_width, capture_height,
-        clamped_left, clamped_top, clamped_width, clamped_height,
-        aligned_width, aligned_height,
-        clamped_left, clamped_top, right, bottom
+        capture_width,
+        capture_height,
+        clamped_left,
+        clamped_top,
+        clamped_width,
+        clamped_height,
+        aligned_width,
+        aligned_height,
+        clamped_left,
+        clamped_top,
+        right,
+        bottom
     );
 
     (

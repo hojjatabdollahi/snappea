@@ -2,14 +2,14 @@
 
 use std::rc::Rc;
 
+use cosmic::Element;
 use cosmic::iced::Length;
-use cosmic::iced_core::{layout, widget::Tree, Background, Border, Color, Layout, Size};
+use cosmic::iced_core::{Background, Border, Color, Layout, Size, layout, widget::Tree};
 use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
 use cosmic::iced_widget::{canvas, column, container, row};
 use cosmic::widget::{button, icon, text, tooltip};
-use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
+use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
 
 /// Animation ID for toolbar hover opacity
 pub static TOOLBAR_HOVER_ID: Lazy<cosmic_time::id::Toggler> =
@@ -167,6 +167,7 @@ use super::toolbar_position_selector::ToolbarPositionSelector;
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{RedactTool, ShapeTool, ToolbarPosition};
 use crate::domain::{Choice, DragState, Rect};
+use crate::fl;
 
 /// A wrapper widget that reduces opacity when not hovered
 /// Draws a background with opacity and passes through all events
@@ -1262,7 +1263,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             on_toolbar_position(ToolbarPosition::Right),
         )
         .opacity(content_opacity),
-        text::body("Move Toolbar (Ctrl+hjkl)"),
+        text::body(fl!("move-toolbar")),
         tooltip::Position::Bottom,
     )
     .into();
@@ -1282,7 +1283,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         } else {
             toggle_widget
         },
-        text::body("Screenshot / Video"),
+        text::body(fl!("screenshot-video")),
         tooltip::Position::Bottom,
     )
     .into();
@@ -1306,7 +1307,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             DragState::None,
         )))
         .padding(space_xs),
-        text::body("Select Region (R)"),
+        text::body(fl!("select-region")),
         tooltip::Position::Bottom,
     );
 
@@ -1325,7 +1326,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press(on_window_mode) // Uses proper window mode handler with output index
         .padding(space_xs),
-        text::body("Select Window (W)"),
+        text::body(fl!("select-window")),
         tooltip::Position::Bottom,
     );
 
@@ -1344,26 +1345,26 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         })
         .on_press(on_screen_mode) // Uses proper screen mode handler with output index
         .padding(space_xs),
-        text::body("Select Screen (S)"),
+        text::body(fl!("select-screen")),
         tooltip::Position::Bottom,
     );
 
     // Context-sensitive copy tooltip
     let copy_tooltip = match &choice {
-        Choice::Rectangle(r, _) if r.dimensions().is_some() => "Copy Selected Region (Enter)",
-        Choice::Window(_, Some(_)) => "Copy Selected Window (Enter)",
-        Choice::Output(Some(_)) => "Copy Selected Screen (Enter)",
-        _ if output_count > 1 => "Copy All Screens (Enter)",
-        _ => "Copy Screen (Enter)",
+        Choice::Rectangle(r, _) if r.dimensions().is_some() => fl!("copy-selected-region"),
+        Choice::Window(_, Some(_)) => fl!("copy-selected-window"),
+        Choice::Output(Some(_)) => fl!("copy-selected-screen"),
+        _ if output_count > 1 => fl!("copy-all-screens"),
+        _ => fl!("copy-screen"),
     };
 
     // Context-sensitive save tooltip
     let save_tooltip = match &choice {
-        Choice::Rectangle(r, _) if r.dimensions().is_some() => "Save Selected Region (Ctrl+Enter)",
-        Choice::Window(_, Some(_)) => "Save Selected Window (Ctrl+Enter)",
-        Choice::Output(Some(_)) => "Save Selected Screen (Ctrl+Enter)",
-        _ if output_count > 1 => "Save All Screens (Ctrl+Enter)",
-        _ => "Save Screen (Ctrl+Enter)",
+        Choice::Rectangle(r, _) if r.dimensions().is_some() => fl!("save-selected-region"),
+        Choice::Window(_, Some(_)) => fl!("save-selected-window"),
+        Choice::Output(Some(_)) => fl!("save-selected-screen"),
+        _ if output_count > 1 => fl!("save-all-screens"),
+        _ => fl!("save-screen"),
     };
 
     // Copy to clipboard button - always enabled
@@ -1436,9 +1437,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     .align_y(cosmic::iced_core::alignment::Vertical::Center);
 
     let record_tooltip = if has_selection {
-        "Record selection (Shift+R)"
+        fl!("record-selection")
     } else {
-        "Disabled: select a region, window, or screen first"
+        fl!("record-disabled")
     };
 
     let btn_record = tooltip(
@@ -1494,7 +1495,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press(on_stop_recording)
             .padding(0),
-        text::body("Stop Recording"),
+        text::body(fl!("stop-recording")),
         tooltip::Position::Bottom,
     );
 
@@ -1503,7 +1504,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Left click toggles mode, right click opens popup
     let btn_recording_annotate: Element<'_, Msg> = build_tool_button(
         "edit-symbolic",
-        "Freehand Annotation (right-click for options)",
+        &fl!("freehand-annotation"),
         1, // Single indicator dot (on/off state)
         0, // Always show first dot as active when mode is on
         recording_annotation_mode,
@@ -1556,7 +1557,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_ocr_copy.clone()))
             .padding(space_xs),
-            text::body("Copy OCR Text (O)"),
+            text::body(fl!("copy-ocr-text")),
             tooltip::Position::Bottom,
         )
     } else if tesseract_available {
@@ -1569,7 +1570,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_ocr.clone()))
             .padding(space_xs),
-            text::body("Recognize Text (O)"),
+            text::body(fl!("recognize-text")),
             tooltip::Position::Bottom,
         )
     } else {
@@ -1582,7 +1583,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(None)
             .padding(space_xs),
-            text::body("Install tesseract to enable OCR"),
+            text::body(fl!("install-tesseract")),
             tooltip::Position::Bottom,
         )
     };
@@ -1599,7 +1600,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Suggested)
             .on_press_maybe(has_selection.then_some(on_qr_copy.clone()))
             .padding(space_xs),
-            text::body("Copy QR Code (Q)"),
+            text::body(fl!("copy-qr-code")),
             tooltip::Position::Bottom,
         )
     } else {
@@ -1612,7 +1613,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Icon)
             .on_press_maybe(has_selection.then_some(on_qr.clone()))
             .padding(space_xs),
-            text::body("Scan QR Code (Q)"),
+            text::body(fl!("scan-qr-code")),
             tooltip::Position::Bottom,
         )
     };
@@ -1632,7 +1633,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             })
             .on_press(on_settings_toggle.clone())
             .padding(space_xs),
-            text::body("Settings"),
+            text::body(fl!("settings")),
             tooltip::Position::Bottom,
         );
         super::tool_button::RightClickWrapper::new(settings_btn, Some(on_settings_toggle)).into()
@@ -1647,7 +1648,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         .class(cosmic::theme::Button::Icon)
         .on_press(on_cancel)
         .padding(space_xs),
-        text::body("Cancel (Escape)"),
+        text::body(fl!("cancel-escape")),
         tooltip::Position::Bottom,
     );
 

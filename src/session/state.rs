@@ -1,7 +1,10 @@
 use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{OcrStatus, OcrTextOverlay};
 use crate::capture::qr::DetectedQrCode;
-use crate::config::{Container, RedactTool, SaveLocation, ShapeColor, ShapeTool, ToolbarPosition};
+use crate::config::{
+    Container, RedactTool, SaveLocationChoice, ShapeColor, ShapeTool, ToolbarPosition,
+    VideoSaveLocationChoice,
+};
 use crate::core::portal::PortalResponse;
 use crate::domain::{
     Action, Annotation, ArrowAnnotation, Choice, CircleOutlineAnnotation, ImageSaveLocation,
@@ -217,7 +220,10 @@ pub struct UiState {
     pub redact_popup_open: bool,
     pub pixelation_block_size: u32,
     pub magnifier_enabled: bool,
-    pub save_location_setting: SaveLocation,
+    pub save_location_setting: SaveLocationChoice,
+    pub custom_save_path: String,
+    pub video_save_location_setting: VideoSaveLocationChoice,
+    pub video_custom_save_path: String,
     pub copy_to_clipboard_on_save: bool,
     pub toolbar_unhovered_opacity: f32,
     /// Whether the toolbar is currently being hovered (for animated opacity)
@@ -252,6 +258,8 @@ pub struct UiState {
     pub timeline: Timeline,
     /// Whether to hide toolbar to system tray when recording
     pub hide_toolbar_to_tray: bool,
+    /// Move offset for dragging selection rectangle (cursor pos relative to rect top-left when move started)
+    pub move_offset: Option<(i32, i32)>,
 }
 
 impl UiState {

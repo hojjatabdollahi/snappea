@@ -7,7 +7,8 @@ use cosmic::widget::{container, dropdown, radio, segmented_button, tab_bar, text
 use cosmic::Element;
 
 use super::toolbar::HoverOpacity;
-use crate::config::{Container, SaveLocation, ToolbarPosition};
+use crate::config::{Container, SaveLocationChoice, ToolbarPosition, VideoSaveLocationChoice};
+use crate::fl;
 use crate::session::state::SettingsTab;
 
 /// Available framerate options
@@ -22,9 +23,18 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     _toolbar_position: ToolbarPosition,
     magnifier_enabled: bool,
     on_magnifier_toggle: Msg,
-    save_location: SaveLocation,
+    save_location: SaveLocationChoice,
+    custom_save_path: &'a str,
     on_save_location_pictures: Msg,
     on_save_location_documents: Msg,
+    on_save_location_custom: Msg,
+    on_browse_save_location: Msg,
+    // Video save location
+    video_save_location: VideoSaveLocationChoice,
+    video_custom_save_path: &'a str,
+    on_video_save_location_videos: Msg,
+    on_video_save_location_custom: Msg,
+    on_browse_video_save_location: Msg,
     copy_to_clipboard_on_save: bool,
     on_copy_on_save_toggle: Msg,
     on_github_click: Msg,
@@ -62,7 +72,7 @@ where
 
     // Magnifier toggle row
     let magnifier_row = row![
-        text::body("Magnifier"),
+        text::body(fl!("magnifier")),
         cosmic::widget::horizontal_space(),
         toggler(magnifier_enabled)
             .on_toggle(move |_| on_magnifier_toggle.clone())
@@ -73,29 +83,54 @@ where
     .width(Length::Fill);
 
     // Save location section
-    let save_location_label = text::body("Save to:");
+    let save_location_label = text::body(fl!("save-location"));
 
     let pictures_radio = radio(
-        "Pictures",
-        SaveLocation::Pictures,
+        text::body(fl!("pictures")),
+        SaveLocationChoice::Pictures,
         Some(save_location),
         move |_| on_save_location_pictures.clone(),
     );
 
     let documents_radio = radio(
-        "Documents",
-        SaveLocation::Documents,
+        text::body(fl!("documents")),
+        SaveLocationChoice::Documents,
         Some(save_location),
         move |_| on_save_location_documents.clone(),
     );
 
-    let save_location_row = row![pictures_radio, documents_radio,]
-        .spacing(space_s)
-        .align_y(cosmic::iced_core::Alignment::Center);
+    let custom_radio = radio(
+        text::body(fl!("custom")),
+        SaveLocationChoice::Custom,
+        Some(save_location),
+        move |_| on_save_location_custom.clone(),
+    );
+
+    let save_location_row = cosmic::widget::flex_row(vec![
+        pictures_radio.into(),
+        documents_radio.into(),
+        custom_radio.into(),
+    ])
+    .row_spacing(space_xs)
+    .column_spacing(space_s);
+
+    // Custom path display and browse button (only shown when Custom is selected)
+    let custom_path_row: Element<'_, Msg> = if save_location == SaveLocationChoice::Custom {
+        let path_display = text::body(custom_save_path).width(Length::Fill);
+        let browse_button = cosmic::widget::button::standard(fl!("browse"))
+            .on_press(on_browse_save_location.clone());
+        row![path_display, browse_button]
+            .spacing(space_s)
+            .align_y(cosmic::iced_core::Alignment::Center)
+            .width(Length::Fill)
+            .into()
+    } else {
+        cosmic::widget::horizontal_space().width(0).into()
+    };
 
     // Copy to clipboard on save toggle
     let copy_on_save_row = row![
-        text::body("Copy on save"),
+        text::body(fl!("copy-on-save")),
         cosmic::widget::horizontal_space(),
         toggler(copy_to_clipboard_on_save)
             .on_toggle(move |_| on_copy_on_save_toggle.clone())
@@ -106,7 +141,7 @@ where
     .width(Length::Fill);
 
     let opacity_percent = (toolbar_unhovered_opacity.clamp(0.1, 1.0) * 100.0).round() as i32;
-    let toolbar_opacity_label = text::body(format!("Toolbar opacity (idle): {}%", opacity_percent));
+    let toolbar_opacity_label = text::body(fl!("toolbar-opacity", percent = opacity_percent));
     let toolbar_opacity_slider = cosmic::widget::slider(20..=100, opacity_percent, move |v| {
         on_toolbar_opacity_change(v as f32 / 100.0)
     })
@@ -116,8 +151,45 @@ where
         .spacing(space_xs)
         .width(Length::Fill);
 
+    // Video save location section
+    let video_save_location_label = text::body(fl!("video-save-location"));
+
+    let videos_radio = radio(
+        text::body(fl!("videos")),
+        VideoSaveLocationChoice::Videos,
+        Some(video_save_location),
+        move |_| on_video_save_location_videos.clone(),
+    );
+
+    let video_custom_radio = radio(
+        text::body(fl!("custom")),
+        VideoSaveLocationChoice::Custom,
+        Some(video_save_location),
+        move |_| on_video_save_location_custom.clone(),
+    );
+
+    let video_save_location_row =
+        cosmic::widget::flex_row(vec![videos_radio.into(), video_custom_radio.into()])
+            .row_spacing(space_xs)
+            .column_spacing(space_s);
+
+    // Video custom path display and browse button (only shown when Custom is selected)
+    let video_custom_path_row: Element<'_, Msg> =
+        if video_save_location == VideoSaveLocationChoice::Custom {
+            let path_display = text::body(video_custom_save_path).width(Length::Fill);
+            let browse_button = cosmic::widget::button::standard(fl!("browse"))
+                .on_press(on_browse_video_save_location.clone());
+            row![path_display, browse_button]
+                .spacing(space_s)
+                .align_y(cosmic::iced_core::Alignment::Center)
+                .width(Length::Fill)
+                .into()
+        } else {
+            cosmic::widget::horizontal_space().width(0).into()
+        };
+
     // Encoder selection using dropdown
-    let encoder_label = text::body("Encoder:");
+    let encoder_label = text::body(fl!("encoder"));
 
     // Find selected encoder index
     let selected_encoder_idx = available_encoders
@@ -146,9 +218,9 @@ where
     .width(Length::Fill);
 
     // Container format selection using dropdown
-    let container_label = text::body("Format:");
+    let container_label = text::body(fl!("format"));
 
-    // Use static array for container names
+    // Use static array for container names (these are technical names, not translated)
     static CONTAINER_NAMES: &[&str] = &["MP4", "WebM", "MKV"];
 
     let selected_container_idx = CONTAINER_OPTIONS.iter().position(|c| *c == video_container);
@@ -163,7 +235,7 @@ where
     .width(Length::Fill);
 
     // Framerate selection using dropdown
-    let framerate_label = text::body("Framerate:");
+    let framerate_label = text::body(fl!("framerate"));
 
     // Use static array for framerate names
     static FRAMERATE_NAMES: &[&str] = &["24 fps", "30 fps", "60 fps"];
@@ -180,7 +252,7 @@ where
 
     // Show cursor toggle
     let show_cursor_row = row![
-        text::caption("Show cursor"),
+        text::caption(fl!("show-cursor")),
         cosmic::widget::horizontal_space(),
         toggler(video_show_cursor)
             .on_toggle(move |_| on_show_cursor_toggle.clone())
@@ -192,7 +264,7 @@ where
 
     // Hide to system tray toggle
     let hide_to_tray_row = row![
-        text::caption("Hide to tray when recording"),
+        text::caption(fl!("hide-to-tray")),
         cosmic::widget::horizontal_space(),
         toggler(hide_toolbar_to_tray)
             .on_toggle(move |_| on_hide_to_tray_toggle.clone())
@@ -218,13 +290,13 @@ where
         snappea_logo,
         column![
             row![
-                text::title4("SnapPea"),
+                text::title4(fl!("app-name")),
                 text::caption(format!("v{}", version)),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
             row![
-                text::caption("by Hojjat Abdollahi"),
+                text::caption(fl!("app-author")),
                 cosmic::widget::button::icon(
                     cosmic::widget::icon::from_svg_bytes(GITHUB_ICON).symbolic(true)
                 )
@@ -242,6 +314,7 @@ where
     let picture_tab_content: Element<'_, Msg> = column![
         save_location_label,
         save_location_row,
+        custom_path_row,
         cosmic::widget::divider::horizontal::light(),
         copy_on_save_row,
     ]
@@ -277,6 +350,10 @@ where
     .width(Length::Fill);
 
     let video_tab_content: Element<'_, Msg> = column![
+        video_save_location_label,
+        video_save_location_row,
+        video_custom_path_row,
+        cosmic::widget::divider::horizontal::light(),
         encoder_row,
         cosmic::widget::divider::horizontal::light(),
         container_row,

@@ -3,6 +3,8 @@
 use image::RgbaImage;
 use std::collections::HashMap;
 
+use crate::fl;
+
 /// OCR text overlay metadata
 #[derive(Clone, Debug, PartialEq)]
 pub struct OcrTextOverlay {
@@ -62,7 +64,7 @@ pub fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> Ocr
     use rusty_tesseract::{Args, Image};
 
     if mapping.scale <= 0.0 {
-        return OcrStatus::Error("Invalid OCR mapping scale".to_string());
+        return OcrStatus::Error(fl!("invalid-ocr-scale"));
     }
 
     log::info!(
@@ -103,7 +105,7 @@ pub fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> Ocr
     let tess_img = match Image::from_dynamic_image(&processed_img) {
         Ok(img) => img,
         Err(e) => {
-            return OcrStatus::Error(format!("Failed to create tesseract image: {}", e));
+            return OcrStatus::Error(fl!("tesseract-image-error", error = e.to_string()));
         }
     };
 
@@ -213,13 +215,14 @@ pub fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> Ocr
     match text_result {
         Ok(text) => {
             let text = text.trim().to_string();
+            let no_text = fl!("no-text-detected");
             let text = if text.is_empty() {
-                "No text detected".to_string()
+                no_text.clone()
             } else {
                 text
             };
             // If no blocks found, create a fallback overlay covering the whole selection
-            if overlays.is_empty() && !text.is_empty() && text != "No text detected" {
+            if overlays.is_empty() && !text.is_empty() && text != no_text {
                 overlays.push(OcrTextOverlay {
                     left: mapping.origin.0,
                     top: mapping.origin.1,
@@ -232,6 +235,6 @@ pub fn run_ocr_on_image_with_status(img: &RgbaImage, mapping: OcrMapping) -> Ocr
             }
             OcrStatus::Done(text, overlays)
         }
-        Err(e) => OcrStatus::Error(format!("Tesseract OCR failed: {}", e)),
+        Err(e) => OcrStatus::Error(fl!("tesseract-ocr-error", error = e.to_string())),
     }
 }

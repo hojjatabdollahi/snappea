@@ -18,21 +18,19 @@ use tokio::sync::mpsc::Sender;
 use wayland_client::protocol::wl_output::WlOutput;
 use zbus::zvariant;
 
-pub use crate::domain::{Action, Choice, DragState, ImageSaveLocation, Rect, RectDimension};
 use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{
-    OcrMapping, OcrStatus, is_tesseract_available, models_need_download, run_ocr_on_image_with_status,
+    OcrMapping, OcrStatus, is_tesseract_available, models_need_download,
+    run_ocr_on_image_with_status,
 };
 use crate::capture::qr::{DetectedQrCode, detect_qr_codes_at_resolution, is_duplicate_qr};
-use crate::config::{
-    SnapPeaConfig, SaveLocation,
-};
+use crate::config::{SaveLocationChoice, SnapPeaConfig};
 use crate::core::app::{App, OutputState, RecordingIndicator};
 use crate::core::portal::PortalResponse;
+pub use crate::domain::{Action, Choice, DragState, ImageSaveLocation, Rect, RectDimension};
 use crate::render::image::draw_annotations_in_order;
 use crate::session::messages::{
-    CaptureMsg, DetectMsg, Direction, DrawMsg, Msg, OcrMsg, QrMsg, SaveLocationChoice, SelectMsg,
-    SettingsMsg, ToolMsg,
+    CaptureMsg, DetectMsg, Direction, DrawMsg, Msg, OcrMsg, QrMsg, SelectMsg, SettingsMsg, ToolMsg,
 };
 use crate::session::state::{
     AnnotationState, CaptureData, DetectionState, PortalContext, SessionState, UiState,
@@ -137,15 +135,19 @@ impl Screenshot {
         Ok(write_png(buffer, img)?)
     }
 
-    pub fn get_img_path(location: ImageSaveLocation) -> Option<PathBuf> {
-        let mut path = match location {
-            ImageSaveLocation::Pictures => {
+    pub fn get_img_path(location: ImageSaveLocation, custom_dir: Option<&str>) -> Option<PathBuf> {
+        let mut path = match (location, custom_dir) {
+            (_, Some(custom)) if !custom.is_empty() => {
+                // Use custom directory if provided and non-empty
+                Some(PathBuf::from(custom))
+            }
+            (ImageSaveLocation::Pictures, _) => {
                 dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
             }
-            ImageSaveLocation::Documents => {
+            (ImageSaveLocation::Documents, _) => {
                 dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")))
             }
-            ImageSaveLocation::Clipboard => None,
+            (ImageSaveLocation::Clipboard, _) => None,
         }?;
         let name = chrono::Local::now()
             .format("Screenshot_%Y-%m-%d_%H-%M-%S.png")
@@ -281,7 +283,9 @@ impl Screenshot {
         // Check if a recording is active - if so, just stop it and return
         // The user needs to press PrintScreen again to get the screenshot UI
         if crate::screencast::is_recording() {
-            log::info!("Active recording detected, stopping recording (press PrintScreen again for screenshot UI)");
+            log::info!(
+                "Active recording detected, stopping recording (press PrintScreen again for screenshot UI)"
+            );
             if let Err(e) = crate::screencast::stop_recording() {
                 log::error!("Failed to stop recording: {}", e);
             }
@@ -376,12 +380,7 @@ impl Screenshot {
                 let output_toplevels = self.wayland_helper.output_toplevels(output);
                 let global_indices: Vec<usize> = output_toplevels
                     .iter()
-                    .map(|t| {
-                        all_toplevels
-                            .iter()
-                            .position(|at| at == t)
-                            .unwrap_or(0)
-                    })
+                    .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
                     .collect();
                 log::debug!(
                     "Output '{}': {} toplevels, global indices: {:?}",
@@ -445,6 +444,9 @@ impl Screenshot {
                         pixelation_block_size: config.pixelation_block_size,
                         magnifier_enabled: config.magnifier_enabled,
                         save_location_setting: config.save_location,
+                        custom_save_path: config.custom_save_path.clone(),
+                        video_save_location_setting: config.video_save_location,
+                        video_custom_save_path: config.video_custom_save_path.clone(),
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
                         toolbar_is_hovered: false,
@@ -466,6 +468,7 @@ impl Screenshot {
                         toolbar_bounds: None,
                         timeline: cosmic_time::Timeline::new(),
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
+                        move_offset: None,
                     }
                 },
             }))
@@ -632,18 +635,19 @@ fn handle_tool_msg(app: &mut App, msg: ToolMsg) -> cosmic::Task<crate::core::app
             // Update popup bounds - must match actual rendered position
             // Popup follows toolbar position and appears above or below based on available space
             if indicator.pencil_popup_open {
-                let popup_width = 262.0_f32;  // 230 content + 16*2 padding
+                let popup_width = 262.0_f32; // 230 content + 16*2 padding
                 let popup_height = 380.0_f32; // Approximate height of popup content (increased to prevent overlap)
-                let popup_gap = 16.0_f32;     // Gap between popup and toolbar
+                let popup_gap = 16.0_f32; // Gap between popup and toolbar
                 let toolbar_height = 72.0_f32; // Toolbar height including padding
-                
+
                 // Popup x follows toolbar x position
                 let popup_x = indicator.toolbar_pos.0.max(0.0);
-                
+
                 // Determine if popup should appear above or below toolbar
                 let space_above = indicator.toolbar_pos.1;
-                let space_below = indicator.output_size.1 - indicator.toolbar_pos.1 - toolbar_height;
-                
+                let space_below =
+                    indicator.output_size.1 - indicator.toolbar_pos.1 - toolbar_height;
+
                 let popup_y = if space_above >= popup_height + popup_gap {
                     // Place above toolbar
                     indicator.toolbar_pos.1 - popup_gap - popup_height
@@ -754,7 +758,7 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
     if let SettingsMsg::ToggleDrawer = msg {
         if let Some(args) = app.screenshot_args.as_mut() {
             args.ui.settings_drawer_open = !args.ui.settings_drawer_open;
-            
+
             // When opening the drawer, sync the tab state with the model
             if args.ui.settings_drawer_open {
                 // Get the currently active tab from the model using active_data
@@ -768,6 +772,86 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             }
         }
         return cosmic::Task::none();
+    }
+
+    // Handle BrowseSaveLocation specially - need to hide overlay, open dialog, then restore
+    if let SettingsMsg::BrowseSaveLocation = msg {
+        // Destroy layer surfaces (but keep screenshot_args intact)
+        let destroy_tasks: Vec<_> = app
+            .outputs
+            .iter()
+            .map(|o| destroy_layer_surface(o.id))
+            .collect();
+
+        // Open file dialog and send result
+        let dialog_task = cosmic::Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("Select save location for screenshots")
+                    .pick_folder()
+                    .await
+                    .map(|handle| handle.path().to_string_lossy().to_string())
+            },
+            |result| {
+                crate::core::app::Msg::Screenshot(crate::session::messages::Msg::browse_save_location_result(result))
+            },
+        );
+
+        return cosmic::Task::batch(destroy_tasks).chain(dialog_task);
+    }
+
+    // Handle BrowseSaveLocationResult - restore overlay and optionally set path
+    if let SettingsMsg::BrowseSaveLocationResult(path) = msg {
+        // If a path was selected, update settings
+        if let Some(path) = path {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.custom_save_path = path.clone();
+                let mut config = SnapPeaConfig::load();
+                config.custom_save_path = path;
+                config.save();
+            }
+        }
+
+        // Recreate layer surfaces
+        return recreate_screenshot_surfaces(app);
+    }
+
+    // Handle BrowseVideoSaveLocation specially - same pattern
+    if let SettingsMsg::BrowseVideoSaveLocation = msg {
+        let destroy_tasks: Vec<_> = app
+            .outputs
+            .iter()
+            .map(|o| destroy_layer_surface(o.id))
+            .collect();
+
+        let dialog_task = cosmic::Task::perform(
+            async {
+                rfd::AsyncFileDialog::new()
+                    .set_title("Select save location for videos")
+                    .pick_folder()
+                    .await
+                    .map(|handle| handle.path().to_string_lossy().to_string())
+            },
+            |result| {
+                crate::core::app::Msg::Screenshot(crate::session::messages::Msg::browse_video_save_location_result(result))
+            },
+        );
+
+        return cosmic::Task::batch(destroy_tasks).chain(dialog_task);
+    }
+
+    // Handle BrowseVideoSaveLocationResult - restore overlay and optionally set path
+    if let SettingsMsg::BrowseVideoSaveLocationResult(path) = msg {
+        if let Some(path) = path {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.video_custom_save_path = path.clone();
+                let mut config = SnapPeaConfig::load();
+                config.video_custom_save_path = path;
+                config.save();
+            }
+        }
+
+        return recreate_screenshot_surfaces(app);
     }
 
     with_args!(app, |args| {
@@ -787,7 +871,35 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 SaveLocationChoice::Documents => {
                     settings_handlers::handle_set_save_location_documents(args)
                 }
+                SaveLocationChoice::Custom => {
+                    settings_handlers::handle_set_save_location_custom(args)
+                }
             },
+            SettingsMsg::SetCustomSavePath(path) => {
+                settings_handlers::handle_set_custom_save_path(args, path)
+            }
+            SettingsMsg::BrowseSaveLocation => {
+                // Already handled above (special handling for overlay hide/restore)
+                cosmic::Task::none()
+            }
+            SettingsMsg::BrowseSaveLocationResult(_) => {
+                // Already handled above
+                cosmic::Task::none()
+            }
+            SettingsMsg::SetVideoSaveLocation(loc) => {
+                settings_handlers::handle_set_video_save_location(args, loc)
+            }
+            SettingsMsg::SetVideoCustomSavePath(path) => {
+                settings_handlers::handle_set_video_custom_save_path(args, path)
+            }
+            SettingsMsg::BrowseVideoSaveLocation => {
+                // Already handled above (special handling for overlay hide/restore)
+                cosmic::Task::none()
+            }
+            SettingsMsg::BrowseVideoSaveLocationResult(_) => {
+                // Already handled above
+                cosmic::Task::none()
+            }
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
             SettingsMsg::SettingsTabActivated(_) => {
                 // Already handled above
@@ -863,6 +975,10 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 args.ui.timeline.now(instant);
                 cosmic::Task::none()
             }
+            SettingsMsg::SetMoveOffset(offset) => {
+                args.ui.move_offset = offset;
+                cosmic::Task::none()
+            }
         }
     })
 }
@@ -901,8 +1017,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         CaptureMsg::SaveToPictures => {
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.session.location = match args.ui.save_location_setting {
-                    SaveLocation::Pictures => ImageSaveLocation::Pictures,
-                    SaveLocation::Documents => ImageSaveLocation::Documents,
+                    SaveLocationChoice::Pictures => ImageSaveLocation::Pictures,
+                    SaveLocationChoice::Documents => ImageSaveLocation::Documents,
+                    SaveLocationChoice::Custom => {
+                        // For custom save location, we use Pictures as the base
+                        // but the actual path is handled in save_screenshot
+                        ImageSaveLocation::Pictures
+                    }
                 };
                 if args.ui.copy_to_clipboard_on_save {
                     args.session.also_copy_to_clipboard = true;
@@ -921,9 +1042,12 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             let mut toplevel_index: Option<usize> = None;
 
             let region = match &args.session.choice {
-                Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
-                    (rect.left, rect.top, rect.width() as u32, rect.height() as u32)
-                }
+                Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => (
+                    rect.left,
+                    rect.top,
+                    rect.width() as u32,
+                    rect.height() as u32,
+                ),
                 Choice::Output(Some(output_name)) => {
                     // Find output dimensions
                     if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
@@ -945,7 +1069,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
 
                     if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
                         // Look up the global index from the pre-captured mapping
-                        let global_index = args.capture.toplevel_global_indices
+                        let global_index = args
+                            .capture
+                            .toplevel_global_indices
                             .get(output_name)
                             .and_then(|indices| indices.get(*window_index).copied());
 
@@ -953,14 +1079,17 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                             Some(idx) => {
                                 log::info!(
                                     "Recording window {} (global index {}) on output '{}'",
-                                    window_index, idx, output_name
+                                    window_index,
+                                    idx,
+                                    output_name
                                 );
                                 toplevel_index = Some(idx);
                             }
                             None => {
                                 log::error!(
                                     "Window index {} not found in captured indices for output '{}' (has {:?})",
-                                    window_index, output_name,
+                                    window_index,
+                                    output_name,
                                     args.capture.toplevel_global_indices.get(output_name)
                                 );
                                 return cosmic::Task::none();
@@ -1029,14 +1158,26 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     let local_y = (region.1 - output.logical_pos.1).max(0);
 
                     // Clamp to output logical bounds
-                    let clamped_w = region.2.min((output.logical_size.0 as i32 - local_x).max(0) as u32);
-                    let clamped_h = region.3.min((output.logical_size.1 as i32 - local_y).max(0) as u32);
+                    let clamped_w = region
+                        .2
+                        .min((output.logical_size.0 as i32 - local_x).max(0) as u32);
+                    let clamped_h = region
+                        .3
+                        .min((output.logical_size.1 as i32 - local_y).max(0) as u32);
 
                     log::info!(
                         "Translated region: global ({}, {}, {}x{}) -> local logical ({}, {}, {}x{}) on output '{}' (logical_size={}x{})",
-                        region.0, region.1, region.2, region.3,
-                        local_x, local_y, clamped_w, clamped_h,
-                        output.name, output.logical_size.0, output.logical_size.1
+                        region.0,
+                        region.1,
+                        region.2,
+                        region.3,
+                        local_x,
+                        local_y,
+                        clamped_w,
+                        clamped_h,
+                        output.name,
+                        output.logical_size.0,
+                        output.logical_size.1
                     );
 
                     (
@@ -1048,7 +1189,8 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 None => {
                     // Fallback to first output with original region
                     log::warn!("No output overlap found, using first output as fallback");
-                    let (output_name, logical_size) = app.outputs
+                    let (output_name, logical_size) = app
+                        .outputs
                         .first()
                         .map(|o| (o.name.clone(), (o.logical_size.0, o.logical_size.1)))
                         .unwrap_or_else(|| ("Unknown".to_string(), (1920, 1080)));
@@ -1067,17 +1209,26 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             // Ensure output directory exists
             if !output_dir.exists() {
                 if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                    log::error!("Failed to create output directory '{}': {}", output_dir.display(), e);
+                    log::error!(
+                        "Failed to create output directory '{}': {}",
+                        output_dir.display(),
+                        e
+                    );
                     return cosmic::Task::none();
                 }
             }
 
-            let output_file = output_dir.join(format!("recording-{}.{}", timestamp, container.extension()));
+            let output_file =
+                output_dir.join(format!("recording-{}.{}", timestamp, container.extension()));
 
             // Determine encoder (from config or best_encoder)
             let encoder = config
                 .video_encoder
-                .or_else(|| crate::screencast::best_encoder().ok().map(|e| e.gst_element))
+                .or_else(|| {
+                    crate::screencast::best_encoder()
+                        .ok()
+                        .map(|e| e.gst_element)
+                })
                 .unwrap_or_else(|| "x264enc".to_string());
 
             let framerate = config.video_framerate;
@@ -1110,17 +1261,21 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             } else {
                 // Use output capture with region cropping
                 // Look up output by NAME in wayland_helper's connection
-                let wl_output = app.wayland_helper.outputs()
-                    .into_iter()
-                    .find(|o| {
-                        app.wayland_helper.output_info(o)
-                            .and_then(|info| info.name)
-                            .as_deref() == Some(&output_name)
-                    });
+                let wl_output = app.wayland_helper.outputs().into_iter().find(|o| {
+                    app.wayland_helper
+                        .output_info(o)
+                        .and_then(|info| info.name)
+                        .as_deref()
+                        == Some(&output_name)
+                });
 
                 match wl_output {
                     Some(output) => {
-                        log::info!("Recording output '{}' region: {:?}", output_name, local_region);
+                        log::info!(
+                            "Recording output '{}' region: {:?}",
+                            output_name,
+                            local_region
+                        );
                         CaptureSource::Output(output)
                     }
                     None => {
@@ -1169,11 +1324,8 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             });
 
             // Register the recording handle
-            let recording_handle = crate::screencast::RecordingHandle::new(
-                stop_flag,
-                thread_handle,
-                recording_state,
-            );
+            let recording_handle =
+                crate::screencast::RecordingHandle::new(stop_flag, thread_handle, recording_state);
             crate::screencast::set_recording(recording_handle);
 
             log::info!(
@@ -1191,7 +1343,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             }
 
             // Close screenshot UI windows - toolbar will be shown on indicator overlay
-            let close_tasks: Vec<_> = app.outputs.iter()
+            let close_tasks: Vec<_> = app
+                .outputs
+                .iter()
                 .map(|output| destroy_layer_surface(output.id))
                 .collect();
 
@@ -1278,7 +1432,10 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             if let Some(ref tx) = app.tray_tx {
                 // toolbar_visible parameter reflects initial toolbar state
                 let toolbar_visible = !config.hide_toolbar_to_tray;
-                log::info!("Creating system tray for recording (toolbar_visible={})", toolbar_visible);
+                log::info!(
+                    "Creating system tray for recording (toolbar_visible={})",
+                    toolbar_visible
+                );
                 let tray_handle = crate::tray::create_tray(toolbar_visible, tx.clone());
                 app.tray_handle = Some(tray_handle);
                 app.toolbar_visible = toolbar_visible;
@@ -1299,6 +1456,12 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             log::info!("Capture mode toggled: is_video_mode = {}", is_video);
             if let Some(args) = app.screenshot_args.as_mut() {
                 args.ui.is_video_mode = is_video;
+                // Reset UI state completely when switching modes
+                args.close_all_popups();
+                args.disable_all_modes();
+                args.clear_annotations();
+                // Reset selection to empty rectangle (no selection)
+                args.session.choice = Choice::Rectangle(Rect::default(), DragState::default());
                 // Set up the animation chain
                 let chain = if is_video {
                     crate::widget::icon_toggle::toggle_to_video()
@@ -1311,15 +1474,19 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         }
         CaptureMsg::PencilRightClick => {
             // If popup is open, close it (and enable pencil). Otherwise open popup.
-            let action = if app.recording_indicator.as_ref().map_or(false, |i| i.pencil_popup_open) {
+            let action = if app
+                .recording_indicator
+                .as_ref()
+                .map_or(false, |i| i.pencil_popup_open)
+            {
                 crate::session::messages::ToolPopupAction::Close
             } else {
                 crate::session::messages::ToolPopupAction::Open
             };
             cosmic::Task::done(crate::core::app::Msg::Screenshot(
                 crate::session::messages::Msg::Tool(
-                    crate::session::messages::ToolMsg::PencilPopup(action)
-                )
+                    crate::session::messages::ToolMsg::PencilPopup(action),
+                ),
             ))
         }
         CaptureMsg::HideToTray => {
@@ -1331,14 +1498,14 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 });
             }
             app.toolbar_visible = false;
-            
+
             // Disable pencil/annotation mode when hiding to tray
             if let Some(indicator) = app.recording_indicator.as_mut() {
                 indicator.annotation_mode = false;
                 indicator.pencil_popup_open = false;
                 indicator.pencil_popup_bounds = None;
             }
-            
+
             // Recreate the indicator surface without toolbar input zone
             if app.recording_indicator.is_some() {
                 return cosmic::Task::done(crate::core::app::Msg::ToggleAnnotationMode);
@@ -1391,9 +1558,9 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     return cosmic::Task::done(crate::core::app::Msg::Screenshot(
                         crate::session::messages::Msg::Tool(
                             crate::session::messages::ToolMsg::PencilPopup(
-                                crate::session::messages::ToolPopupAction::Close
-                            )
-                        )
+                                crate::session::messages::ToolPopupAction::Close,
+                            ),
+                        ),
                     ));
                 }
             }
@@ -1452,6 +1619,7 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
         capture,
         session,
         annotations: args_annotations,
+        ui,
         ..
     } = args;
     let tx = portal.tx;
@@ -1465,8 +1633,16 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
     // Only use annotations up to annotation_index (respects undo)
     let annotations = &annotations[..annotation_index];
 
+    // Determine custom save path based on save location setting
+    let custom_dir = match ui.save_location_setting {
+        SaveLocationChoice::Custom if !ui.custom_save_path.is_empty() => {
+            Some(ui.custom_save_path.as_str())
+        }
+        _ => None,
+    };
+
     let mut success = true;
-    let image_path = Screenshot::get_img_path(location);
+    let image_path = Screenshot::get_img_path(location, custom_dir);
 
     match choice {
         Choice::Output(Some(output_name)) => {
@@ -1724,14 +1900,14 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
                         // Step 1: Calculate pre-scaled thumbnail size (matching calculate_window_display_bounds)
                         let max_width = output_width * 0.85;
                         let max_height = output_height * 0.85;
-                        let (thumb_width, thumb_height) =
-                            if orig_width > max_width || orig_height > max_height {
-                                let pre_scale =
-                                    (max_width / orig_width).min(max_height / orig_height);
-                                (orig_width * pre_scale, orig_height * pre_scale)
-                            } else {
-                                (orig_width, orig_height)
-                            };
+                        let (thumb_width, thumb_height) = if orig_width > max_width
+                            || orig_height > max_height
+                        {
+                            let pre_scale = (max_width / orig_width).min(max_height / orig_height);
+                            (orig_width * pre_scale, orig_height * pre_scale)
+                        } else {
+                            (orig_width, orig_height)
+                        };
 
                         // Step 2: Calculate display position (centering with 20px margin)
                         let available_width = output_width - 20.0;
@@ -1944,12 +2120,14 @@ fn handle_qr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::Ms
     // Get the selection and run QR detection on that area
     if let Some(args) = app.screenshot_args.as_ref() {
         // Only use annotations up to annotation_index (respects undo)
-        let annotations = args.annotations.annotations[..args.annotations.annotation_index].to_vec();
+        let annotations =
+            args.annotations.annotations[..args.annotations.annotation_index].to_vec();
         let outputs_clone = app.outputs.clone();
 
         // Get image data and parameters based on choice type
         // Returns: (image, output_name, scale, origin_x, origin_y, selection_rect_for_redactions)
-        let qr_params: Option<(RgbaImage, String, f32, f32, f32, Rect)> = match &args.session.choice {
+        let qr_params: Option<(RgbaImage, String, f32, f32, f32, Rect)> = match &args.session.choice
+        {
             Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => {
                 let mut params = None;
                 for output in &app.outputs {
@@ -1989,7 +2167,8 @@ fn handle_qr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::Ms
                 params
             }
             Choice::Window(output_name, Some(window_index)) => {
-                args.capture.toplevel_images
+                args.capture
+                    .toplevel_images
                     .get(output_name)
                     .and_then(|imgs| imgs.get(*window_index))
                     .and_then(|img| {
@@ -2161,7 +2340,8 @@ fn handle_ocr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::M
     // Get the selection and run OCR on that area
     if let Some(args) = app.screenshot_args.as_ref() {
         // Only use annotations up to annotation_index (respects undo)
-        let annotations = args.annotations.annotations[..args.annotations.annotation_index].to_vec();
+        let annotations =
+            args.annotations.annotations[..args.annotations.annotation_index].to_vec();
         let outputs_clone = app.outputs.clone();
 
         // Returns: (image, mapping, selection_rect_for_redactions, scale_for_redactions)
@@ -2212,7 +2392,8 @@ fn handle_ocr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::M
             }
             Choice::Window(output_name, Some(window_index)) => {
                 // Get window image from toplevel_images
-                args.capture.toplevel_images
+                args.capture
+                    .toplevel_images
                     .get(output_name)
                     .and_then(|imgs| imgs.get(*window_index))
                     .and_then(|img| {
@@ -2346,7 +2527,10 @@ fn handle_ocr_status_inner(
                 if !text.is_empty() && text != "No text detected" {
                     args.detection.ocr_text = Some(text.clone());
                 }
-                log::info!("Stored {} overlays in args", args.detection.ocr_overlays.len());
+                log::info!(
+                    "Stored {} overlays in args",
+                    args.detection.ocr_overlays.len()
+                );
             }
             // Don't auto-copy - user will click "copy text" button
         }
@@ -2456,7 +2640,10 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
             args.capture.output_images.len()
         );
         log::warn!("Screenshot outputs: {:?}", app.outputs);
-        log::warn!("Screenshot images: {:?}", args.capture.output_images.keys().collect::<Vec<_>>());
+        log::warn!(
+            "Screenshot images: {:?}",
+            args.capture.output_images.keys().collect::<Vec<_>>()
+        );
         return cosmic::Task::none();
     }
 
@@ -2535,29 +2722,25 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
         for output in &mut app.outputs {
             output.id = window::Id::unique();
         }
-        
+
         let cmds: Vec<_> = app
             .outputs
             .iter()
-            .map(
-                |OutputState {
-                     output, id, ..
-                 }| {
-                    get_layer_surface(SctkLayerSurfaceSettings {
-                        id: *id,
-                        layer: Layer::Overlay,
-                        keyboard_interactivity: KeyboardInteractivity::Exclusive,
-                        input_zone: None,
-                        anchor: Anchor::all(),
-                        output: IcedOutput::Output(output.clone()),
-                        namespace: "snappea".to_string(),
-                        size: Some((None, None)),
-                        exclusive_zone: -1,
-                        size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
-                        ..Default::default()
-                    })
-                },
-            )
+            .map(|OutputState { output, id, .. }| {
+                get_layer_surface(SctkLayerSurfaceSettings {
+                    id: *id,
+                    layer: Layer::Overlay,
+                    keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                    input_zone: None,
+                    anchor: Anchor::all(),
+                    output: IcedOutput::Output(output.clone()),
+                    namespace: "snappea".to_string(),
+                    size: Some((None, None)),
+                    exclusive_zone: -1,
+                    size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                    ..Default::default()
+                })
+            })
             .collect();
 
         // Detect encoders asynchronously so UI appears immediately
@@ -2572,17 +2755,49 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
                 .unwrap_or_default()
             },
             |encoders| {
-                crate::core::app::Msg::Screenshot(
-                    crate::session::messages::Msg::Settings(
-                        crate::session::messages::SettingsMsg::EncodersDetected(encoders)
-                    )
-                )
+                crate::core::app::Msg::Screenshot(crate::session::messages::Msg::Settings(
+                    crate::session::messages::SettingsMsg::EncodersDetected(encoders),
+                ))
             },
         );
 
-        indicator_cleanup.chain(cosmic::Task::batch(cmds)).chain(encoder_task)
+        indicator_cleanup
+            .chain(cosmic::Task::batch(cmds))
+            .chain(encoder_task)
     } else {
         log::info!("Existing screenshot args updated (windows already exist)");
         indicator_cleanup
     }
+}
+
+/// Recreate screenshot layer surfaces after they were temporarily destroyed
+/// (e.g., to show a file dialog).
+/// This generates new window IDs and creates new layer surfaces.
+fn recreate_screenshot_surfaces(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
+    // Generate fresh window IDs for this session
+    for output in &mut app.outputs {
+        output.id = window::Id::unique();
+    }
+
+    let cmds: Vec<_> = app
+        .outputs
+        .iter()
+        .map(|OutputState { output, id, .. }| {
+            get_layer_surface(SctkLayerSurfaceSettings {
+                id: *id,
+                layer: Layer::Overlay,
+                keyboard_interactivity: KeyboardInteractivity::Exclusive,
+                input_zone: None,
+                anchor: Anchor::all(),
+                output: IcedOutput::Output(output.clone()),
+                namespace: "snappea".to_string(),
+                size: Some((None, None)),
+                exclusive_zone: -1,
+                size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                ..Default::default()
+            })
+        })
+        .collect();
+
+    cosmic::Task::batch(cmds)
 }

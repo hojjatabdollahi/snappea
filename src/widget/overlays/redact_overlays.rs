@@ -306,28 +306,32 @@ fn draw_pixelation_blocks_window(
                 let img_y2 = ((win_rel_y + block_h) * display_to_img_scale).round() as i32;
 
                 // Skip if outside window image bounds
-                if img_x >= 0 && img_y >= 0 && img_x2 > 0 && img_y2 > 0
+                if img_x >= 0
+                    && img_y >= 0
+                    && img_x2 > 0
+                    && img_y2 > 0
                     && let Some(color) = sample_average_color(
                         image,
                         img_x as u32,
                         img_y as u32,
                         img_x2 as u32,
                         img_y2 as u32,
-                    ) {
-                        renderer.fill_quad(
-                            cosmic::iced_core::renderer::Quad {
-                                bounds: Rectangle {
-                                    x,
-                                    y,
-                                    width: block_w,
-                                    height: block_h,
-                                },
-                                border: Border::default(),
-                                shadow: cosmic::iced_core::Shadow::default(),
+                    )
+                {
+                    renderer.fill_quad(
+                        cosmic::iced_core::renderer::Quad {
+                            bounds: Rectangle {
+                                x,
+                                y,
+                                width: block_w,
+                                height: block_h,
                             },
-                            Background::Color(color),
-                        );
-                    }
+                            border: Border::default(),
+                            shadow: cosmic::iced_core::Shadow::default(),
+                        },
+                        Background::Color(color),
+                    );
+                }
                 x += block_w;
             }
             y += block_h;

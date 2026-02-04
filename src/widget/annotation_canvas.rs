@@ -342,9 +342,9 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                         DrawingMode::Circle => {
                             Some(on_event(AnnotationEvent::CircleStart(global_x, global_y)))
                         }
-                        DrawingMode::Rectangle => {
-                            Some(on_event(AnnotationEvent::RectangleStart(global_x, global_y)))
-                        }
+                        DrawingMode::Rectangle => Some(on_event(AnnotationEvent::RectangleStart(
+                            global_x, global_y,
+                        ))),
                         DrawingMode::Redact => {
                             Some(on_event(AnnotationEvent::RedactStart(global_x, global_y)))
                         }

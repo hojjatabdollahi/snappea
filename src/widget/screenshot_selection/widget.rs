@@ -248,6 +248,8 @@ where
 
         // Build fg_element
         let on_event_clone = on_event.clone();
+        let on_event_clone2 = on_event.clone();
+        let move_offset = ui.move_offset;
         let fg_element: Element<'a, Msg> = match choice.clone() {
             Choice::Rectangle(r, drag_state) => RectangleSelection::new(
                 output_rect,
@@ -258,6 +260,7 @@ where
                 move |s, r| {
                     on_event_clone(ScreenshotEvent::choice_changed(Choice::Rectangle(r, s)))
                 },
+                move |offset| on_event_clone2(ScreenshotEvent::set_move_offset(offset)),
                 &screenshot_image.rgba,
                 image_scale,
                 annotations.arrow_mode,
@@ -268,12 +271,13 @@ where
                 ui.shape_popup_open || ui.redact_popup_open || ui.settings_drawer_open,
                 ui.magnifier_enabled,
                 ui.is_recording,
+                move_offset,
             )
             .into(),
             Choice::Output(None) => {
                 // Only show focus highlight after mouse has entered an output
                 // This prevents wrong initial highlight on first output
-                let is_focused = output_ctx.has_mouse_entered 
+                let is_focused = output_ctx.has_mouse_entered
                     && output_ctx.current_output_index == output_ctx.focused_output_index;
                 OutputSelection::new(on_event(ScreenshotEvent::output_changed(
                     output.output.clone(),
@@ -387,8 +391,12 @@ where
             space_xs,
             space_xxs,
             move |c| on_event_clone2(ScreenshotEvent::choice_changed(c)),
-            on_event(ScreenshotEvent::screen_mode(output_ctx.current_output_index)),
-            on_event(ScreenshotEvent::window_mode(output_ctx.current_output_index)),
+            on_event(ScreenshotEvent::screen_mode(
+                output_ctx.current_output_index,
+            )),
+            on_event(ScreenshotEvent::window_mode(
+                output_ctx.current_output_index,
+            )),
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
             on_event(ScreenshotEvent::record_region()),
@@ -484,8 +492,17 @@ where
                 ui.magnifier_enabled,
                 on_event(ScreenshotEvent::magnifier_toggle()),
                 ui.save_location_setting,
+                &ui.custom_save_path,
                 on_event(ScreenshotEvent::save_location_pictures()),
                 on_event(ScreenshotEvent::save_location_documents()),
+                on_event(ScreenshotEvent::save_location_custom()),
+                on_event(ScreenshotEvent::browse_save_location()),
+                // Video save location
+                ui.video_save_location_setting,
+                &ui.video_custom_save_path,
+                on_event(ScreenshotEvent::video_save_location_videos()),
+                on_event(ScreenshotEvent::video_save_location_custom()),
+                on_event(ScreenshotEvent::browse_video_save_location()),
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
@@ -1348,9 +1365,7 @@ where
         if self.output_ctx.is_active_output {
             if matches!(event, Event::Mouse(_)) {
                 if let Some(menu_layout) = layout.children().nth(3) {
-                    shell.publish(self.emit(ScreenshotEvent::toolbar_bounds(
-                        menu_layout.bounds(),
-                    )));
+                    shell.publish(self.emit(ScreenshotEvent::toolbar_bounds(menu_layout.bounds())));
                 }
             }
         }
@@ -1364,9 +1379,7 @@ where
                     let toolbar_bounds = layout_children.get(3).map(|l| l.bounds());
 
                     // Check if click is inside toolbar or any open popup
-                    let inside_toolbar = toolbar_bounds
-                        .map(|b| b.contains(pos))
-                        .unwrap_or(false);
+                    let inside_toolbar = toolbar_bounds.map(|b| b.contains(pos)).unwrap_or(false);
 
                     // Also check for open popups
                     let inside_pencil_popup = if self.ui.pencil_popup_open {
@@ -1845,8 +1858,24 @@ where
         viewport: &cosmic::iced_core::Rectangle,
         renderer: &cosmic::Renderer,
     ) -> cosmic::iced::mouse::Interaction {
-        if self.is_any_drawing_mode() && cursor.position().is_some() {
-            return cosmic::iced::mouse::Interaction::Crosshair;
+        // If actively dragging a rectangle selection, show the appropriate cursor
+        // This takes priority and handles cases where cursor position is unavailable during DnD
+        if let Choice::Rectangle(_, drag_state) = &self.choice {
+            if *drag_state != DragState::None {
+                return match drag_state {
+                    DragState::Move => cosmic::iced::mouse::Interaction::Grabbing,
+                    DragState::N | DragState::S => {
+                        cosmic::iced::mouse::Interaction::ResizingVertically
+                    }
+                    DragState::E | DragState::W => {
+                        cosmic::iced::mouse::Interaction::ResizingHorizontally
+                    }
+                    DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
+                        cosmic::iced::mouse::Interaction::Grabbing
+                    }
+                    DragState::None => unreachable!(),
+                };
+            }
         }
 
         let mut children: Vec<&Element<'_, Msg>> = vec![
@@ -1868,22 +1897,78 @@ where
             children.push(popup);
         }
 
-        let layout = layout.children().collect::<Vec<_>>();
-        for (i, (layout, child)) in layout
-            .into_iter()
-            .zip(children.into_iter())
+        let layout_children = layout.children().collect::<Vec<_>>();
+        
+        // First check popups (indices > 3) - they overlay everything
+        for (i, (child_layout, child)) in layout_children
+            .iter()
+            .zip(children.iter())
             .enumerate()
             .rev()
+            .skip_while(|(i, _)| *i <= 3) // Skip bg, fg, shapes, menu - check popups first
         {
             let tree = &state.children[i];
             let interaction = child
                 .as_widget()
-                .mouse_interaction(tree, layout, cursor, viewport, renderer);
-            if cursor.is_over(layout.bounds()) {
+                .mouse_interaction(tree, *child_layout, cursor, viewport, renderer);
+            if cursor.is_over(child_layout.bounds()) {
                 return interaction;
             }
         }
-        cosmic::iced::mouse::Interaction::default()
+
+        // Check menu_element (toolbar) - index 3
+        // Return its cursor even if default (Idle) since toolbar should show normal arrow
+        // This must be checked BEFORE drawing mode to keep toolbar usable
+        if layout_children.len() > 3 {
+            let menu_layout = layout_children[3];
+            if cursor.is_over(menu_layout.bounds()) {
+                let tree = &state.children[3];
+                let interaction = children[3]
+                    .as_widget()
+                    .mouse_interaction(tree, menu_layout, cursor, viewport, renderer);
+                return interaction;
+            }
+        }
+
+        // If in drawing mode (annotation active), show appropriate cursor based on position
+        if self.is_any_drawing_mode() {
+            if let Some(cursor_pos) = cursor.position() {
+                // Check if cursor is inside the selection region
+                if let Some((x, y, w, h)) = self.selection_rect {
+                    let selection_bounds = cosmic::iced_core::Rectangle {
+                        x,
+                        y,
+                        width: w,
+                        height: h,
+                    };
+                    if selection_bounds.contains(cursor_pos) {
+                        return cosmic::iced::mouse::Interaction::Crosshair;
+                    } else {
+                        return cosmic::iced::mouse::Interaction::NotAllowed;
+                    }
+                }
+                // No selection, show crosshair everywhere
+                return cosmic::iced::mouse::Interaction::Crosshair;
+            }
+        }
+
+        // Then check fg_element (RectangleSelection) for move/resize cursors
+        // This is index 1
+        if layout_children.len() > 1 {
+            let fg_layout = layout_children[1];
+            let tree = &state.children[1];
+            let interaction = children[1]
+                .as_widget()
+                .mouse_interaction(tree, fg_layout, cursor, viewport, renderer);
+            if cursor.is_over(fg_layout.bounds())
+                && interaction != cosmic::iced::mouse::Interaction::default()
+            {
+                return interaction;
+            }
+        }
+
+        // Default to crosshair for rectangle selection area
+        cosmic::iced::mouse::Interaction::Crosshair
     }
 
     fn overlay<'b>(

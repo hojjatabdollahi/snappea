@@ -233,9 +233,8 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         // 1. Cursor just entered this output (hover_changed && hovered), OR
         // 2. Cursor is over this output and we haven't published yet (initial detection)
         //    This handles the case where cursor is already over an output when app starts
-        let should_publish_enter = self.picker_mode
-            && hovered
-            && (hover_changed || !my_state.entered_published);
+        let should_publish_enter =
+            self.picker_mode && hovered && (hover_changed || !my_state.entered_published);
 
         if should_publish_enter {
             match event {

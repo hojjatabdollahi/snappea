@@ -1,4 +1,5 @@
 use crate::core::portal::{DBUS_NAME, DBUS_PATH};
+use crate::fl;
 use crate::screenshot;
 use crate::session::messages;
 use crate::session::state::SettingsTab;
@@ -26,9 +27,9 @@ pub(crate) fn run() -> cosmic::iced::Result {
 /// Create a new settings tab segmented button model
 pub fn create_settings_tab_model() -> segmented_button::SingleSelectModel {
     segmented_button::Model::builder()
-        .insert(|b| b.text("General").data(SettingsTab::General).activate())
-        .insert(|b| b.text("Picture").data(SettingsTab::Picture))
-        .insert(|b| b.text("Video").data(SettingsTab::Video))
+        .insert(|b| b.text(fl!("general")).data(SettingsTab::General).activate())
+        .insert(|b| b.text(fl!("picture")).data(SettingsTab::Picture))
+        .insert(|b| b.text(fl!("video")).data(SettingsTab::Video))
         .build()
 }
 
@@ -182,7 +183,7 @@ impl cosmic::Application for App {
         let wayland_helper = crate::wayland::WaylandHelper::new(wayland_conn);
         // Create channel for tray communication
         let (tray_tx, tray_rx) = crossbeam_channel::unbounded::<TrayAction>();
-        
+
         (
             Self {
                 core,
@@ -231,14 +232,15 @@ impl cosmic::Application for App {
         message: Self::Message,
     ) -> cosmic::iced::Task<cosmic::Action<Self::Message>> {
         match message {
-            Msg::Keyboard(cosmic::iced::keyboard::Event::KeyPressed {
-                key, modifiers, ..
-            }) => {
+            Msg::Keyboard(cosmic::iced::keyboard::Event::KeyPressed { key, modifiers, .. }) => {
                 if let Some(args) = self.screenshot_args.as_ref() {
                     let focused_output_index = args.session.focused_output_index;
-                    if let Some(msg) =
-                        crate::session::shortcuts::handle_key_event(args, key, modifiers, focused_output_index)
-                    {
+                    if let Some(msg) = crate::session::shortcuts::handle_key_event(
+                        args,
+                        key,
+                        modifiers,
+                        focused_output_index,
+                    ) {
                         return self.update(Msg::Screenshot(msg));
                     }
                 }
@@ -272,15 +274,17 @@ impl cosmic::Application for App {
                     handle.shutdown();
                 }
                 self.toolbar_visible = true;
-                
+
                 // Clean up screenshot_args and send Cancelled to portal
                 if let Some(args) = self.screenshot_args.take() {
                     let tx = args.portal.tx;
                     tokio::spawn(async move {
-                        let _ = tx.send(crate::core::portal::PortalResponse::Cancelled).await;
+                        let _ = tx
+                            .send(crate::core::portal::PortalResponse::Cancelled)
+                            .await;
                     });
                 }
-                
+
                 if let Some(indicator) = self.recording_indicator.take() {
                     log::info!("Recording stopped, destroying indicator overlay");
                     return cosmic::iced_winit::commands::layer_surface::destroy_layer_surface(
@@ -323,7 +327,9 @@ impl cosmic::Application for App {
                     let can_draw = indicator.annotation_mode;
 
                     match event {
-                        cosmic::iced::mouse::Event::ButtonPressed(cosmic::iced::mouse::Button::Left) => {
+                        cosmic::iced::mouse::Event::ButtonPressed(
+                            cosmic::iced::mouse::Button::Left,
+                        ) => {
                             if can_draw {
                                 // Start a new stroke
                                 indicator.current_stroke = Some(vec![(position.x, position.y)]);
@@ -336,7 +342,9 @@ impl cosmic::Application for App {
                                 }
                             }
                         }
-                        cosmic::iced::mouse::Event::ButtonReleased(cosmic::iced::mouse::Button::Left) => {
+                        cosmic::iced::mouse::Event::ButtonReleased(
+                            cosmic::iced::mouse::Button::Left,
+                        ) => {
                             if let Some(points) = indicator.current_stroke.take() {
                                 if points.len() > 1 {
                                     // Capture current color and thickness for this stroke
@@ -368,7 +376,11 @@ impl cosmic::Application for App {
                 if let Some(indicator) = &mut self.recording_indicator {
                     log::info!(
                         "Recreating annotation surface, mode: {}",
-                        if indicator.annotation_mode { "ON" } else { "OFF" }
+                        if indicator.annotation_mode {
+                            "ON"
+                        } else {
+                            "OFF"
+                        }
                     );
 
                     // Recreate the layer surface with appropriate input zone
@@ -379,16 +391,16 @@ impl cosmic::Application for App {
                     let wl_output = indicator.output.clone();
                     let annotation_mode = indicator.annotation_mode;
 
-                    use cosmic::iced_winit::commands::layer_surface::{
-                        destroy_layer_surface, get_layer_surface,
-                    };
+                    use cosmic::iced_core::layout::Limits;
                     use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
                         IcedOutput, SctkLayerSurfaceSettings,
+                    };
+                    use cosmic::iced_winit::commands::layer_surface::{
+                        destroy_layer_surface, get_layer_surface,
                     };
                     use cosmic_client_toolkit::sctk::shell::wlr_layer::{
                         Anchor, KeyboardInteractivity, Layer,
                     };
-                    use cosmic::iced_core::layout::Limits;
 
                     let input_zone = if annotation_mode {
                         // Annotation mode: capture region for drawing + toolbar for controls
@@ -477,16 +489,12 @@ impl cosmic::Application for App {
                     if indicator.toolbar_dragging {
                         // On first move, calculate the offset from cursor to toolbar top-left
                         if indicator.drag_offset == (0.0, 0.0) {
-                            indicator.drag_offset = (
-                                x - indicator.toolbar_pos.0,
-                                y - indicator.toolbar_pos.1,
-                            );
+                            indicator.drag_offset =
+                                (x - indicator.toolbar_pos.0, y - indicator.toolbar_pos.1);
                         }
                         // Update toolbar position
-                        indicator.toolbar_pos = (
-                            x - indicator.drag_offset.0,
-                            y - indicator.drag_offset.1,
-                        );
+                        indicator.toolbar_pos =
+                            (x - indicator.drag_offset.0, y - indicator.drag_offset.1);
                     }
                 }
                 cosmic::iced::Task::none()
@@ -515,16 +523,16 @@ impl cosmic::Application for App {
                     let annotation_mode = indicator.annotation_mode;
                     let region = indicator.region;
 
-                    use cosmic::iced_winit::commands::layer_surface::{
-                        destroy_layer_surface, get_layer_surface,
-                    };
+                    use cosmic::iced_core::layout::Limits;
                     use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
                         IcedOutput, SctkLayerSurfaceSettings,
+                    };
+                    use cosmic::iced_winit::commands::layer_surface::{
+                        destroy_layer_surface, get_layer_surface,
                     };
                     use cosmic_client_toolkit::sctk::shell::wlr_layer::{
                         Anchor, KeyboardInteractivity, Layer,
                     };
-                    use cosmic::iced_core::layout::Limits;
 
                     // Build input zones based on annotation mode
                     let input_zone = if annotation_mode {
@@ -582,14 +590,14 @@ impl cosmic::Application for App {
                         // Stop recording via screenshot module
                         return self.update(Msg::Screenshot(
                             crate::session::messages::Msg::Capture(
-                                crate::session::messages::CaptureMsg::StopRecording
-                            )
+                                crate::session::messages::CaptureMsg::StopRecording,
+                            ),
                         ));
                     }
                     TrayAction::ToggleToolbar => {
                         log::info!("Tray: Toggle toolbar requested");
                         self.toolbar_visible = !self.toolbar_visible;
-                        
+
                         // Update tray state
                         if let Some(ref handle) = self.tray_handle {
                             let visible = self.toolbar_visible;
@@ -597,10 +605,12 @@ impl cosmic::Application for App {
                                 tray.set_toolbar_visible(visible);
                             });
                         }
-                        
+
                         // Recreate the indicator surface with/without toolbar input zone
                         if self.recording_indicator.is_some() {
-                            return cosmic::Task::done(cosmic::Action::App(Msg::ToggleAnnotationMode));
+                            return cosmic::Task::done(cosmic::Action::App(
+                                Msg::ToggleAnnotationMode,
+                            ));
                         }
                     }
                 }
@@ -684,7 +694,7 @@ impl cosmic::Application for App {
                 _ => None,
             }),
         ];
-        
+
         // Add tray subscription if we have a receiver
         if let Some(ref rx) = self.tray_rx {
             subscriptions.push(tray_subscription(rx.clone()));
@@ -719,9 +729,14 @@ impl cosmic::Application for App {
         // Add timeline subscription for UI animations when screenshot UI is active
         if let Some(args) = &self.screenshot_args {
             subscriptions.push(
-                args.ui.timeline.as_subscription().map(|(window_id, instant)| {
-                    Msg::Screenshot(crate::session::messages::Msg::timeline_tick(window_id, instant))
-                }),
+                args.ui
+                    .timeline
+                    .as_subscription()
+                    .map(|(window_id, instant)| {
+                        Msg::Screenshot(crate::session::messages::Msg::timeline_tick(
+                            window_id, instant,
+                        ))
+                    }),
             );
         }
 
@@ -804,7 +819,7 @@ fn tray_subscription(rx: CbReceiver<TrayAction>) -> Subscription<Msg> {
         TypeId::of::<TraySub>(),
         cosmic::iced::stream::channel(10, move |mut output| async move {
             use cosmic::iced_futures::futures::StreamExt;
-            
+
             // Bridge the blocking crossbeam receiver into an async stream
             let (mut tx, mut async_rx) =
                 cosmic::iced_futures::futures::channel::mpsc::channel::<TrayAction>(10);
@@ -825,7 +840,10 @@ fn tray_subscription(rx: CbReceiver<TrayAction>) -> Subscription<Msg> {
 }
 
 /// Render the recording indicator overlay - a blinking red border and annotations
-fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: bool) -> cosmic::Element<'static, Msg> {
+fn render_recording_indicator(
+    indicator: &RecordingIndicator,
+    toolbar_visible: bool,
+) -> cosmic::Element<'static, Msg> {
     use cosmic::iced_core::Length;
     use cosmic::iced_widget::canvas::{self, Geometry, Path, Stroke};
 
@@ -882,10 +900,12 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                     // Handle click-outside-to-close for popup
                     if self.pencil_popup_open {
                         if let Some(cursor_pos) = cursor.position() {
-                            let in_popup = self.pencil_popup_bounds
+                            let in_popup = self
+                                .pencil_popup_bounds
                                 .map(|b| b.contains(cursor_pos))
                                 .unwrap_or(false);
-                            let in_toolbar = self.toolbar_bounds
+                            let in_toolbar = self
+                                .toolbar_bounds
                                 .map(|b| b.contains(cursor_pos))
                                 .unwrap_or(false);
 
@@ -895,8 +915,8 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                                     canvas::event::Status::Captured,
                                     Some(Msg::Screenshot(crate::session::messages::Msg::Tool(
                                         crate::session::messages::ToolMsg::PencilPopup(
-                                            crate::session::messages::ToolPopupAction::Close
-                                        )
+                                            crate::session::messages::ToolPopupAction::Close,
+                                        ),
                                     ))),
                                 );
                             }
@@ -918,7 +938,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 }
                 canvas::Event::Mouse(MouseEvent::CursorMoved { position }) => {
                     state.cursor_position = position;
-                    
+
                     // Handle toolbar dragging - takes priority over annotation drawing
                     if self.toolbar_dragging {
                         return (
@@ -926,9 +946,12 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                             Some(Msg::ToolbarDragMove(position.x, position.y)),
                         );
                     }
-                    
+
                     // Don't capture movements if popup is open (even mid-stroke)
-                    if self.annotation_mode && self.current_stroke.is_some() && !self.pencil_popup_open {
+                    if self.annotation_mode
+                        && self.current_stroke.is_some()
+                        && !self.pencil_popup_open
+                    {
                         return (
                             canvas::event::Status::Captured,
                             Some(Msg::IndicatorMouse(
@@ -941,12 +964,9 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
                     // Handle toolbar drag end - takes priority
                     if self.toolbar_dragging {
-                        return (
-                            canvas::event::Status::Captured,
-                            Some(Msg::ToolbarDragEnd),
-                        );
+                        return (canvas::event::Status::Captured, Some(Msg::ToolbarDragEnd));
                     }
-                    
+
                     // Don't capture release if popup is open (even mid-stroke)
                     if self.current_stroke.is_some() && !self.pencil_popup_open {
                         return (
@@ -1071,7 +1091,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     }
 
     let toolbar_dragging = indicator.toolbar_dragging;
-    
+
     let program = RecordingOverlay {
         region,
         border_visible: visible,
@@ -1091,9 +1111,9 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         .height(Length::Fill);
 
     // Add toolbar with stop and pencil toggle buttons
-    use cosmic::widget::{button, container, icon};
-    use cosmic::iced_widget::row;
     use cosmic::iced_core::Background;
+    use cosmic::iced_widget::row;
+    use cosmic::widget::{button, container, icon};
 
     let toolbar_pos = indicator.toolbar_pos;
 
@@ -1105,7 +1125,9 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     )
     .class(cosmic::theme::Container::Custom(Box::new(|_theme| {
         cosmic::iced::widget::container::Style {
-            background: Some(Background::Color(cosmic::iced_core::Color::from_rgb(0.85, 0.2, 0.2))),
+            background: Some(Background::Color(cosmic::iced_core::Color::from_rgb(
+                0.85, 0.2, 0.2,
+            ))),
             border: cosmic::iced_core::Border {
                 radius: 20.0.into(),
                 width: 2.0,
@@ -1127,20 +1149,21 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 crate::session::messages::CaptureMsg::StopRecording,
             )))
             .padding(0),
-        cosmic::widget::text::body("Stop Recording"),
+        cosmic::widget::text::body(fl!("stop-recording")),
         cosmic::widget::tooltip::Position::Bottom,
     );
 
     // Drag handle on the left - wrapped in mouse_area for drag support
     const DRAG_ICON: &[u8] = include_bytes!("../../data/icons/hicolor/scalable/actions/drag.svg");
-    let drag_handle_icon = cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(DRAG_ICON).symbolic(true))
-        .size(40);
+    let drag_handle_icon =
+        cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(DRAG_ICON).symbolic(true))
+            .size(40);
     let drag_handle_container = cosmic::widget::container(drag_handle_icon)
         .width(Length::Fixed(56.0))
         .height(Length::Fixed(56.0))
         .align_x(cosmic::iced_core::alignment::Horizontal::Center)
         .align_y(cosmic::iced_core::alignment::Vertical::Center);
-    
+
     // Wrap drag handle in mouse_area to capture drag events
     let drag_handle = cosmic::widget::mouse_area(drag_handle_container)
         .on_press(Msg::ToolbarDragStart)
@@ -1150,7 +1173,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     // Pencil toggle button with indicator dot and popup support
     let btn_pencil: cosmic::Element<'static, Msg> = crate::widget::tool_button::build_tool_button(
         "edit-symbolic",
-        "Freehand Annotation (right-click for options)",
+        &fl!("freehand-annotation"),
         1, // Single indicator dot (on/off state)
         0, // Always show first dot as active when mode is on
         annotation_mode,
@@ -1162,14 +1185,16 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
         Some(Msg::Screenshot(crate::session::messages::Msg::Capture(
             crate::session::messages::CaptureMsg::PencilRightClick,
         ))),
-        8, // padding
+        8,   // padding
         1.0, // full opacity
     );
 
     // Hide to tray button (minimize icon)
-    const MINIMIZE_ICON: &[u8] = include_bytes!("../../data/icons/hicolor/scalable/actions/minimize.svg");
-    let tray_icon = cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(MINIMIZE_ICON).symbolic(true))
-        .size(40);
+    const MINIMIZE_ICON: &[u8] =
+        include_bytes!("../../data/icons/hicolor/scalable/actions/minimize.svg");
+    let tray_icon =
+        cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(MINIMIZE_ICON).symbolic(true))
+            .size(40);
 
     let btn_hide_to_tray = cosmic::widget::tooltip(
         button::custom(tray_icon)
@@ -1178,7 +1203,7 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 crate::session::messages::CaptureMsg::HideToTray,
             )))
             .padding(8),
-        cosmic::widget::text::body("Minimize to System Tray"),
+        cosmic::widget::text::body(fl!("minimize-to-tray")),
         cosmic::widget::tooltip::Position::Bottom,
     );
 
@@ -1194,23 +1219,29 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
             pencil_fade_duration,
             pencil_thickness,
             true, // has annotations (always enable clear during recording)
-            &|c| Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::SetPencilColor(c)
+            &|c| {
+                Msg::Screenshot(crate::session::messages::Msg::Tool(
+                    crate::session::messages::ToolMsg::SetPencilColor(c),
+                ))
+            },
+            |d| {
+                Msg::Screenshot(crate::session::messages::Msg::Tool(
+                    crate::session::messages::ToolMsg::SetPencilFadeDuration(d),
+                ))
+            },
+            Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SavePencilFadeDuration,
             )),
-            |d| Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::SetPencilFadeDuration(d)
+            |t| {
+                Msg::Screenshot(crate::session::messages::Msg::Tool(
+                    crate::session::messages::ToolMsg::SetPencilThickness(t),
+                ))
+            },
+            Msg::Screenshot(crate::session::messages::Msg::Tool(
+                crate::session::messages::ToolMsg::SavePencilThickness,
             )),
             Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::SavePencilFadeDuration
-            )),
-            |t| Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::SetPencilThickness(t)
-            )),
-            Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::SavePencilThickness
-            )),
-            Msg::Screenshot(crate::session::messages::Msg::Tool(
-                crate::session::messages::ToolMsg::ClearPencilDrawings
+                crate::session::messages::ToolMsg::ClearPencilDrawings,
             )),
             16, // space_s
             8,  // space_xs
@@ -1223,32 +1254,39 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     use cosmic::iced_widget::{column, stack};
 
     // Toolbar styled container
-    let toolbar_with_bg = cosmic::widget::container(toolbar_content)
-        .padding(8)
-        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+    let toolbar_with_bg = cosmic::widget::container(toolbar_content).padding(8).class(
+        cosmic::theme::Container::Custom(Box::new(|theme| {
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
-                background: Some(Background::Color(cosmic_theme.background.component.base.into())),
+                background: Some(Background::Color(
+                    cosmic_theme.background.component.base.into(),
+                )),
                 border: cosmic::iced_core::Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),
                     ..Default::default()
                 },
                 ..Default::default()
             }
-        })));
+        })),
+    );
 
     // Toolbar layer - positioned using toolbar_pos for drag support
     // Use Space widgets to position toolbar at the desired location
     let _output_size = indicator.output_size;
-    
+
     // Create horizontal spacer to position toolbar
-    let left_space = cosmic::widget::horizontal_space().width(Length::Fixed(toolbar_pos.0.max(0.0)));
+    let left_space =
+        cosmic::widget::horizontal_space().width(Length::Fixed(toolbar_pos.0.max(0.0)));
     let top_space = cosmic::widget::vertical_space().height(Length::Fixed(toolbar_pos.1.max(0.0)));
-    
+
     // Build the positioned toolbar
-    let toolbar_row = row![left_space, toolbar_with_bg, cosmic::widget::horizontal_space()]
-        .width(Length::Fill);
-    
+    let toolbar_row = row![
+        left_space,
+        toolbar_with_bg,
+        cosmic::widget::horizontal_space()
+    ]
+    .width(Length::Fill);
+
     let toolbar_layer = column![top_space, toolbar_row, cosmic::widget::vertical_space()]
         .width(Length::Fill)
         .height(Length::Fill);
@@ -1258,15 +1296,15 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
     if toolbar_visible {
         if let Some(popup) = pencil_popup {
             // Popup layer - positioned relative to toolbar, above or below based on space
-            let popup_gap = 16.0_f32;      // Gap between popup and toolbar
-            let popup_height = 380.0_f32;  // Approximate popup height (must match screenshot/mod.rs)
+            let popup_gap = 16.0_f32; // Gap between popup and toolbar
+            let popup_height = 380.0_f32; // Approximate popup height (must match screenshot/mod.rs)
             let toolbar_height = 72.0_f32; // Toolbar height including padding
             let output_size = indicator.output_size;
-            
+
             // Determine if popup should appear above or below toolbar
             let space_above = toolbar_pos.1;
             let space_below = output_size.1 - toolbar_pos.1 - toolbar_height;
-            
+
             let popup_y = if space_above >= popup_height + popup_gap {
                 // Place above toolbar
                 toolbar_pos.1 - popup_gap - popup_height
@@ -1277,15 +1315,15 @@ fn render_recording_indicator(indicator: &RecordingIndicator, toolbar_visible: b
                 // Not enough space either way, place above and let it clip at top
                 (toolbar_pos.1 - popup_gap - popup_height).max(0.0)
             };
-            
-            let popup_left_space = cosmic::widget::horizontal_space()
-                .width(Length::Fixed(toolbar_pos.0.max(0.0)));
-            let popup_top_space = cosmic::widget::vertical_space()
-                .height(Length::Fixed(popup_y.max(0.0)));
-            
+
+            let popup_left_space =
+                cosmic::widget::horizontal_space().width(Length::Fixed(toolbar_pos.0.max(0.0)));
+            let popup_top_space =
+                cosmic::widget::vertical_space().height(Length::Fixed(popup_y.max(0.0)));
+
             let popup_row = row![popup_left_space, popup, cosmic::widget::horizontal_space()]
                 .width(Length::Fill);
-            
+
             let popup_layer = column![popup_top_space, popup_row, cosmic::widget::vertical_space()]
                 .width(Length::Fill)
                 .height(Length::Fill);

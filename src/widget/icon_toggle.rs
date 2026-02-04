@@ -5,18 +5,17 @@
 //! Supports both horizontal and vertical orientations.
 //! Supports smooth animation via cosmic-time.
 
+use cosmic::Element;
 use cosmic::iced::Size;
 use cosmic::iced_core::{
-    layout,
+    Background, Border, Color, Layout, Length, Rectangle, layout,
     mouse::{self, Cursor},
     renderer::Quad,
     widget::Tree,
-    Background, Border, Color, Layout, Length, Rectangle,
 };
 use cosmic::widget::icon;
-use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
+use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
 use std::rc::Rc;
 
 /// Animation ID for the capture mode toggle

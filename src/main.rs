@@ -74,10 +74,9 @@ fn main() -> cosmic::iced::Result {
                     if i + 1 < args.len() {
                         let parts: Vec<&str> = args[i + 1].split(',').collect();
                         if parts.len() == 2 {
-                            if let (Ok(w), Ok(h)) = (
-                                parts[0].parse::<u32>(),
-                                parts[1].parse::<u32>(),
-                            ) {
+                            if let (Ok(w), Ok(h)) =
+                                (parts[0].parse::<u32>(), parts[1].parse::<u32>())
+                            {
                                 logical_size = Some((w, h));
                             }
                         }
@@ -132,8 +131,13 @@ fn main() -> cosmic::iced::Result {
         }
 
         // Run recording
-        if let (Some(output_file), Some(output_name), Some(region), Some(logical_size), Some(encoder)) =
-            (output_file, output_name, region, logical_size, encoder)
+        if let (
+            Some(output_file),
+            Some(output_name),
+            Some(region),
+            Some(logical_size),
+            Some(encoder),
+        ) = (output_file, output_name, region, logical_size, encoder)
         {
             // Save state before starting
             let state = screencast::RecordingState {
@@ -167,10 +171,8 @@ fn main() -> cosmic::iced::Result {
                 log::warn!("Failed to delete state file after recording: {}", e);
             }
         } else {
-            log::error!("Missing required arguments for --record");
-            log::error!(
-                "Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS] [--toplevel-index IDX]"
-            );
+            log::error!("{}", fl!("cli-missing-args"));
+            log::error!("{}", fl!("cli-usage"));
             std::process::exit(1);
         }
 

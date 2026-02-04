@@ -1,5 +1,5 @@
 //! Widget for displaying a selected window with a border
-//! 
+//!
 //! The main `ScreenshotSelectionWidget` has been moved to `screenshot_selection/widget.rs`.
 //! This file contains `SelectedImageWidget` used for window mode display.
 

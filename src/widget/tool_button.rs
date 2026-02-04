@@ -16,6 +16,7 @@ use cosmic::iced_widget::{column, row};
 use cosmic::widget::{button, container, icon, text, toggler, tooltip};
 
 use crate::config::{RedactTool, ShapeColor, ShapeTool};
+use crate::fl;
 
 /// A wrapper widget that detects right-click and long-press events
 pub struct RightClickWrapper<'a, Msg> {
@@ -186,73 +187,64 @@ impl<'a, Msg: Clone + 'static> From<RightClickWrapper<'a, Msg>> for Element<'a, 
     }
 }
 
-/// Preset colors for the color picker
-pub const COLOR_PRESETS: &[(ShapeColor, &str)] = &[
-    (
-        ShapeColor {
-            r: 0.9,
-            g: 0.1,
-            b: 0.1,
-        },
-        "Red",
-    ),
-    (
-        ShapeColor {
-            r: 0.1,
-            g: 0.7,
-            b: 0.1,
-        },
-        "Green",
-    ),
-    (
-        ShapeColor {
-            r: 0.1,
-            g: 0.4,
-            b: 0.9,
-        },
-        "Blue",
-    ),
-    (
-        ShapeColor {
-            r: 0.9,
-            g: 0.7,
-            b: 0.1,
-        },
-        "Yellow",
-    ),
-    (
-        ShapeColor {
-            r: 0.9,
-            g: 0.5,
-            b: 0.1,
-        },
-        "Orange",
-    ),
-    (
-        ShapeColor {
-            r: 0.7,
-            g: 0.1,
-            b: 0.7,
-        },
-        "Purple",
-    ),
-    (
-        ShapeColor {
-            r: 1.0,
-            g: 1.0,
-            b: 1.0,
-        },
-        "White",
-    ),
-    (
-        ShapeColor {
-            r: 0.0,
-            g: 0.0,
-            b: 0.0,
-        },
-        "Black",
-    ),
+/// Preset colors for the color picker (color values only, names come from i18n)
+pub const COLOR_PRESETS: &[ShapeColor] = &[
+    ShapeColor {
+        r: 0.9,
+        g: 0.1,
+        b: 0.1,
+    }, // Red
+    ShapeColor {
+        r: 0.1,
+        g: 0.7,
+        b: 0.1,
+    }, // Green
+    ShapeColor {
+        r: 0.1,
+        g: 0.4,
+        b: 0.9,
+    }, // Blue
+    ShapeColor {
+        r: 0.9,
+        g: 0.7,
+        b: 0.1,
+    }, // Yellow
+    ShapeColor {
+        r: 0.9,
+        g: 0.5,
+        b: 0.1,
+    }, // Orange
+    ShapeColor {
+        r: 0.7,
+        g: 0.1,
+        b: 0.7,
+    }, // Purple
+    ShapeColor {
+        r: 1.0,
+        g: 1.0,
+        b: 1.0,
+    }, // White
+    ShapeColor {
+        r: 0.0,
+        g: 0.0,
+        b: 0.0,
+    }, // Black
 ];
+
+/// Get color name from i18n for a given index
+pub fn color_name(index: usize) -> String {
+    match index {
+        0 => fl!("color-red"),
+        1 => fl!("color-green"),
+        2 => fl!("color-blue"),
+        3 => fl!("color-yellow"),
+        4 => fl!("color-orange"),
+        5 => fl!("color-purple"),
+        6 => fl!("color-white"),
+        7 => fl!("color-black"),
+        _ => String::new(),
+    }
+}
 
 /// Build a generic tool button with indicator dots.
 ///
@@ -274,7 +266,7 @@ pub const COLOR_PRESETS: &[(ShapeColor, &str)] = &[
 #[allow(clippy::too_many_arguments)]
 pub fn build_tool_button<'a, Msg: Clone + 'static>(
     icon_name: &'a str,
-    tooltip_text: &'a str,
+    tooltip_text: impl AsRef<str>,
     num_options: usize,
     current_option_index: usize,
     is_active: bool,
@@ -382,7 +374,13 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
         .align_x(cosmic::iced_core::alignment::Horizontal::Center)
         .align_y(cosmic::iced_core::alignment::Vertical::Top);
 
-    tooltip(aligned_container, tooltip_text, tooltip::Position::Bottom).into()
+    let tooltip_string = tooltip_text.as_ref().to_string();
+    tooltip(
+        aligned_container,
+        text::body(tooltip_string),
+        tooltip::Position::Bottom,
+    )
+    .into()
 }
 
 /// Build the shape tool button (convenience wrapper around `build_tool_button`).
@@ -451,7 +449,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
         })
         .on_press(on_select_arrow)
         .padding(space_xs),
-        "Arrow",
+        text::body(fl!("arrow")),
         tooltip::Position::Bottom,
     );
 
@@ -468,7 +466,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
         })
         .on_press(on_select_circle)
         .padding(space_xs),
-        "Oval or Circle",
+        text::body(fl!("oval-circle")),
         tooltip::Position::Bottom,
     );
 
@@ -485,7 +483,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
         })
         .on_press(on_select_rectangle)
         .padding(space_xs),
-        "Rectangle or Square",
+        text::body(fl!("rectangle-square")),
         tooltip::Position::Bottom,
     );
 
@@ -499,14 +497,14 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Subtitle with keyboard shortcuts
-    let shape_subtitle = container(text::caption("Shift+A to cycle shapes, A to toggle").class(
+    let shape_subtitle = container(text::caption(fl!("shape-cycle-hint")).class(
         cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0)),
     ))
     .width(Length::Fill)
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Color picker - 2 rows of 4 color swatches each to avoid clipping
-    let make_color_swatch = |color: &ShapeColor, name: &'static str| {
+    let make_color_swatch = |color: &ShapeColor, name: String| {
         let is_selected = (color.r - current_color.r).abs() < 0.05
             && (color.g - current_color.g).abs() < 0.05
             && (color.b - current_color.b).abs() < 0.05;
@@ -537,27 +535,27 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Text)
             .on_press(on_color_change(color_val))
             .padding(2),
-            name,
+            text::body(name),
             tooltip::Position::Bottom,
         )
     };
 
     // First row: Red, Green, Blue, Yellow
     let color_row1 = row![
-        make_color_swatch(&COLOR_PRESETS[0].0, COLOR_PRESETS[0].1),
-        make_color_swatch(&COLOR_PRESETS[1].0, COLOR_PRESETS[1].1),
-        make_color_swatch(&COLOR_PRESETS[2].0, COLOR_PRESETS[2].1),
-        make_color_swatch(&COLOR_PRESETS[3].0, COLOR_PRESETS[3].1),
+        make_color_swatch(&COLOR_PRESETS[0], color_name(0)),
+        make_color_swatch(&COLOR_PRESETS[1], color_name(1)),
+        make_color_swatch(&COLOR_PRESETS[2], color_name(2)),
+        make_color_swatch(&COLOR_PRESETS[3], color_name(3)),
     ]
     .spacing(space_xs)
     .align_y(cosmic::iced_core::Alignment::Center);
 
     // Second row: Orange, Purple, White, Black
     let color_row2 = row![
-        make_color_swatch(&COLOR_PRESETS[4].0, COLOR_PRESETS[4].1),
-        make_color_swatch(&COLOR_PRESETS[5].0, COLOR_PRESETS[5].1),
-        make_color_swatch(&COLOR_PRESETS[6].0, COLOR_PRESETS[6].1),
-        make_color_swatch(&COLOR_PRESETS[7].0, COLOR_PRESETS[7].1),
+        make_color_swatch(&COLOR_PRESETS[4], color_name(4)),
+        make_color_swatch(&COLOR_PRESETS[5], color_name(5)),
+        make_color_swatch(&COLOR_PRESETS[6], color_name(6)),
+        make_color_swatch(&COLOR_PRESETS[7], color_name(7)),
     ]
     .spacing(space_xs)
     .align_y(cosmic::iced_core::Alignment::Center);
@@ -572,7 +570,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
         .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     let color_section = column![
-        text::body("Color"),
+        text::body(fl!("color")),
         color_row1_centered,
         color_row2_centered
     ]
@@ -581,7 +579,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
 
     // Shadow toggle
     let shadow_row = row![
-        text::body("Shadow"),
+        text::body(fl!("shadow")),
         cosmic::widget::horizontal_space(),
         toggler(shadow_enabled)
             .on_toggle(move |_| on_shadow_toggle.clone())
@@ -598,7 +596,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
                 icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0)),
-                text::body("Clear Annotations"),
+                text::body(fl!("clear-annotations")),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
@@ -678,7 +676,7 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
         })
         .on_press(on_select_redact)
         .padding(space_xs),
-        "Redact (black out)",
+        text::body(fl!("redact-blackout")),
         tooltip::Position::Bottom,
     );
 
@@ -695,7 +693,7 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
         })
         .on_press(on_select_pixelate)
         .padding(space_xs),
-        "Pixelate (blur out)",
+        text::body(fl!("pixelate-blur")),
         tooltip::Position::Bottom,
     );
 
@@ -709,14 +707,14 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Subtitle with keyboard shortcuts
-    let redact_subtitle = container(text::caption("Shift+D to cycle tools, D to toggle").class(
+    let redact_subtitle = container(text::caption(fl!("redact-cycle-hint")).class(
         cosmic::theme::Text::Color(cosmic::iced::Color::from_rgba(0.6, 0.6, 0.6, 1.0)),
     ))
     .width(Length::Fill)
     .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     // Pixelation size slider
-    let pixelation_label = text::body(format!("Pixelation: {}px", pixelation_block_size));
+    let pixelation_label = text::body(fl!("pixelation-size", size = pixelation_block_size));
     let pixelation_slider =
         cosmic::widget::slider(4..=64, pixelation_block_size as i32, move |v| {
             on_set_pixelation_size(v as u32)
@@ -736,7 +734,7 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
                 icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0)),
-                text::body("Clear Redactions"),
+                text::body(fl!("clear-redactions")),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
@@ -800,7 +798,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
     space_xs: u16,
 ) -> Element<'a, Msg> {
     // Color picker - 2 rows of 4 color swatches each
-    let make_color_swatch = |color: &ShapeColor, name: &'static str| {
+    let make_color_swatch = |color: &ShapeColor, name: String| {
         let is_selected = (color.r - current_color.r).abs() < 0.05
             && (color.g - current_color.g).abs() < 0.05
             && (color.b - current_color.b).abs() < 0.05;
@@ -831,27 +829,27 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
             .class(cosmic::theme::Button::Text)
             .on_press(on_color_change(color_val))
             .padding(2),
-            name,
+            text::body(name),
             tooltip::Position::Bottom,
         )
     };
 
     // First row: Red, Green, Blue, Yellow
     let color_row1 = row![
-        make_color_swatch(&COLOR_PRESETS[0].0, COLOR_PRESETS[0].1),
-        make_color_swatch(&COLOR_PRESETS[1].0, COLOR_PRESETS[1].1),
-        make_color_swatch(&COLOR_PRESETS[2].0, COLOR_PRESETS[2].1),
-        make_color_swatch(&COLOR_PRESETS[3].0, COLOR_PRESETS[3].1),
+        make_color_swatch(&COLOR_PRESETS[0], color_name(0)),
+        make_color_swatch(&COLOR_PRESETS[1], color_name(1)),
+        make_color_swatch(&COLOR_PRESETS[2], color_name(2)),
+        make_color_swatch(&COLOR_PRESETS[3], color_name(3)),
     ]
     .spacing(space_xs)
     .align_y(cosmic::iced_core::Alignment::Center);
 
     // Second row: Orange, Purple, White, Black
     let color_row2 = row![
-        make_color_swatch(&COLOR_PRESETS[4].0, COLOR_PRESETS[4].1),
-        make_color_swatch(&COLOR_PRESETS[5].0, COLOR_PRESETS[5].1),
-        make_color_swatch(&COLOR_PRESETS[6].0, COLOR_PRESETS[6].1),
-        make_color_swatch(&COLOR_PRESETS[7].0, COLOR_PRESETS[7].1),
+        make_color_swatch(&COLOR_PRESETS[4], color_name(4)),
+        make_color_swatch(&COLOR_PRESETS[5], color_name(5)),
+        make_color_swatch(&COLOR_PRESETS[6], color_name(6)),
+        make_color_swatch(&COLOR_PRESETS[7], color_name(7)),
     ]
     .spacing(space_xs)
     .align_y(cosmic::iced_core::Alignment::Center);
@@ -866,7 +864,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
         .align_x(cosmic::iced_core::alignment::Horizontal::Center);
 
     let color_section = column![
-        text::body("Color"),
+        text::body(fl!("color")),
         color_row1_centered,
         color_row2_centered
     ]
@@ -874,7 +872,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
     .align_x(cosmic::iced_core::Alignment::Start);
 
     // Thickness slider (1-10 pixels) - updates during drag, saves on release
-    let thickness_label = text::body(format!("Thickness: {:.0}px", thickness));
+    let thickness_label = text::body(fl!("thickness", size = (thickness as u32)));
     let thickness_slider =
         cosmic::widget::slider(1.0..=10.0, thickness, move |v| on_thickness_change(v))
             .step(1.0)
@@ -886,7 +884,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
         .width(Length::Fill);
 
     // Fade duration slider (1-10 seconds) - updates during drag, saves on release
-    let duration_label = text::body(format!("Fade: {:.0}s", fade_duration));
+    let duration_label = text::body(fl!("fade-duration", duration = (fade_duration as u32)));
     let duration_slider =
         cosmic::widget::slider(1.0..=10.0, fade_duration, move |v| on_duration_change(v))
             .step(1.0)
@@ -904,7 +902,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
                 icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
                     .width(Length::Fixed(16.0))
                     .height(Length::Fixed(16.0)),
-                text::body("Clear Drawings"),
+                text::body(fl!("clear-drawings")),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
