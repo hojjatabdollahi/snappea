@@ -1849,6 +1849,26 @@ where
         viewport: &cosmic::iced_core::Rectangle,
         renderer: &cosmic::Renderer,
     ) -> cosmic::iced::mouse::Interaction {
+        // If actively dragging a rectangle selection, show the appropriate cursor
+        // This takes priority and handles cases where cursor position is unavailable during DnD
+        if let Choice::Rectangle(_, drag_state) = &self.choice {
+            if *drag_state != DragState::None {
+                return match drag_state {
+                    DragState::Move => cosmic::iced::mouse::Interaction::Grabbing,
+                    DragState::N | DragState::S => {
+                        cosmic::iced::mouse::Interaction::ResizingVertically
+                    }
+                    DragState::E | DragState::W => {
+                        cosmic::iced::mouse::Interaction::ResizingHorizontally
+                    }
+                    DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
+                        cosmic::iced::mouse::Interaction::Grabbing
+                    }
+                    DragState::None => unreachable!(),
+                };
+            }
+        }
+
         if self.is_any_drawing_mode() && cursor.position().is_some() {
             return cosmic::iced::mouse::Interaction::Crosshair;
         }

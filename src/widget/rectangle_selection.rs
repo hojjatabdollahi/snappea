@@ -386,30 +386,30 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         if self.is_recording {
             return iced_core::mouse::Interaction::default();
         }
+
+        // If actively dragging, show the appropriate dragging cursor regardless of cursor position
+        // This prevents cursor flickering when cursor moves fast during drag
+        if self.drag_state != DragState::None {
+            return match self.drag_state {
+                DragState::Move => iced_core::mouse::Interaction::Grabbing,
+                DragState::N | DragState::S => iced_core::mouse::Interaction::ResizingVertically,
+                DragState::E | DragState::W => iced_core::mouse::Interaction::ResizingHorizontally,
+                DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
+                    iced_core::mouse::Interaction::Grabbing
+                }
+                DragState::None => unreachable!(),
+            };
+        }
+
+        // Not dragging - show cursor based on what we're hovering over
         match self.drag_state(cursor) {
-            DragState::None => {
-                if self.drag_state == DragState::None {
-                    iced_core::mouse::Interaction::Crosshair
-                } else {
-                    iced_core::mouse::Interaction::Grabbing
-                }
-            }
+            DragState::None => iced_core::mouse::Interaction::Crosshair,
             DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
-                if self.drag_state == DragState::None {
-                    iced_core::mouse::Interaction::Grab
-                } else {
-                    iced_core::mouse::Interaction::Grabbing
-                }
+                iced_core::mouse::Interaction::Grab
             }
             DragState::N | DragState::S => iced_core::mouse::Interaction::ResizingVertically,
             DragState::E | DragState::W => iced_core::mouse::Interaction::ResizingHorizontally,
-            DragState::Move => {
-                if self.drag_state == DragState::Move {
-                    iced_core::mouse::Interaction::Grabbing
-                } else {
-                    iced_core::mouse::Interaction::Grab
-                }
-            }
+            DragState::Move => iced_core::mouse::Interaction::Grab,
         }
     }
 
@@ -428,71 +428,6 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             return cosmic::iced_core::event::Status::Ignored;
         }
         match event {
-            cosmic::iced_core::Event::Dnd(DndEvent::Offer(id, e)) if id == Some(self.drag_id) => {
-                if self.drag_state == DragState::None {
-                    return cosmic::iced_core::event::Status::Ignored;
-                }
-                match e {
-                    OfferEvent::Enter { x, y, .. } => {
-                        let p = Point::new(x as f32, y as f32);
-                        let cursor = mouse::Cursor::Available(p);
-                        if !cursor.is_over(layout.bounds()) {
-                            return cosmic::iced_core::event::Status::Ignored;
-                        }
-
-                        self.handle_drag_pos(x.round() as i32, y.round() as i32, shell);
-                        cosmic::iced_core::event::Status::Captured
-                    }
-                    OfferEvent::Motion { x, y } => {
-                        let p = Point::new(x as f32, y as f32);
-                        let cursor = mouse::Cursor::Available(p);
-                        if !cursor.is_over(layout.bounds()) {
-                            return cosmic::iced_core::event::Status::Ignored;
-                        }
-                        self.handle_drag_pos(x.round() as i32, y.round() as i32, shell);
-                        cosmic::iced_core::event::Status::Captured
-                    }
-                    OfferEvent::Drop => {
-                        self.drag_state = DragState::None;
-                        // Clear move offset when drag ends
-                        shell.publish((self.on_move_offset)(None));
-                        // Only keep rectangle if it has meaningful dimensions (> 5x5)
-                        let rect = self.rectangle_selection;
-                        let width = (rect.right - rect.left).abs();
-                        let height = (rect.bottom - rect.top).abs();
-                        if width > 5 && height > 5 {
-                            shell.publish((self.on_rectangle)(DragState::None, rect));
-                        } else {
-                            // Clear the selection - just a click, not a drag
-                            shell.publish((self.on_rectangle)(DragState::None, Rect::default()));
-                        }
-                        cosmic::iced_core::event::Status::Captured
-                    }
-                    _ => cosmic::iced_core::event::Status::Ignored,
-                }
-            }
-            cosmic::iced_core::Event::Dnd(DndEvent::Source(e)) => {
-                if matches!(
-                    e,
-                    SourceEvent::Finished | SourceEvent::Cancelled | SourceEvent::Dropped
-                ) {
-                    self.drag_state = DragState::None;
-                    // Clear move offset when drag ends
-                    shell.publish((self.on_move_offset)(None));
-                    // Only keep rectangle if it has meaningful dimensions (> 5x5)
-                    let rect = self.rectangle_selection;
-                    let width = (rect.right - rect.left).abs();
-                    let height = (rect.bottom - rect.top).abs();
-                    if width > 5 && height > 5 {
-                        shell.publish((self.on_rectangle)(DragState::None, rect));
-                    } else {
-                        // Clear the selection - just a click, not a drag
-                        shell.publish((self.on_rectangle)(DragState::None, Rect::default()));
-                    }
-                }
-
-                cosmic::iced_core::event::Status::Ignored
-            }
             cosmic::iced_core::Event::Mouse(e) => {
                 if !cursor.is_over(layout.bounds()) {
                     return cosmic::iced_core::event::Status::Ignored;
@@ -509,53 +444,81 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     return cosmic::iced_core::event::Status::Ignored;
                 }
 
-                if let iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) = e {
-                    let window_id = self.window_id;
+                match e {
+                    iced_core::mouse::Event::ButtonPressed(iced_core::mouse::Button::Left) => {
+                        let s = self.drag_state(cursor);
 
-                    clipboard.start_dnd(
-                        false,
-                        Some(DndSource::Surface(window_id)),
-                        None,
-                        Box::new(MyData),
-                        DndAction::Copy,
-                    );
-
-                    let s = self.drag_state(cursor);
-                    if let DragState::None = s {
-                        let mut pos = cursor.position().unwrap_or_default();
-                        pos.x += self.output_rect.left as f32;
-                        pos.y += self.output_rect.top as f32;
-                        self.drag_state = DragState::SE;
-                        // Clear any previous move offset when starting a new selection
-                        shell.publish((self.on_move_offset)(None));
-                        shell.publish((self.on_rectangle)(
-                            DragState::SE,
-                            Rect {
-                                left: pos.x as i32,
-                                top: pos.y as i32,
-                                right: pos.x as i32 + 1,
-                                bottom: pos.y as i32 + 1,
-                            },
-                        ));
-                    } else if s == DragState::Move {
-                        // Compute move offset: cursor position relative to rect top-left
-                        let pos = cursor.position().unwrap_or_default();
-                        let cursor_x = self.output_rect.left + pos.x as i32;
-                        let cursor_y = self.output_rect.top + pos.y as i32;
-                        let offset_x = cursor_x - self.rectangle_selection.left;
-                        let offset_y = cursor_y - self.rectangle_selection.top;
-                        self.drag_state = DragState::Move;
-                        shell.publish((self.on_move_offset)(Some((offset_x, offset_y))));
-                        shell.publish((self.on_rectangle)(s, self.rectangle_selection));
-                    } else {
-                        self.drag_state = s;
-                        // Clear move offset for resize operations
-                        shell.publish((self.on_move_offset)(None));
-                        shell.publish((self.on_rectangle)(s, self.rectangle_selection));
+                        if s == DragState::Move {
+                            // For Move: compute offset for translation
+                            let pos = cursor.position().unwrap_or_default();
+                            let cursor_x = self.output_rect.left + pos.x as i32;
+                            let cursor_y = self.output_rect.top + pos.y as i32;
+                            let offset_x = cursor_x - self.rectangle_selection.left;
+                            let offset_y = cursor_y - self.rectangle_selection.top;
+                            self.drag_state = DragState::Move;
+                            shell.publish((self.on_move_offset)(Some((offset_x, offset_y))));
+                            shell.publish((self.on_rectangle)(
+                                DragState::Move,
+                                self.rectangle_selection,
+                            ));
+                        } else if s == DragState::None {
+                            // New selection: start drawing from current position
+                            let mut pos = cursor.position().unwrap_or_default();
+                            pos.x += self.output_rect.left as f32;
+                            pos.y += self.output_rect.top as f32;
+                            self.drag_state = DragState::SE;
+                            shell.publish((self.on_move_offset)(None));
+                            shell.publish((self.on_rectangle)(
+                                DragState::SE,
+                                Rect {
+                                    left: pos.x as i32,
+                                    top: pos.y as i32,
+                                    right: pos.x as i32 + 1,
+                                    bottom: pos.y as i32 + 1,
+                                },
+                            ));
+                        } else {
+                            // Resize from corner or edge
+                            self.drag_state = s;
+                            shell.publish((self.on_move_offset)(None));
+                            shell.publish((self.on_rectangle)(s, self.rectangle_selection));
+                        }
+                        cosmic::iced_core::event::Status::Captured
                     }
-                    return cosmic::iced_core::event::Status::Captured;
+                    iced_core::mouse::Event::CursorMoved { .. } => {
+                        // Handle all drag operations without DnD for proper cursor control
+                        if self.drag_state != DragState::None {
+                            if let Some(pos) = cursor.position() {
+                                let x = pos.x.round() as i32;
+                                let y = pos.y.round() as i32;
+                                self.handle_drag_pos(x, y, shell);
+                            }
+                            return cosmic::iced_core::event::Status::Captured;
+                        }
+                        cosmic::iced_core::event::Status::Ignored
+                    }
+                    iced_core::mouse::Event::ButtonReleased(iced_core::mouse::Button::Left) => {
+                        // End any drag operation
+                        if self.drag_state != DragState::None {
+                            self.drag_state = DragState::None;
+                            shell.publish((self.on_move_offset)(None));
+                            // Only keep rectangle if it has meaningful dimensions (> 5x5)
+                            let rect = self.rectangle_selection;
+                            let width = (rect.right - rect.left).abs();
+                            let height = (rect.bottom - rect.top).abs();
+                            if width > 5 && height > 5 {
+                                shell.publish((self.on_rectangle)(DragState::None, rect));
+                            } else {
+                                // Clear the selection - just a click, not a drag
+                                shell
+                                    .publish((self.on_rectangle)(DragState::None, Rect::default()));
+                            }
+                            return cosmic::iced_core::event::Status::Captured;
+                        }
+                        cosmic::iced_core::event::Status::Ignored
+                    }
+                    _ => cosmic::iced_core::event::Status::Ignored,
                 }
-                cosmic::iced_core::event::Status::Captured
             }
             _ => cosmic::iced_core::event::Status::Ignored,
         }
