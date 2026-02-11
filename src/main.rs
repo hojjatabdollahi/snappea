@@ -19,8 +19,32 @@ fn main() -> cosmic::iced::Result {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
     localize::localize();
 
-    // Check for --record subcommand
     let args: Vec<String> = env::args().collect();
+
+    // Check for --help flag
+    if args.len() > 1 && (args[1] == "--help" || args[1] == "-h") {
+        println!("SnapPea - Screenshot and Screen Recording for Linux/Wayland");
+        println!();
+        println!("Usage: snappea [OPTION]");
+        println!();
+        println!("Options:");
+        println!("  --portal        Run as D-Bus portal service (for desktop integration)");
+        println!("  --record        Start screen recording (requires additional arguments)");
+        println!("  --help, -h      Show this help message");
+        println!();
+        println!("When run without arguments, opens the screenshot UI directly.");
+        println!("If an instance is already running, sends command to it.");
+        println!("Use --portal for D-Bus portal mode (system integration).");
+        return Ok(());
+    }
+
+    // Check for --portal flag (D-Bus portal mode)
+    // Portal mode always starts fresh (it's the background service)
+    if args.len() > 1 && args[1] == "--portal" {
+        return core::app::run();
+    }
+
+    // Check for --record subcommand
     if args.len() > 1 && args[1] == "--record" {
         // Parse arguments
         let mut output_file = None;
@@ -179,6 +203,60 @@ fn main() -> cosmic::iced::Result {
         return Ok(());
     }
 
-    // Normal UI mode
-    core::app::run()
+    // Check if another instance is already running
+    // If so, send a command to it instead of starting a new instance
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("Failed to create tokio runtime");
+
+    let instance_running = rt.block_on(core::control::is_instance_running());
+
+    if instance_running {
+        log::info!("Another instance is running, sending screenshot command");
+
+        // If recording, stop it; otherwise take a screenshot
+        let is_recording = rt.block_on(async {
+            let Ok(conn) = zbus::Connection::session().await else {
+                return false;
+            };
+            conn.call_method(
+                Some(core::portal::DBUS_NAME),
+                core::control::CONTROL_PATH,
+                Some("io.github.hojjatabdollahi.snappea.Control"),
+                "IsRecording",
+                &(),
+            )
+            .await
+            .ok()
+            .and_then(|r| r.body().deserialize::<bool>().ok())
+            .unwrap_or(false)
+        });
+
+        let command = if is_recording {
+            "toggle-recording"
+        } else {
+            "screenshot"
+        };
+
+        match rt.block_on(core::control::send_command(command)) {
+            Ok(true) => {
+                log::info!("Command sent successfully");
+                return Ok(());
+            }
+            Ok(false) => {
+                log::warn!("Command was not processed");
+                return Ok(());
+            }
+            Err(e) => {
+                log::warn!("Failed to send command: {}, starting new instance", e);
+                // Fall through to start new instance
+            }
+        }
+    }
+
+    // Default: Direct screenshot mode (no D-Bus portal)
+    core::app::run_with_flags(core::app::AppFlags {
+        direct_screenshot: true,
+    })
 }

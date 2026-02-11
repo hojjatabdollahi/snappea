@@ -137,6 +137,8 @@ impl Screenshot {
 
     pub fn get_img_path(location: ImageSaveLocation, custom_dir: Option<&str>) -> Option<PathBuf> {
         let mut path = match (location, custom_dir) {
+            // Clipboard should always return None (no file path) - check this first!
+            (ImageSaveLocation::Clipboard, _) => None,
             (_, Some(custom)) if !custom.is_empty() => {
                 // Use custom directory if provided and non-empty
                 Some(PathBuf::from(custom))
@@ -147,7 +149,6 @@ impl Screenshot {
             (ImageSaveLocation::Documents, _) => {
                 dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")))
             }
-            (ImageSaveLocation::Clipboard, _) => None,
         }?;
         let name = chrono::Local::now()
             .format("Screenshot_%Y-%m-%d_%H-%M-%S.png")

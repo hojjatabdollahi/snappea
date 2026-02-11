@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=SnapPea
+Comment=Screenshot and Screen Recording for Linux/Wayland
+Exec=snappea
+Icon=io.github.hojjatabdollahi.snappea
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;
+Keywords=screenshot;screen;capture;record;snip;
+StartupNotify=false

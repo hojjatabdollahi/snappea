@@ -35,40 +35,62 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 Build and install with [just](https://github.com/casey/just):
 
 ```sh
-just
-sudo just install
+just && sudo just install
 ```
 
+This installs the binary to `/usr/bin/snappea` and adds a desktop entry to your application menu.
 
-> [!IMPORTANT]
-To override the default screenshot portal, create or edit `~/.config/xdg-desktop-portal/portals.conf`:
+**Setting up a keyboard shortcut:**
 
-```ini
-[preferred]
-org.freedesktop.impl.portal.Screenshot=snappea
+1. Open **Settings** > **Keyboard** > **Keyboard Shortcuts** > **Custom Shortcuts**
+2. Add a new shortcut:
+   - Name: `SnapPea` (or `Screenshot`)
+   - Command: `snappea`
+   - Shortcut: `Print` (or your preferred key)
+
+> [!NOTE]
+> Running `snappea` multiple times communicates with the existing instance. If you're recording and press the shortcut again, it will stop the recording.
+
+### Optional: System Integration
+
+To use SnapPea as the default screenshot tool (replacing the COSMIC screenshot tool):
+
+```sh
+just install-portal
 ```
 
-Reload xdg-desktop-portal to apply changes:
+This creates `~/.config/xdg-desktop-portal/portals.conf` to configure xdg-desktop-portal.
+
+After installing, reload the portal:
 
 ```bash
 systemctl --user restart xdg-desktop-portal
 ```
 
+Now pressing `Print Screen` will open SnapPea instead of the default screenshot tool.
 
-To enable OCR install [tesseract-ocr](https://github.com/tesseract-ocr/tesseract) and the desired language packs.
+### Optional: OCR Support
+
+To enable text recognition (OCR), install [tesseract-ocr](https://github.com/tesseract-ocr/tesseract):
 
 ```bash
+# Debian/Ubuntu
 sudo apt install tesseract-ocr
+
+# Fedora
+sudo dnf install tesseract
+
+# Arch
+sudo pacman -S tesseract
 ```
 
-
-To uninstall:
+### Uninstalling
 
 ```sh
 sudo just uninstall
 ```
 
-Make sure to remove the override from `~/.config/xdg-desktop-portal/portals.conf` if you set it.
+The uninstall command will warn you if `~/.config/xdg-desktop-portal/portals.conf` still contains SnapPea configuration.
 
 ## Why SnapPea?
 It Snaps Pics and it's snappy!
