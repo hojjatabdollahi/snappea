@@ -902,7 +902,6 @@ pub(crate) fn direct_screenshot_subscription(
 ) -> cosmic::iced::Subscription<PortalEvent> {
     use crate::capture::image::ScreenshotImage;
     use crate::wayland::CaptureSource;
-    use futures::stream::StreamExt;
 
     struct DirectScreenshotSubscription;
     Subscription::run_with_id(
@@ -1011,31 +1010,6 @@ pub(crate) fn direct_screenshot_subscription(
                 }
             }
 
-            // Capture toplevel images
-            let mut toplevel_images: HashMap<String, Vec<ScreenshotImage>> = HashMap::new();
-            for (wl_output, name, _, _, _) in &outputs {
-                let imgs: Vec<ScreenshotImage> = helper
-                    .capture_output_toplevels_shm(wl_output, false)
-                    .filter_map(|img| async { ScreenshotImage::new(img).ok() })
-                    .collect()
-                    .await;
-                toplevel_images.insert(name.clone(), imgs);
-            }
-
-            // Build global indices for toplevels
-            let all_toplevels = helper.all_toplevels();
-            let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
-                .iter()
-                .map(|(wl_output, name, _, _, _)| {
-                    let output_toplevels = helper.output_toplevels(wl_output);
-                    let global_indices: Vec<usize> = output_toplevels
-                        .iter()
-                        .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
-                        .collect();
-                    (name.clone(), global_indices)
-                })
-                .collect();
-
             let config = SnapPeaConfig::load();
             let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
@@ -1054,14 +1028,11 @@ pub(crate) fn direct_screenshot_subscription(
                 },
                 capture: CaptureData {
                     output_images,
-                    toplevel_images,
-                    toplevel_global_indices,
                 },
                 session: SessionState {
                     choice,
                     action: crate::domain::Action::ReturnPath,
                     location: crate::domain::ImageSaveLocation::Pictures,
-                    highlighted_window_index: 0,
                     focused_output_index: 0,
                     also_copy_to_clipboard: false,
                     has_mouse_entered: false,
@@ -1736,7 +1707,6 @@ async fn trigger_screenshot(
         AnnotationState, CaptureData, DetectionState, PortalContext, SessionState, UiState,
     };
     use crate::wayland::CaptureSource;
-    use futures::StreamExt;
     use std::collections::HashMap;
 
     // Create a dummy channel for portal context
@@ -1781,31 +1751,6 @@ async fn trigger_screenshot(
         }
     }
 
-    // Capture toplevel images
-    let mut toplevel_images: HashMap<String, Vec<ScreenshotImage>> = HashMap::new();
-    for (wl_output, name, _, _, _) in &outputs {
-        let imgs: Vec<ScreenshotImage> = helper
-            .capture_output_toplevels_shm(wl_output, false)
-            .filter_map(|img| async { ScreenshotImage::new(img).ok() })
-            .collect()
-            .await;
-        toplevel_images.insert(name.clone(), imgs);
-    }
-
-    // Build global indices for toplevels
-    let all_toplevels = helper.all_toplevels();
-    let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
-        .iter()
-        .map(|(wl_output, name, _, _, _)| {
-            let output_toplevels = helper.output_toplevels(wl_output);
-            let global_indices: Vec<usize> = output_toplevels
-                .iter()
-                .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
-                .collect();
-            (name.clone(), global_indices)
-        })
-        .collect();
-
     let config = SnapPeaConfig::load();
     let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
@@ -1824,14 +1769,11 @@ async fn trigger_screenshot(
         },
         capture: CaptureData {
             output_images,
-            toplevel_images,
-            toplevel_global_indices,
         },
         session: SessionState {
             choice,
             action: crate::domain::Action::ReturnPath,
             location: crate::domain::ImageSaveLocation::Pictures,
-            highlighted_window_index: 0,
             focused_output_index: 0,
             also_copy_to_clipboard: false,
             has_mouse_entered: false,

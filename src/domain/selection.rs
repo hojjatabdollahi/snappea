@@ -70,8 +70,6 @@ pub enum Choice {
     Output(Option<String>),
     /// Rectangle selection with current rect and drag state
     Rectangle(Rect, DragState),
-    /// Window selection: output name and optional window index
-    Window(String, Option<usize>),
 }
 
 /// Action to perform after screenshot capture

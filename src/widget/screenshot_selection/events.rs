@@ -55,12 +55,8 @@ pub enum SelectionEvent {
     ChoiceChanged(Choice),
     /// Output changed (for wayland output tracking)
     OutputChanged(WlOutput),
-    /// Window selected (app_id, output_index)
-    WindowSelected(String, usize),
     /// Screen mode activated for an output
     ScreenMode(usize),
-    /// Window mode activated for an output
-    WindowMode(usize),
     /// Selection confirmed (Enter pressed)
     Confirm,
     /// Set move offset for dragging selection rectangle
@@ -327,16 +323,8 @@ impl ScreenshotEvent {
         Self::Selection(SelectionEvent::OutputChanged(output))
     }
 
-    pub fn window_selected(app_id: String, output_index: usize) -> Self {
-        Self::Selection(SelectionEvent::WindowSelected(app_id, output_index))
-    }
-
     pub fn screen_mode(output_index: usize) -> Self {
         Self::Selection(SelectionEvent::ScreenMode(output_index))
-    }
-
-    pub fn window_mode(output_index: usize) -> Self {
-        Self::Selection(SelectionEvent::WindowMode(output_index))
     }
 
     pub fn confirm() -> Self {
@@ -634,11 +622,7 @@ impl ScreenshotEvent {
             // Selection events
             Self::Selection(SelectionEvent::ChoiceChanged(choice)) => Msg::choice(choice),
             Self::Selection(SelectionEvent::OutputChanged(output)) => Msg::output_changed(output),
-            Self::Selection(SelectionEvent::WindowSelected(app_id, idx)) => {
-                Msg::window_chosen(app_id, idx)
-            }
             Self::Selection(SelectionEvent::ScreenMode(idx)) => Msg::screen_mode(idx),
-            Self::Selection(SelectionEvent::WindowMode(idx)) => Msg::window_mode(idx),
             Self::Selection(SelectionEvent::Confirm) => Msg::confirm(),
             Self::Selection(SelectionEvent::SetMoveOffset(offset)) => Msg::set_move_offset(offset),
 

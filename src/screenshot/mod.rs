@@ -9,7 +9,7 @@ use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
 use cosmic::iced_winit::commands::layer_surface::{destroy_layer_surface, get_layer_surface};
 use cosmic::widget::horizontal_space;
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
-use futures::stream::{FuturesUnordered, StreamExt};
+
 use image::RgbaImage;
 use std::borrow::Cow;
 use std::{collections::HashMap, io, path::PathBuf};
@@ -76,29 +76,6 @@ pub struct Screenshot {
 impl Screenshot {
     pub fn new(wayland_helper: WaylandHelper, tx: Sender<Event>) -> Self {
         Self { wayland_helper, tx }
-    }
-
-    async fn interactive_toplevel_images(
-        &self,
-        outputs: &[Output],
-    ) -> anyhow::Result<HashMap<String, Vec<ScreenshotImage>>> {
-        let wayland_helper = self.wayland_helper.clone();
-        Ok(outputs
-            .iter()
-            .map(move |Output { output, name, .. }| {
-                let wayland_helper = wayland_helper.clone();
-                async move {
-                    let frame = wayland_helper
-                        .capture_output_toplevels_shm(output, false)
-                        .filter_map(|img| async { ScreenshotImage::new(img).ok() })
-                        .collect()
-                        .await;
-                    (name.clone(), frame)
-                }
-            })
-            .collect::<FuturesUnordered<_>>()
-            .collect::<HashMap<String, _>>()
-            .await)
     }
 
     async fn interactive_output_images(
@@ -354,45 +331,6 @@ impl Screenshot {
             );
         }
 
-        let toplevel_images = self
-            .interactive_toplevel_images(&outputs)
-            .await
-            .unwrap_or_default();
-
-        // Log toplevel image sizes for debugging HiDPI
-        for (output_name, imgs) in &toplevel_images {
-            for (i, img) in imgs.iter().enumerate() {
-                log::debug!(
-                    "Toplevel {} on output {}: {}x{} pixels",
-                    i,
-                    output_name,
-                    img.rgba.width(),
-                    img.rgba.height()
-                );
-            }
-        }
-
-        // Build mapping from (output, local_index) -> global_index at capture time
-        // This ensures the indices are stable when recording starts later
-        let all_toplevels = self.wayland_helper.all_toplevels();
-        let toplevel_global_indices: HashMap<String, Vec<usize>> = outputs
-            .iter()
-            .map(|Output { output, name, .. }| {
-                let output_toplevels = self.wayland_helper.output_toplevels(output);
-                let global_indices: Vec<usize> = output_toplevels
-                    .iter()
-                    .map(|t| all_toplevels.iter().position(|at| at == t).unwrap_or(0))
-                    .collect();
-                log::debug!(
-                    "Output '{}': {} toplevels, global indices: {:?}",
-                    name,
-                    output_toplevels.len(),
-                    global_indices
-                );
-                (name.clone(), global_indices)
-            })
-            .collect();
-
         let choice = Choice::Rectangle(Rect::default(), DragState::default());
 
         // Load persisted config for settings
@@ -411,8 +349,6 @@ impl Screenshot {
                 },
                 capture: CaptureData {
                     output_images,
-                    toplevel_images,
-                    toplevel_global_indices,
                 },
                 session: SessionState {
                     choice,
@@ -422,7 +358,6 @@ impl Screenshot {
                         Action::ReturnPath
                     },
                     location: ImageSaveLocation::Pictures,
-                    highlighted_window_index: 0,
                     focused_output_index: 0,
                     also_copy_to_clipboard: false,
                     has_mouse_entered: false,
@@ -518,20 +453,18 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         let output_name = &output.name;
         match &args.session.choice {
             Choice::Rectangle(_, _) => true,
-            Choice::Output(None) | Choice::Window(_, None) => true,
-            Choice::Window(win_output, Some(_)) => output_name == win_output,
+            Choice::Output(None) => true,
             Choice::Output(Some(selected)) => output_name == selected,
         }
     };
 
     let has_confirmed_selection = matches!(
         &args.session.choice,
-        Choice::Window(_, Some(_)) | Choice::Output(Some(_))
+        Choice::Output(Some(_))
     );
 
     let output_ctx = OutputContext {
         output_count: app.outputs.len(),
-        highlighted_window_index: args.session.highlighted_window_index,
         focused_output_index: args.session.focused_output_index,
         current_output_index: i,
         is_active_output,
@@ -543,7 +476,6 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
     ScreenshotSelectionWidget::new(
         args.session.choice.clone(),
         img,
-        &args.capture.toplevel_images,
         output,
         id,
         theme.spacing,
@@ -719,7 +651,6 @@ fn handle_select_msg(app: &mut App, msg: SelectMsg) -> cosmic::Task<crate::core:
 
     match msg {
         SelectMsg::RegionMode => handle_select_region_mode(app),
-        SelectMsg::WindowMode(idx) => handle_select_window_mode(app, idx),
         SelectMsg::ScreenMode(idx) => handle_select_screen_mode(app, idx),
         SelectMsg::Navigate(dir) => match dir {
             Direction::Left => handle_navigate_left(app),
@@ -1039,9 +970,6 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 return cosmic::Task::none();
             };
 
-            // Track if we're recording a specific window (toplevel)
-            let mut toplevel_index: Option<usize> = None;
-
             let region = match &args.session.choice {
                 Choice::Rectangle(rect, _) if rect.width() > 0 && rect.height() > 0 => (
                     rect.left,
@@ -1052,52 +980,6 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 Choice::Output(Some(output_name)) => {
                     // Find output dimensions
                     if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
-                        (
-                            output.logical_pos.0,
-                            output.logical_pos.1,
-                            output.logical_size.0,
-                            output.logical_size.1,
-                        )
-                    } else {
-                        log::warn!("Record clicked but output not found: {}", output_name);
-                        return cosmic::Task::none();
-                    }
-                }
-                Choice::Window(output_name, Some(window_index)) => {
-                    // For window recording, use toplevel screencopy (same as screenshots)
-                    // Use the global index that was captured at screenshot startup time
-                    // This ensures stability even if windows have been minimized/moved since then
-
-                    if let Some(output) = app.outputs.iter().find(|o| &o.name == output_name) {
-                        // Look up the global index from the pre-captured mapping
-                        let global_index = args
-                            .capture
-                            .toplevel_global_indices
-                            .get(output_name)
-                            .and_then(|indices| indices.get(*window_index).copied());
-
-                        match global_index {
-                            Some(idx) => {
-                                log::info!(
-                                    "Recording window {} (global index {}) on output '{}'",
-                                    window_index,
-                                    idx,
-                                    output_name
-                                );
-                                toplevel_index = Some(idx);
-                            }
-                            None => {
-                                log::error!(
-                                    "Window index {} not found in captured indices for output '{}' (has {:?})",
-                                    window_index,
-                                    output_name,
-                                    args.capture.toplevel_global_indices.get(output_name)
-                                );
-                                return cosmic::Task::none();
-                            }
-                        }
-
-                        // Pass output region - recorder will use toplevel capture and skip cropping
                         (
                             output.logical_pos.0,
                             output.logical_pos.1,
@@ -1234,7 +1116,6 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
 
             let framerate = config.video_framerate;
             let show_cursor = args.ui.video_show_cursor;
-            let toolbar_bounds = args.ui.toolbar_bounds;
             log::info!("Cursor visibility setting: {}", show_cursor);
 
             // Build CaptureSource for thread-based recording
@@ -1242,47 +1123,28 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             // NOT use the WlOutput/toplevel objects from cosmic-iced's connection
             // (they are different Wayland connections with different object IDs)
             let output_name_for_indicator = output_name.clone();
-            let capture_source = if let Some(idx) = toplevel_index {
-                // Get the actual toplevel handle from the wayland_helper by index
-                let toplevels = app.wayland_helper.all_toplevels();
-                if idx < toplevels.len() {
-                    log::info!(
-                        "Recording window (toplevel index {}) - using direct toplevel capture",
-                        idx
-                    );
-                    CaptureSource::Toplevel(toplevels[idx].clone())
-                } else {
-                    log::error!(
-                        "Toplevel index {} out of range (only {} toplevels available)",
-                        idx,
-                        toplevels.len()
-                    );
-                    return cosmic::Task::none();
-                }
-            } else {
-                // Use output capture with region cropping
-                // Look up output by NAME in wayland_helper's connection
-                let wl_output = app.wayland_helper.outputs().into_iter().find(|o| {
-                    app.wayland_helper
-                        .output_info(o)
-                        .and_then(|info| info.name)
-                        .as_deref()
-                        == Some(&output_name)
-                });
+            // Use output capture with region cropping
+            // Look up output by NAME in wayland_helper's connection
+            let wl_output = app.wayland_helper.outputs().into_iter().find(|o| {
+                app.wayland_helper
+                    .output_info(o)
+                    .and_then(|info| info.name)
+                    .as_deref()
+                    == Some(&output_name)
+            });
 
-                match wl_output {
-                    Some(output) => {
-                        log::info!(
-                            "Recording output '{}' region: {:?}",
-                            output_name,
-                            local_region
-                        );
-                        CaptureSource::Output(output)
-                    }
-                    None => {
-                        log::error!("Output '{}' not found in wayland_helper", output_name);
-                        return cosmic::Task::none();
-                    }
+            let capture_source = match wl_output {
+                Some(output) => {
+                    log::info!(
+                        "Recording output '{}' region: {:?}",
+                        output_name,
+                        local_region
+                    );
+                    CaptureSource::Output(output)
+                }
+                None => {
+                    log::error!("Output '{}' not found in wayland_helper", output_name);
+                    return cosmic::Task::none();
                 }
             };
 
@@ -1451,7 +1313,6 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         CaptureMsg::Choice(c) => handle_choice_inner(app, c),
         CaptureMsg::Location(loc) => handle_location_inner(app, loc),
         CaptureMsg::OutputChanged(wl_output) => handle_output_changed_inner(app, wl_output),
-        CaptureMsg::WindowChosen(name, idx) => handle_window_chosen_inner(app, name, idx),
         CaptureMsg::OpenUrl(url) => handle_open_url_inner(app, url),
         CaptureMsg::ToggleCaptureMode(is_video) => {
             log::info!("Capture mode toggled: is_video_mode = {}", is_video);
@@ -1881,96 +1742,6 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
                 }
             }
         }
-        Choice::Window(output_name, Some(window_i)) => {
-            if let Some(img) = capture
-                .toplevel_images
-                .get(&output_name)
-                .and_then(|imgs| imgs.get(window_i))
-            {
-                let mut final_img = img.rgba.clone();
-
-                // Draw annotations if any
-                if !annotations.is_empty() {
-                    // Find the output to calculate where the window was displayed
-                    if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
-                        let orig_width = final_img.width() as f32;
-                        let orig_height = final_img.height() as f32;
-                        let output_width = output.logical_size.0 as f32;
-                        let output_height = output.logical_size.1 as f32;
-
-                        // Step 1: Calculate pre-scaled thumbnail size (matching calculate_window_display_bounds)
-                        let max_width = output_width * 0.85;
-                        let max_height = output_height * 0.85;
-                        let (thumb_width, thumb_height) = if orig_width > max_width
-                            || orig_height > max_height
-                        {
-                            let pre_scale = (max_width / orig_width).min(max_height / orig_height);
-                            (orig_width * pre_scale, orig_height * pre_scale)
-                        } else {
-                            (orig_width, orig_height)
-                        };
-
-                        // Step 2: Calculate display position (centering with 20px margin)
-                        let available_width = output_width - 20.0;
-                        let available_height = output_height - 20.0;
-                        let scale_x = available_width / thumb_width;
-                        let scale_y = available_height / thumb_height;
-                        let display_scale = scale_x.min(scale_y).min(1.0);
-
-                        let display_width = thumb_width * display_scale;
-                        let display_height = thumb_height * display_scale;
-                        let sel_x = (output_width - display_width) / 2.0;
-                        let sel_y = (output_height - display_height) / 2.0;
-
-                        // The selection_rect is where the window was displayed on screen (in global coords)
-                        // Annotation coords are stored in global coordinates (output.left + pos.x)
-                        // Image scale converts from display coords to original image pixels
-                        let output_left = output.logical_pos.0 as f32;
-                        let output_top = output.logical_pos.1 as f32;
-                        let window_rect = Rect {
-                            left: (output_left + sel_x) as i32,
-                            top: (output_top + sel_y) as i32,
-                            right: (output_left + sel_x + display_width) as i32,
-                            bottom: (output_top + sel_y + display_height) as i32,
-                        };
-                        // Scale factor: original_size / display_size
-                        let image_scale = orig_width / display_width;
-                        draw_annotations_in_order(
-                            &mut final_img,
-                            annotations,
-                            &window_rect,
-                            image_scale,
-                        );
-                    }
-                }
-
-                if let Some(ref image_path) = image_path {
-                    if let Err(err) = Screenshot::save_rgba(&final_img, image_path) {
-                        log::error!("Failed to capture screenshot: {:?}", err);
-                        success = false;
-                    }
-                    // Also copy to clipboard if enabled
-                    if also_copy_to_clipboard {
-                        let mut buffer = Vec::new();
-                        if let Err(e) = Screenshot::save_rgba_to_buffer(&final_img, &mut buffer) {
-                            log::error!("Failed to save screenshot to buffer: {:?}", e);
-                        } else {
-                            cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)));
-                        }
-                    }
-                } else {
-                    let mut buffer = Vec::new();
-                    if let Err(e) = Screenshot::save_rgba_to_buffer(&final_img, &mut buffer) {
-                        log::error!("Failed to save screenshot to buffer: {:?}", e);
-                        success = false;
-                    } else {
-                        cmds.push(clipboard::write_data(ScreenshotBytes::new(buffer)))
-                    };
-                }
-            } else {
-                success = false;
-            }
-        }
         _ => {
             success = false;
         }
@@ -2043,7 +1814,7 @@ fn handle_choice_inner(app: &mut App, c: Choice) -> cosmic::Task<crate::core::ap
         // Clear annotations when switching modes (Region, Window, or Output picker)
         if matches!(
             &c,
-            Choice::Rectangle(_, DragState::None) | Choice::Window(_, None) | Choice::Output(None) // Only clear in picker mode, not when confirmed
+            Choice::Rectangle(_, DragState::None) | Choice::Output(None) // Only clear in picker mode, not when confirmed
         ) {
             args.clear_annotations();
             args.close_all_popups();
@@ -2071,22 +1842,6 @@ fn handle_output_changed_inner(
         }
     }
     app.active_output = Some(wl_output);
-    cosmic::Task::none()
-}
-
-fn handle_window_chosen_inner(
-    app: &mut App,
-    name: String,
-    i: usize,
-) -> cosmic::Task<crate::core::app::Msg> {
-    if let Some(args) = app.screenshot_args.as_mut() {
-        args.session.choice = Choice::Window(name, Some(i));
-        // Clear any previous state when selecting a new window
-        args.clear_transient_state();
-    } else {
-        log::error!("Failed to find screenshot Args for WindowChosen message.");
-    }
-    // Don't capture immediately - let user interact with OCR/QR/arrow buttons
     cosmic::Task::none()
 }
 
@@ -2166,68 +1921,6 @@ fn handle_qr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::Ms
                     }
                 }
                 params
-            }
-            Choice::Window(output_name, Some(window_index)) => {
-                args.capture
-                    .toplevel_images
-                    .get(output_name)
-                    .and_then(|imgs| imgs.get(*window_index))
-                    .and_then(|img| {
-                        // Calculate where the window was displayed (matching Capture logic)
-                        outputs_clone
-                            .iter()
-                            .find(|o| &o.name == output_name)
-                            .map(|output| {
-                                let orig_width = img.rgba.width() as f32;
-                                let orig_height = img.rgba.height() as f32;
-                                let output_width = output.logical_size.0 as f32;
-                                let output_height = output.logical_size.1 as f32;
-
-                                // Step 1: Pre-scale to 85% of screen (matching calculate_window_display_bounds)
-                                let max_width = output_width * 0.85;
-                                let max_height = output_height * 0.85;
-                                let (thumb_width, thumb_height) =
-                                    if orig_width > max_width || orig_height > max_height {
-                                        let pre_scale =
-                                            (max_width / orig_width).min(max_height / orig_height);
-                                        (orig_width * pre_scale, orig_height * pre_scale)
-                                    } else {
-                                        (orig_width, orig_height)
-                                    };
-
-                                // Step 2: Center with 20px margin
-                                let available_width = output_width - 20.0;
-                                let available_height = output_height - 20.0;
-                                let scale_x = available_width / thumb_width;
-                                let scale_y = available_height / thumb_height;
-                                let display_scale = scale_x.min(scale_y).min(1.0);
-
-                                let display_width = thumb_width * display_scale;
-                                let display_height = thumb_height * display_scale;
-                                let sel_x = (output_width - display_width) / 2.0;
-                                let sel_y = (output_height - display_height) / 2.0;
-
-                                let output_left = output.logical_pos.0 as f32;
-                                let output_top = output.logical_pos.1 as f32;
-                                let window_rect = Rect {
-                                    left: (output_left + sel_x) as i32,
-                                    top: (output_top + sel_y) as i32,
-                                    right: (output_left + sel_x + display_width) as i32,
-                                    bottom: (output_top + sel_y + display_height) as i32,
-                                };
-                                // Scale factor: original_size / display_size
-                                let img_scale = orig_width / display_width;
-
-                                (
-                                    img.rgba.clone(),
-                                    output_name.clone(),
-                                    img_scale,
-                                    0.0,
-                                    0.0,
-                                    window_rect,
-                                )
-                            })
-                    })
             }
             Choice::Output(Some(output_name)) => {
                 args.capture.output_images.get(output_name).and_then(|img| {
@@ -2390,76 +2083,6 @@ fn handle_ocr_requested_inner(app: &mut App) -> cosmic::Task<crate::core::app::M
                     }
                 }
                 data
-            }
-            Choice::Window(output_name, Some(window_index)) => {
-                // Get window image from toplevel_images
-                args.capture
-                    .toplevel_images
-                    .get(output_name)
-                    .and_then(|imgs| imgs.get(*window_index))
-                    .and_then(|img| {
-                        // Calculate where the window was displayed (matching Capture logic)
-                        outputs_clone
-                            .iter()
-                            .find(|o| &o.name == output_name)
-                            .map(|output| {
-                                let orig_width = img.rgba.width() as f32;
-                                let orig_height = img.rgba.height() as f32;
-                                let output_width = output.logical_size.0 as f32;
-                                let output_height = output.logical_size.1 as f32;
-
-                                // Step 1: Pre-scale to 85% of screen (matching calculate_window_display_bounds)
-                                let max_width = output_width * 0.85;
-                                let max_height = output_height * 0.85;
-                                let (thumb_width, thumb_height) =
-                                    if orig_width > max_width || orig_height > max_height {
-                                        let pre_scale =
-                                            (max_width / orig_width).min(max_height / orig_height);
-                                        (orig_width * pre_scale, orig_height * pre_scale)
-                                    } else {
-                                        (orig_width, orig_height)
-                                    };
-
-                                // Step 2: Center with 20px margin
-                                let available_width = output_width - 20.0;
-                                let available_height = output_height - 20.0;
-                                let scale_x = available_width / thumb_width;
-                                let scale_y = available_height / thumb_height;
-                                let display_scale = scale_x.min(scale_y).min(1.0);
-
-                                let display_width = thumb_width * display_scale;
-                                let display_height = thumb_height * display_scale;
-                                let sel_x = (output_width - display_width) / 2.0;
-                                let sel_y = (output_height - display_height) / 2.0;
-
-                                let output_left = output.logical_pos.0 as f32;
-                                let output_top = output.logical_pos.1 as f32;
-                                let window_rect = Rect {
-                                    left: (output_left + sel_x) as i32,
-                                    top: (output_top + sel_y) as i32,
-                                    right: (output_left + sel_x + display_width) as i32,
-                                    bottom: (output_top + sel_y + display_height) as i32,
-                                };
-                                // Scale factor: original_size / display_size
-                                let img_scale = orig_width / display_width;
-
-                                // OCR origin is where the window is displayed on the output (in output-relative coords)
-                                // OCR scale converts from display coords to original image pixels
-                                let ocr_scale = orig_width / display_width;
-
-                                (
-                                    img.rgba.clone(),
-                                    OcrMapping {
-                                        origin: (sel_x, sel_y),
-                                        size: (display_width, display_height),
-                                        scale: ocr_scale,
-                                        output_name: output_name.clone(),
-                                    },
-                                    window_rect,
-                                    img_scale,
-                                )
-                            })
-                    })
             }
             Choice::Output(Some(output_name)) => {
                 // Get full output image

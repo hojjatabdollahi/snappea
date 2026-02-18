@@ -5,7 +5,6 @@ pub mod magnifier;
 pub mod output_selection;
 pub mod overlays;
 pub mod rectangle_selection;
-pub mod screenshot;
 pub mod screenshot_selection;
 pub mod settings_drawer;
 pub mod settings_handlers;

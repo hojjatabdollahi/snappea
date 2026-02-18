@@ -2,14 +2,14 @@
 
 use std::rc::Rc;
 
-use cosmic::Element;
 use cosmic::iced::Length;
-use cosmic::iced_core::{Background, Border, Color, Layout, Size, layout, widget::Tree};
+use cosmic::iced_core::{layout, widget::Tree, Background, Border, Color, Layout, Size};
 use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
 use cosmic::iced_widget::{canvas, column, container, row};
 use cosmic::widget::{button, icon, text, tooltip};
+use cosmic::Element;
 use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
+use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
 
 /// Animation ID for toolbar hover opacity
 pub static TOOLBAR_HOVER_ID: Lazy<cosmic_time::id::Toggler> =
@@ -1213,7 +1213,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     space_xxs: u16,
     on_choice_change: impl Fn(Choice) -> Msg + 'static + Clone,
     on_screen_mode: Msg,
-    on_window_mode: Msg,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
     on_record_region: Msg,
@@ -1311,25 +1310,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
-    let is_window_selected = matches!(choice, Choice::Window(..));
-    let btn_window = tooltip(
-        button::custom(
-            icon_with_opacity("screenshot-window-symbolic", 64, content_opacity)
-                .width(Length::Fixed(40.0))
-                .height(Length::Fixed(40.0)),
-        )
-        .selected(is_window_selected)
-        .class(if is_window_selected {
-            suggested_button_class_with_opacity(content_opacity)
-        } else {
-            cosmic::theme::Button::Icon
-        })
-        .on_press(on_window_mode) // Uses proper window mode handler with output index
-        .padding(space_xs),
-        text::body(fl!("select-window")),
-        tooltip::Position::Bottom,
-    );
-
     let is_screen_selected = matches!(choice, Choice::Output(..));
     let btn_screen = tooltip(
         button::custom(
@@ -1352,7 +1332,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Context-sensitive copy tooltip
     let copy_tooltip = match &choice {
         Choice::Rectangle(r, _) if r.dimensions().is_some() => fl!("copy-selected-region"),
-        Choice::Window(_, Some(_)) => fl!("copy-selected-window"),
         Choice::Output(Some(_)) => fl!("copy-selected-screen"),
         _ if output_count > 1 => fl!("copy-all-screens"),
         _ => fl!("copy-screen"),
@@ -1361,7 +1340,6 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     // Context-sensitive save tooltip
     let save_tooltip = match &choice {
         Choice::Rectangle(r, _) if r.dimensions().is_some() => fl!("save-selected-region"),
-        Choice::Window(_, Some(_)) => fl!("save-selected-window"),
         Choice::Output(Some(_)) => fl!("save-selected-screen"),
         _ if output_count > 1 => fl!("save-all-screens"),
         _ => fl!("save-screen"),
@@ -1700,7 +1678,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             column![
                 position_selector,
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_region, btn_window, btn_screen]
+                column![btn_region, btn_screen]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -1722,7 +1700,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             column![
                 position_selector,
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_region, btn_window, btn_screen]
+                column![btn_region, btn_screen]
                     .spacing(space_s)
                     .align_x(cosmic::iced_core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -1786,7 +1764,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             row![
                 position_selector,
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_region, btn_window, btn_screen]
+                row![btn_region, btn_screen]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
@@ -1808,7 +1786,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             row![
                 position_selector,
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_region, btn_window, btn_screen]
+                row![btn_region, btn_screen]
                     .spacing(space_s)
                     .align_y(cosmic::iced_core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),

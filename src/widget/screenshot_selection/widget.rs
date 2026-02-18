@@ -3,20 +3,17 @@
 //! Uses grouped state structs and a single event handler instead of
 //! 96+ individual fields and callbacks.
 
-use std::collections::HashMap;
-
 use cosmic::{
     Element,
     cosmic_theme::Spacing,
     iced::{self, window},
     iced_core::{
-        Background, ContentFit, Degrees, Layout, Length, Point, Size, alignment, gradient::Linear,
+        Layout, Length, Point, Size,
         layout, overlay, widget::Tree,
     },
     iced_widget::canvas,
-    widget::{Row, button, horizontal_space, image, layer_container},
+    widget::{image},
 };
-use cosmic_bg_config::Source;
 
 use cosmic::widget::segmented_button;
 
@@ -34,7 +31,7 @@ use crate::{
 use super::events::ScreenshotEvent;
 use super::helpers::{
     calculate_selection_rect, create_output_rect, filter_ocr_overlays_for_output,
-    filter_qr_codes_for_output, get_window_image_info,
+    filter_qr_codes_for_output,
 };
 use crate::render::mesh::{draw_arrow_preview, draw_arrows};
 use crate::widget::{
@@ -52,7 +49,6 @@ use crate::widget::{
         },
     },
     rectangle_selection::RectangleSelection,
-    screenshot::SelectedImageWidget,
     settings_drawer::build_settings_drawer,
     tool_button::{build_pencil_popup, build_redact_popup, build_shape_popup},
     toolbar::build_toolbar,
@@ -62,7 +58,6 @@ use crate::widget::{
 #[derive(Clone, Debug)]
 pub struct OutputContext {
     pub output_count: usize,
-    pub highlighted_window_index: usize,
     pub focused_output_index: usize,
     pub current_output_index: usize,
     pub is_active_output: bool,
@@ -96,7 +91,6 @@ where
 
     // Image references
     pub screenshot_image: &'a ScreenshotImage,
-    pub toplevel_images: &'a HashMap<String, Vec<ScreenshotImage>>,
 
     // Grouped state (references to session state)
     pub annotations: &'a AnnotationState,
@@ -122,8 +116,7 @@ where
     show_qr_overlays: bool,
     qr_codes_for_output: Vec<(f32, f32, String)>,
     ocr_overlays_for_output: Vec<(f32, f32, f32, f32, i32)>,
-    window_image: Option<&'a ::image::RgbaImage>,
-    window_display_info: Option<(f32, f32, f32, f32, f32)>,
+
 
     // Pre-built child elements
     bg_element: Element<'a, Msg>,
@@ -145,7 +138,6 @@ where
     pub fn new(
         choice: Choice,
         screenshot_image: &'a ScreenshotImage,
-        toplevel_images: &'a HashMap<String, Vec<ScreenshotImage>>,
         output: &'a OutputState,
         window_id: window::Id,
         spacing: Spacing,
@@ -177,74 +169,18 @@ where
 
         // Calculate selection rectangle relative to this output
         let selection_rect =
-            calculate_selection_rect(&choice, output_rect, output.logical_size, toplevel_images);
+            calculate_selection_rect(&choice, output_rect, output.logical_size);
 
-        // Get window image and display info for correct pixelation preview
-        let (window_image, window_display_info) =
-            get_window_image_info(&choice, output.logical_size, toplevel_images);
-
-        let space_l = spacing.space_l;
+        let _space_l = spacing.space_l;
         let space_s = spacing.space_s;
         let space_xs = spacing.space_xs;
         let space_xxs = spacing.space_xxs;
 
         // Build bg_element
-        let bg_element = match &choice {
-            Choice::Output(_) | Choice::Rectangle(..) | Choice::Window(_, Some(_)) => {
-                image::Image::new(screenshot_image.handle.clone())
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into()
-            }
-            Choice::Window(_, None) => match output.bg_source.clone() {
-                Some(Source::Path(path)) => image::Image::new(image::Handle::from_path(path))
-                    .content_fit(ContentFit::Cover)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .into(),
-                Some(Source::Color(color)) => {
-                    layer_container(horizontal_space().width(Length::Fill))
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                        .class(cosmic::theme::Container::Custom(Box::new(move |_| {
-                            let color = color.clone();
-                            cosmic::iced_widget::container::Style {
-                                background: Some(match color {
-                                    cosmic_bg_config::Color::Single(c) => Background::Color(
-                                        cosmic::iced::Color::new(c[0], c[1], c[2], 1.0),
-                                    ),
-                                    cosmic_bg_config::Color::Gradient(
-                                        cosmic_bg_config::Gradient { colors, radius },
-                                    ) => {
-                                        let stop_increment = 1.0 / (colors.len() - 1) as f32;
-                                        let mut stop = 0.0;
-                                        let mut linear = Linear::new(Degrees(radius));
-                                        for &[r, g, b] in colors.iter() {
-                                            linear = linear.add_stop(
-                                                stop,
-                                                cosmic::iced::Color::from_rgb(r, g, b),
-                                            );
-                                            stop += stop_increment;
-                                        }
-                                        Background::Gradient(cosmic::iced_core::Gradient::Linear(
-                                            linear,
-                                        ))
-                                    }
-                                }),
-                                ..Default::default()
-                            }
-                        })))
-                        .into()
-                }
-                None => image::Image::new(image::Handle::from_path(
-                    "/usr/share/backgrounds/pop/kate-hazen-COSMIC-desktop-wallpaper.png",
-                ))
-                .content_fit(ContentFit::Cover)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-            },
-        };
+        let bg_element: Element<'a, Msg> = image::Image::new(screenshot_image.handle.clone())
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .into();
 
         // Build fg_element
         let on_event_clone = on_event.clone();
@@ -296,68 +232,11 @@ where
                 .selected(is_selected)
                 .into()
             }
-            Choice::Window(_, None) => {
-                let imgs = toplevel_images
-                    .get(&output.name)
-                    .map(|x| x.as_slice())
-                    .unwrap_or_default();
-                let total_img_width = imgs.iter().map(|img| img.width()).sum::<u32>().max(1);
-                // Only show focus highlight after mouse has entered an output
-                let is_focused_output = output_ctx.has_mouse_entered
-                    && output_ctx.current_output_index == output_ctx.focused_output_index;
-
-                let img_buttons = imgs.iter().enumerate().map(|(i, img)| {
-                    let portion =
-                        (img.width() as u64 * u16::MAX as u64 / total_img_width as u64).max(1);
-                    let is_highlighted =
-                        is_focused_output && i == output_ctx.highlighted_window_index;
-                    let output_name = output.name.clone();
-                    layer_container(
-                        button::custom(
-                            image::Image::new(img.handle.clone())
-                                .content_fit(ContentFit::ScaleDown),
-                        )
-                        .on_press(on_event(ScreenshotEvent::window_selected(output_name, i)))
-                        .selected(is_highlighted)
-                        .class(cosmic::theme::Button::Image),
-                    )
-                    .align_x(alignment::Alignment::Center)
-                    .width(Length::FillPortion(portion as u16))
-                    .height(Length::Shrink)
-                    .into()
-                });
-                layer_container(
-                    Row::with_children(img_buttons)
-                        .spacing(space_l)
-                        .width(Length::Fill)
-                        .align_y(alignment::Alignment::Center)
-                        .padding(space_l),
-                )
-                .align_x(alignment::Alignment::Center)
-                .align_y(alignment::Alignment::Center)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into()
-            }
-            Choice::Window(ref win_output, Some(win_index)) if win_output == &output.name => {
-                let screen_size = (output.logical_size.0, output.logical_size.1);
-                SelectedImageWidget::new(
-                    win_output.clone(),
-                    Some(win_index),
-                    toplevel_images,
-                    screen_size,
-                )
-                .into()
-            }
-            Choice::Window(_, Some(_)) => cosmic::widget::horizontal_space()
-                .width(Length::Fill)
-                .into(),
         };
 
         // Build menu_element
         let has_selection = match &choice {
             Choice::Rectangle(r, _) => r.dimensions().is_some(),
-            Choice::Window(_, Some(_)) => true,
             Choice::Output(Some(_)) => true,
             _ => false,
         };
@@ -392,9 +271,6 @@ where
             space_xxs,
             move |c| on_event_clone2(ScreenshotEvent::choice_changed(c)),
             on_event(ScreenshotEvent::screen_mode(
-                output_ctx.current_output_index,
-            )),
-            on_event(ScreenshotEvent::window_mode(
                 output_ctx.current_output_index,
             )),
             on_event(ScreenshotEvent::copy_to_clipboard()),
@@ -615,7 +491,6 @@ where
             spacing,
             dnd_id,
             screenshot_image,
-            toplevel_images,
             annotations,
             detection,
             ui,
@@ -631,8 +506,6 @@ where
             show_qr_overlays,
             qr_codes_for_output,
             ocr_overlays_for_output,
-            window_image,
-            window_display_info,
             bg_element,
             fg_element,
             menu_element,
@@ -1068,37 +941,14 @@ where
         // Get fg_element info
         let fg_info = children_iter.next();
 
-        // In window mode, draw fg_element (SelectedImageWidget) FIRST so annotations appear on top
-        // In other modes, we draw fg_element later (after annotations) since it's just selection handles
-        let is_window_mode = matches!(self.choice, Choice::Window(_, Some(_)));
-        if is_window_mode {
-            if let Some((i, (layout, child))) = &fg_info {
-                renderer.with_layer(layout.bounds(), |renderer| {
-                    let tree = &tree.children[*i];
-                    child
-                        .as_widget()
-                        .draw(tree, renderer, theme, style, *layout, cursor, viewport);
-                });
-            }
-        }
+        // Note: fg_element is always drawn after annotations (selection handles on top)
 
         // Draw redactions and pixelations
         let output_offset = (self.output_rect.left as f32, self.output_rect.top as f32);
-        let pixelation_source =
-            if let (Some(win_img), Some((win_x, win_y, _win_w, _win_h, display_to_img_scale))) =
-                (self.window_image, self.window_display_info)
-            {
-                PixelationSource::Window {
-                    image: win_img,
-                    offset: (win_x, win_y),
-                    scale: display_to_img_scale,
-                }
-            } else {
-                PixelationSource::Screenshot {
-                    image: &self.screenshot_image.rgba,
-                    scale: self.image_scale,
-                }
-            };
+        let pixelation_source = PixelationSource::Screenshot {
+            image: &self.screenshot_image.rgba,
+            scale: self.image_scale,
+        };
 
         draw_redactions_and_pixelations(
             renderer,
@@ -1169,17 +1019,14 @@ where
             );
         }
 
-        // Draw fg_element for non-window modes (selection UI above annotations)
-        // In window mode, fg_element was already drawn earlier so annotations appear on top
-        if !is_window_mode {
-            if let Some((i, (layout, child))) = fg_info {
-                renderer.with_layer(layout.bounds(), |renderer| {
-                    let tree = &tree.children[i];
-                    child
-                        .as_widget()
-                        .draw(tree, renderer, theme, style, layout, cursor, viewport);
-                });
-            }
+        // Draw fg_element (selection UI above annotations)
+        if let Some((i, (layout, child))) = fg_info {
+            renderer.with_layer(layout.bounds(), |renderer| {
+                let tree = &tree.children[i];
+                child
+                    .as_widget()
+                    .draw(tree, renderer, theme, style, layout, cursor, viewport);
+            });
         }
 
         let cosmic_theme = theme.cosmic();

@@ -31,10 +31,6 @@ pub struct PortalContext {
 #[derive(Clone, Debug)]
 pub struct CaptureData {
     pub output_images: HashMap<String, ScreenshotImage>,
-    pub toplevel_images: HashMap<String, Vec<ScreenshotImage>>,
-    /// Maps (output_name, local_index) -> global_index for toplevel recording
-    /// The outer HashMap key is output_name, inner Vec index is local_index, value is global_index
-    pub toplevel_global_indices: HashMap<String, Vec<usize>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -193,7 +189,6 @@ pub struct SessionState {
     pub choice: Choice,
     pub action: Action,
     pub location: ImageSaveLocation,
-    pub highlighted_window_index: usize,
     pub focused_output_index: usize,
     pub also_copy_to_clipboard: bool,
     /// Whether the mouse has entered any output yet (used to avoid showing wrong initial highlight)

@@ -16,25 +16,22 @@ save-to = Save to
 move-toolbar = Move Toolbar (Ctrl+hjkl)
 screenshot-video = Screenshot / Video
 select-region = Select Region (R)
-select-window = Select Window (W)
 select-screen = Select Screen (S)
 
 # Context-sensitive copy/save tooltips
 copy-selected-region = Copy Selected Region (Enter)
-copy-selected-window = Copy Selected Window (Enter)
 copy-selected-screen = Copy Selected Screen (Enter)
 copy-all-screens = Copy All Screens (Enter)
 copy-screen = Copy Screen (Enter)
 
 save-selected-region = Save Selected Region (Ctrl+Enter)
-save-selected-window = Save Selected Window (Ctrl+Enter)
 save-selected-screen = Save Selected Screen (Ctrl+Enter)
 save-all-screens = Save All Screens (Ctrl+Enter)
 save-screen = Save Screen (Ctrl+Enter)
 
 # Recording
 record-selection = Record selection (Shift+R)
-record-disabled = Disabled: select a region, window, or screen first
+record-disabled = Disabled: select a region or screen first
 stop-recording = Stop Recording
 freehand-annotation = Freehand Annotation (right-click for options)
 minimize-to-tray = Minimize to System Tray
