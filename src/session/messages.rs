@@ -131,8 +131,6 @@ pub enum Direction {
 pub enum SelectMsg {
     /// Switch to rectangle selection mode
     RegionMode,
-    /// Switch to window selection mode (param is output index)
-    WindowMode(usize),
     /// Select screen at index
     ScreenMode(usize),
     /// Navigate in direction
@@ -174,8 +172,7 @@ pub enum CaptureMsg {
     Location(usize),
     /// Output changed event
     OutputChanged(WlOutput),
-    /// Window chosen event
-    WindowChosen(String, usize),
+
     /// Open URL in browser
     OpenUrl(String),
 }
@@ -447,9 +444,6 @@ impl Msg {
     pub fn region_mode() -> Self {
         Self::Select(SelectMsg::RegionMode)
     }
-    pub fn window_mode(output_index: usize) -> Self {
-        Self::Select(SelectMsg::WindowMode(output_index))
-    }
     pub fn screen_mode(output_index: usize) -> Self {
         Self::Select(SelectMsg::ScreenMode(output_index))
     }
@@ -493,9 +487,6 @@ impl Msg {
     }
     pub fn output_changed(output: WlOutput) -> Self {
         Self::Capture(CaptureMsg::OutputChanged(output))
-    }
-    pub fn window_chosen(name: String, idx: usize) -> Self {
-        Self::Capture(CaptureMsg::WindowChosen(name, idx))
     }
     pub fn open_url(url: String) -> Self {
         Self::Capture(CaptureMsg::OpenUrl(url))

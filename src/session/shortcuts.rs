@@ -2,7 +2,7 @@ use crate::config::ToolbarPosition;
 use crate::domain::Choice;
 use crate::screenshot::Args;
 use crate::session::messages::Msg;
-use cosmic::iced::keyboard::{Key, Modifiers, key::Named};
+use cosmic::iced::keyboard::{key::Named, Key, Modifiers};
 
 pub fn handle_key_event(
     args: &Args,
@@ -13,7 +13,6 @@ pub fn handle_key_event(
     // Determine if we have a complete selection for action shortcuts
     let has_selection = match &args.session.choice {
         Choice::Rectangle(r, _) => r.dimensions().is_some(),
-        Choice::Window(_, Some(_)) => true,
         Choice::Output(Some(_)) => true, // Only confirmed screen counts as selection
         _ => false,
     };
@@ -22,7 +21,6 @@ pub fn handle_key_event(
     let redact_mode = args.annotations.redact_mode;
 
     // Check if we're in a mode that supports navigation
-    let in_window_picker = matches!(&args.session.choice, Choice::Window(_, None));
     let in_screen_picker = matches!(&args.session.choice, Choice::Output(None)); // Picker mode only
 
     // Check if OCR/QR have results (pressing O/Q again should copy and close)
@@ -68,23 +66,14 @@ pub fn handle_key_event(
         // Save/copy shortcuts (always available - empty selection captures all screens)
         Key::Named(Named::Enter) if modifiers.control() => Some(Msg::save_to_pictures()),
         Key::Named(Named::Escape) => Some(Msg::cancel()),
-        // Space/Enter to confirm selection in picker mode (window or screen)
-        Key::Named(Named::Space) if in_window_picker || in_screen_picker => Some(Msg::confirm()),
-        Key::Named(Named::Enter) if in_window_picker || in_screen_picker => Some(Msg::confirm()),
+        // Space/Enter to confirm selection in picker mode (screen)
+        Key::Named(Named::Space) if in_screen_picker => Some(Msg::confirm()),
+        Key::Named(Named::Enter) if in_screen_picker => Some(Msg::confirm()),
         // Enter to copy when not in picker mode
         Key::Named(Named::Enter) => Some(Msg::copy_to_clipboard()),
-        // Navigation keys in window picker: hjkl and arrows all navigate windows
-        Key::Character(c) if c.as_str() == "h" && in_window_picker => Some(Msg::navigate_up()),
-        Key::Character(c) if c.as_str() == "l" && in_window_picker => Some(Msg::navigate_down()),
-        Key::Character(c) if c.as_str() == "j" && in_window_picker => Some(Msg::navigate_down()),
-        Key::Character(c) if c.as_str() == "k" && in_window_picker => Some(Msg::navigate_up()),
         // Navigation keys in screen picker: h/l and arrows navigate screens
         Key::Character(c) if c.as_str() == "h" && in_screen_picker => Some(Msg::navigate_left()),
         Key::Character(c) if c.as_str() == "l" && in_screen_picker => Some(Msg::navigate_right()),
-        Key::Named(Named::ArrowLeft) if in_window_picker => Some(Msg::navigate_up()),
-        Key::Named(Named::ArrowRight) if in_window_picker => Some(Msg::navigate_down()),
-        Key::Named(Named::ArrowUp) if in_window_picker => Some(Msg::navigate_up()),
-        Key::Named(Named::ArrowDown) if in_window_picker => Some(Msg::navigate_down()),
         Key::Named(Named::ArrowLeft) if in_screen_picker => Some(Msg::navigate_left()),
         Key::Named(Named::ArrowRight) if in_screen_picker => Some(Msg::navigate_right()),
         // Mode toggle shortcuts (require selection)
@@ -118,9 +107,6 @@ pub fn handle_key_event(
         // Use current_output_index (the screen where this key was pressed)
         Key::Character(c) if c.as_str() == "r" && !arrow_mode && !redact_mode => {
             Some(Msg::region_mode())
-        }
-        Key::Character(c) if c.as_str() == "w" && !arrow_mode && !redact_mode => {
-            Some(Msg::window_mode(current_output_index))
         }
         Key::Character(c) if c.as_str() == "s" && !arrow_mode && !redact_mode => {
             Some(Msg::screen_mode(current_output_index))

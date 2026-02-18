@@ -22,7 +22,7 @@ pub type HandlerResult = Task<AppMsg>;
 // Re-export selection handler functions
 pub use selection::{
     handle_confirm_selection, handle_navigate_left, handle_navigate_right,
-    handle_select_region_mode, handle_select_screen_mode, handle_select_window_mode,
+    handle_select_region_mode, handle_select_screen_mode,
 };
 
 // Note: Settings handlers moved to widget::settings_handlers

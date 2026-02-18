@@ -13,12 +13,6 @@ use crate::domain::{Annotation, PixelateAnnotation, RedactAnnotation};
 pub enum PixelationSource<'a> {
     /// Regular mode: sample from screenshot image with scale factor
     Screenshot { image: &'a RgbaImage, scale: f32 },
-    /// Window mode: sample from window image with offset and scale
-    Window {
-        image: &'a RgbaImage,
-        offset: (f32, f32), // (win_x, win_y)
-        scale: f32,         // display_to_img_scale
-    },
 }
 
 /// Draw a single redaction rectangle
@@ -75,27 +69,6 @@ pub fn draw_pixelation(
     let (min_y, max_y) = if y1 < y2 { (y1, y2) } else { (y2, y1) };
 
     match source {
-        PixelationSource::Window {
-            image,
-            offset,
-            scale,
-        } => {
-            let (win_x, win_y) = *offset;
-            let block_size_display = pixelate.block_size as f32;
-            draw_pixelation_blocks_window(
-                renderer,
-                viewport,
-                image,
-                min_x,
-                min_y,
-                max_x,
-                max_y,
-                win_x,
-                win_y,
-                *scale,
-                block_size_display,
-            );
-        }
         PixelationSource::Screenshot { image, scale } => {
             let block_size_logical = pixelate.block_size as f32 / *scale;
             draw_pixelation_blocks_screenshot(
@@ -164,27 +137,6 @@ pub fn draw_pixelation_preview(
     };
 
     match source {
-        PixelationSource::Window {
-            image,
-            offset,
-            scale,
-        } => {
-            let (win_x, win_y) = *offset;
-            let block_size_display = block_size as f32;
-            draw_pixelation_blocks_window(
-                renderer,
-                viewport,
-                image,
-                min_x,
-                min_y,
-                max_x,
-                max_y,
-                win_x,
-                win_y,
-                *scale,
-                block_size_display,
-            );
-        }
         PixelationSource::Screenshot { image, scale } => {
             let block_size_logical = block_size as f32 / *scale;
             draw_pixelation_blocks_screenshot(
@@ -271,73 +223,6 @@ pub fn draw_redaction_preview(
 }
 
 // ============ Internal helper functions ============
-
-/// Draw pixelation blocks sampling from window image
-#[allow(clippy::too_many_arguments)]
-fn draw_pixelation_blocks_window(
-    renderer: &mut cosmic::Renderer,
-    viewport: &Rectangle,
-    image: &RgbaImage,
-    min_x: f32,
-    min_y: f32,
-    max_x: f32,
-    max_y: f32,
-    win_x: f32,
-    win_y: f32,
-    display_to_img_scale: f32,
-    block_size: f32,
-) {
-    use cosmic::iced_core::Renderer;
-
-    renderer.with_layer(*viewport, |renderer| {
-        let mut y = min_y;
-        while y < max_y {
-            let mut x = min_x;
-            let block_h = block_size.min(max_y - y);
-            while x < max_x {
-                let block_w = block_size.min(max_x - x);
-
-                // Convert from screen coords to window image coords
-                let win_rel_x = x - win_x;
-                let win_rel_y = y - win_y;
-                let img_x = (win_rel_x * display_to_img_scale).round() as i32;
-                let img_y = (win_rel_y * display_to_img_scale).round() as i32;
-                let img_x2 = ((win_rel_x + block_w) * display_to_img_scale).round() as i32;
-                let img_y2 = ((win_rel_y + block_h) * display_to_img_scale).round() as i32;
-
-                // Skip if outside window image bounds
-                if img_x >= 0
-                    && img_y >= 0
-                    && img_x2 > 0
-                    && img_y2 > 0
-                    && let Some(color) = sample_average_color(
-                        image,
-                        img_x as u32,
-                        img_y as u32,
-                        img_x2 as u32,
-                        img_y2 as u32,
-                    )
-                {
-                    renderer.fill_quad(
-                        cosmic::iced_core::renderer::Quad {
-                            bounds: Rectangle {
-                                x,
-                                y,
-                                width: block_w,
-                                height: block_h,
-                            },
-                            border: Border::default(),
-                            shadow: cosmic::iced_core::Shadow::default(),
-                        },
-                        Background::Color(color),
-                    );
-                }
-                x += block_w;
-            }
-            y += block_h;
-        }
-    });
-}
 
 /// Draw pixelation blocks sampling from screenshot image
 #[allow(clippy::too_many_arguments)]
