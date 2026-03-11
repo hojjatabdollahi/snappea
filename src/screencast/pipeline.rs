@@ -4,11 +4,16 @@ use anyhow::{Context, Result};
 use drm_fourcc::DrmFourcc;
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use gstreamer_allocators as gst_allocators;
+use gstreamer_allocators::DmaBufAllocatorExtManual;
 use gstreamer_app as gst_app;
-use std::os::fd::RawFd;
+use gstreamer_video as gst_video;
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use super::dmabuf::drm_format_to_gst_format;
+use super::dmabuf::{
+    DmabufBuffer, drm_format_to_gst_format, drm_format_to_gst_video_format,
+};
 use super::encoder::EncoderInfo;
 use crate::config::Container;
 
@@ -88,6 +93,7 @@ pub struct Pipeline {
     output_path: PathBuf,
     /// Whether this pipeline is configured for DMA-buf input
     dmabuf_mode: bool,
+    dmabuf_allocator: Option<gst_allocators::DmaBufAllocator>,
 }
 
 impl Pipeline {
@@ -279,6 +285,7 @@ impl Pipeline {
             appsrc,
             output_path: output_path.to_path_buf(),
             dmabuf_mode: false,
+            dmabuf_allocator: None,
         })
     }
 
@@ -308,6 +315,13 @@ impl Pipeline {
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
+        if !encoder.supports_dmabuf_zero_copy {
+            anyhow::bail!(
+                "Encoder {} is not wired for the real DMA-BUF zero-copy path",
+                encoder.gst_element
+            );
+        }
+
         let gst_format = drm_format_to_gst_format(drm_format).ok_or_else(|| {
             anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format)
         })?;
@@ -327,6 +341,7 @@ impl Pipeline {
         );
 
         let pipeline = gst::Pipeline::new();
+        let dmabuf_allocator = gst_allocators::DmaBufAllocator::new();
 
         // Create elements
         let appsrc = gst_app::AppSrc::builder()
@@ -335,14 +350,9 @@ impl Pipeline {
             .format(gst::Format::Time)
             .build();
 
-        let videoconvert = gst::ElementFactory::make("videoconvert")
+        let vaapipostproc = gst::ElementFactory::make("vaapipostproc")
             .build()
-            .context("Failed to create videoconvert element")?;
-
-        // Add videoscale to handle dimension alignment for hardware encoders
-        let videoscale = gst::ElementFactory::make("videoscale")
-            .build()
-            .context("Failed to create videoscale element")?;
+            .context("Failed to create vaapipostproc element for zero-copy path")?;
 
         let encoder_elem = gst::ElementFactory::make(&encoder.gst_element)
             .build()
@@ -372,35 +382,15 @@ impl Pipeline {
             .build()
             .context("Failed to create filesink element")?;
 
-        // Add cropping element if needed
-        if let Some(ref region) = crop {
-            let (clamped_left, clamped_top, clamped_width, clamped_height, right, bottom) =
-                calculate_aligned_crop(region, capture_width, capture_height);
-
-            log::info!(
-                "Crop region requested: ({}, {}, {}x{}), clamped to capture {}x{}: ({}, {}, {}x{}) [even-aligned]",
-                region.left,
-                region.top,
-                region.width,
-                region.height,
-                capture_width,
-                capture_height,
-                clamped_left,
-                clamped_top,
-                clamped_width,
-                clamped_height
+        let (clamped_left, clamped_top, clamped_width, clamped_height, right, bottom) =
+            crop.as_ref().map_or(
+                (0, 0, capture_width, capture_height, 0, 0),
+                |region| calculate_aligned_crop(region, capture_width, capture_height),
             );
 
-            let videocrop = gst::ElementFactory::make("videocrop")
-                .property("left", clamped_left as i32)
-                .property("top", clamped_top as i32)
-                .property("right", right as i32)
-                .property("bottom", bottom as i32)
-                .build()
-                .context("Failed to create videocrop element")?;
-
+        if crop.is_some() {
             log::info!(
-                "Adding crop: left={}, top={}, right={}, bottom={} (output: {}x{})",
+                "Zero-copy crop: left={}, top={}, right={}, bottom={} (output {}x{})",
                 clamped_left,
                 clamped_top,
                 right,
@@ -408,94 +398,59 @@ impl Pipeline {
                 clamped_width,
                 clamped_height
             );
-
-            // Create capsfilter to enforce exact output dimensions
-            // This ensures the encoder receives the exact even-aligned dimensions
-            let scale_caps = gst::Caps::builder("video/x-raw")
-                .field("width", clamped_width as i32)
-                .field("height", clamped_height as i32)
-                .build();
-            let capsfilter = gst::ElementFactory::make("capsfilter")
-                .property("caps", &scale_caps)
-                .build()
-                .context("Failed to create capsfilter element")?;
-
-            // Add elements to pipeline
-            pipeline.add_many([
-                appsrc.upcast_ref(),
-                &videocrop,
-                &videoconvert,
-                &videoscale,
-                &capsfilter,
-                &encoder_elem,
-            ])?;
-            if let Some(ref parser) = parser_elem {
-                pipeline.add(parser)?;
-            }
-            pipeline.add_many([&muxer, &filesink])?;
-
-            // Link elements with crop
-            gst::Element::link_many([
-                appsrc.upcast_ref(),
-                &videocrop,
-                &videoconvert,
-                &videoscale,
-                &capsfilter,
-                &encoder_elem,
-            ])?;
-            if let Some(ref parser) = parser_elem {
-                encoder_elem.link(parser)?;
-                parser.link(&muxer)?;
-            } else {
-                encoder_elem.link(&muxer)?;
-            }
-            muxer.link(&filesink)?;
-        } else {
-            // Add elements to pipeline without crop
-            pipeline.add_many([
-                appsrc.upcast_ref(),
-                &videoconvert,
-                &videoscale,
-                &encoder_elem,
-            ])?;
-            if let Some(ref parser) = parser_elem {
-                pipeline.add(parser)?;
-            }
-            pipeline.add_many([&muxer, &filesink])?;
-
-            // Link elements
-            gst::Element::link_many([
-                appsrc.upcast_ref(),
-                &videoconvert,
-                &videoscale,
-                &encoder_elem,
-            ])?;
-            if let Some(ref parser) = parser_elem {
-                encoder_elem.link(parser)?;
-                parser.link(&muxer)?;
-            } else {
-                encoder_elem.link(&muxer)?;
-            }
-            muxer.link(&filesink)?;
+            vaapipostproc.set_property("crop-left", clamped_left);
+            vaapipostproc.set_property("crop-top", clamped_top);
+            vaapipostproc.set_property("crop-right", right);
+            vaapipostproc.set_property("crop-bottom", bottom);
         }
 
-        // Configure appsrc caps for DMA-buf input at capture size
-        // Note: We don't use memory:DMABuf feature because videoconvert doesn't
-        // support it directly. GStreamer will auto-map the DMA-buf when needed.
-        // This still saves the userspace ABGR→RGBA conversion compared to SHM path.
-        let caps = gst::Caps::builder("video/x-raw")
+        let input_structure = gst::Structure::builder("video/x-raw")
             .field("format", gst_format)
             .field("width", capture_width as i32)
             .field("height", capture_height as i32)
             .field("framerate", gst::Fraction::new(framerate as i32, 1))
             .build();
-        appsrc.set_caps(Some(&caps));
+        let input_caps: gst::Caps =
+            [(input_structure, gst_allocators::CAPS_FEATURES_MEMORY_DMABUF.clone())].into();
+        appsrc.set_caps(Some(&input_caps));
+
+        let output_structure = gst::Structure::builder("video/x-raw")
+            .field("format", "NV12")
+            .field("width", clamped_width as i32)
+            .field("height", clamped_height as i32)
+            .field("framerate", gst::Fraction::new(framerate as i32, 1))
+            .build();
+        let output_caps: gst::Caps =
+            [(output_structure, gst::CapsFeatures::new(["memory:VASurface"]))].into();
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &output_caps)
+            .build()
+            .context("Failed to create zero-copy capsfilter element")?;
+
+        log::info!("Zero-copy input caps: {}", input_caps);
+        log::info!("Zero-copy output caps (postproc->encoder): {}", output_caps);
+
+        pipeline.add_many([appsrc.upcast_ref(), &vaapipostproc, &capsfilter, &encoder_elem])?;
+        if let Some(ref parser) = parser_elem {
+            pipeline.add(parser)?;
+        }
+        pipeline.add_many([&muxer, &filesink])?;
+
+        gst::Element::link_many([appsrc.upcast_ref(), &vaapipostproc, &capsfilter, &encoder_elem])?;
+        if let Some(ref parser) = parser_elem {
+            encoder_elem.link(parser)?;
+            parser.link(&muxer)?;
+        } else {
+            encoder_elem.link(&muxer)?;
+        }
+        muxer.link(&filesink)?;
 
         Ok(Self {
             pipeline,
             appsrc,
             output_path: output_path.to_path_buf(),
             dmabuf_mode: true,
+            dmabuf_allocator: Some(dmabuf_allocator),
         })
     }
 
@@ -537,54 +492,44 @@ impl Pipeline {
         Ok(())
     }
 
-    /// Push a DMA-buf frame to the pipeline
-    ///
-    /// This method reads data from a DMA-buf and creates a GStreamer buffer.
-    /// While not true zero-copy, this approach:
-    /// 1. Avoids userspace ABGR→RGBA conversion (compositor outputs correct format)
-    /// 2. Works reliably with all GStreamer elements
-    ///
-    /// # Arguments
-    /// * `fd` - Raw file descriptor of the DMA-buf
-    /// * `size` - Size of the buffer in bytes
-    /// * `timestamp` - Frame timestamp in nanoseconds
-    pub fn push_dmabuf_frame(&self, fd: RawFd, size: usize, timestamp: u64) -> Result<()> {
-        // mmap the DMA-buf to read its contents
-        let ptr = unsafe {
-            libc::mmap(
-                std::ptr::null_mut(),
-                size,
-                libc::PROT_READ,
-                libc::MAP_SHARED,
-                fd,
-                0,
+    /// Push a DMA-buf frame to the pipeline without copying it into system memory.
+    pub fn push_dmabuf_frame(&self, dmabuf: &DmabufBuffer, timestamp: u64) -> Result<()> {
+        let allocator = self
+            .dmabuf_allocator
+            .as_ref()
+            .context("DMA-BUF allocator not available for zero-copy pipeline")?;
+        let video_format = drm_format_to_gst_video_format(dmabuf.format).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Unsupported DMA-BUF format for zero-copy metadata: {:?}",
+                dmabuf.format
             )
-        };
+        })?;
 
-        if ptr == libc::MAP_FAILED {
-            return Err(anyhow::anyhow!("Failed to mmap DMA-buf"));
+        let owned_fd = unsafe { libc::dup(dmabuf.fd.as_raw_fd()) };
+        if owned_fd < 0 {
+            return Err(anyhow::anyhow!("Failed to dup DMA-BUF fd for GStreamer"));
         }
 
-        // Create GStreamer buffer with the data
-        let mut buffer =
-            gst::Buffer::with_size(size).context("Failed to allocate GStreamer buffer")?;
+        let memory = unsafe {
+            allocator.alloc_dmabuf(owned_fd, dmabuf.size)
+        }
+        .context("Failed to wrap DMA-BUF fd as GStreamer memory")?;
 
+        let mut buffer = gst::Buffer::new();
         {
             let buffer_mut = buffer.get_mut().unwrap();
+            buffer_mut.append_memory(memory);
             buffer_mut.set_pts(gst::ClockTime::from_nseconds(timestamp));
-            let mut map = buffer_mut
-                .map_writable()
-                .context("Failed to map buffer for writing")?;
-
-            // Copy from DMA-buf to GStreamer buffer
-            unsafe {
-                std::ptr::copy_nonoverlapping(ptr as *const u8, map.as_mut_ptr(), size);
-            }
-        }
-
-        // Unmap the DMA-buf
-        unsafe {
-            libc::munmap(ptr, size);
+            gst_video::VideoMeta::add_full(
+                buffer_mut,
+                gst_video::VideoFrameFlags::empty(),
+                video_format,
+                dmabuf.width,
+                dmabuf.height,
+                &[0],
+                &[dmabuf.stride as i32],
+            )
+            .context("Failed to attach video metadata to DMA-BUF buffer")?;
         }
 
         self.appsrc

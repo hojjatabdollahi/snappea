@@ -73,7 +73,7 @@ where
     // Magnifier toggle row
     let magnifier_row = row![
         text::body(fl!("magnifier")),
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         toggler(magnifier_enabled)
             .on_toggle(move |_| on_magnifier_toggle.clone())
             .size(24.0),
@@ -125,13 +125,13 @@ where
             .width(Length::Fill)
             .into()
     } else {
-        cosmic::widget::horizontal_space().width(0).into()
+        cosmic::iced::widget::space().width(0).into()
     };
 
     // Copy to clipboard on save toggle
     let copy_on_save_row = row![
         text::body(fl!("copy-on-save")),
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         toggler(copy_to_clipboard_on_save)
             .on_toggle(move |_| on_copy_on_save_toggle.clone())
             .size(24.0),
@@ -185,7 +185,7 @@ where
                 .width(Length::Fill)
                 .into()
         } else {
-            cosmic::widget::horizontal_space().width(0).into()
+            cosmic::iced::widget::space().width(0).into()
         };
 
     // Encoder selection using dropdown
@@ -253,7 +253,7 @@ where
     // Show cursor toggle
     let show_cursor_row = row![
         text::caption(fl!("show-cursor")),
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         toggler(video_show_cursor)
             .on_toggle(move |_| on_show_cursor_toggle.clone())
             .size(20.0),
@@ -265,7 +265,7 @@ where
     // Hide to system tray toggle
     let hide_to_tray_row = row![
         text::caption(fl!("hide-to-tray")),
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         toggler(hide_toolbar_to_tray)
             .on_toggle(move |_| on_hide_to_tray_toggle.clone())
             .size(20.0),
@@ -324,7 +324,7 @@ where
     // Build rows with label and dropdown side by side
     let encoder_row = row![
         encoder_label,
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         encoder_dropdown,
     ]
     .spacing(space_s)
@@ -333,7 +333,7 @@ where
 
     let container_row = row![
         container_label,
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         container_dropdown,
     ]
     .spacing(space_s)
@@ -342,7 +342,7 @@ where
 
     let framerate_row = row![
         framerate_label,
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         framerate_dropdown,
     ]
     .spacing(space_s)

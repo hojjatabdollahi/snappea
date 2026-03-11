@@ -12,10 +12,10 @@ use crate::domain::{
 };
 use crate::screencast::encoder::EncoderInfo;
 use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
+use cosmic::iced::Animation;
 use cosmic::iced_core::Rectangle;
-
-use cosmic_time::Timeline;
 use std::collections::HashMap;
+use std::time::Instant;
 use tokio::sync::mpsc::Sender;
 use zbus::zvariant;
 
@@ -204,6 +204,7 @@ pub enum SettingsTab {
 
 #[derive(Clone, Debug)]
 pub struct UiState {
+    pub now: Instant,
     pub toolbar_position: ToolbarPosition,
     pub settings_drawer_open: bool,
     pub settings_tab: SettingsTab,
@@ -223,6 +224,7 @@ pub struct UiState {
     pub toolbar_unhovered_opacity: f32,
     /// Whether the toolbar is currently being hovered (for animated opacity)
     pub toolbar_is_hovered: bool,
+    pub toolbar_hover_animation: Animation<bool>,
     /// ID for debouncing toolbar opacity saves (incremented on each change)
     pub toolbar_opacity_save_id: u64,
     pub tesseract_available: bool,
@@ -235,6 +237,7 @@ pub struct UiState {
     pub video_show_cursor: bool,
     /// Whether video mode is selected (false = screenshot, true = video)
     pub is_video_mode: bool,
+    pub capture_mode_animation: Animation<bool>,
     /// Whether recording is currently active
     pub is_recording: bool,
     /// Whether annotation mode is active during recording
@@ -249,8 +252,6 @@ pub struct UiState {
     pub pencil_thickness: f32,
     /// Last known toolbar bounds (output-local)
     pub toolbar_bounds: Option<Rectangle>,
-    /// Animation timeline for UI animations
-    pub timeline: Timeline,
     /// Whether to hide toolbar to system tray when recording
     pub hide_toolbar_to_tray: bool,
     /// Move offset for dragging selection rectangle (cursor pos relative to rect top-left when move started)
@@ -258,6 +259,11 @@ pub struct UiState {
 }
 
 impl UiState {
+    pub fn is_animating(&self) -> bool {
+        self.toolbar_hover_animation.is_animating(self.now)
+            || self.capture_mode_animation.is_animating(self.now)
+    }
+
     pub fn close_all_popups(&mut self) {
         self.shape_popup_open = false;
         self.redact_popup_open = false;

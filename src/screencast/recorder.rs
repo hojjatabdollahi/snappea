@@ -11,6 +11,7 @@ use wayland_client::Connection;
 
 use super::dmabuf::{
     DmabufContext, TripleBufferPool, drm_format_to_gst_format, select_best_format,
+    select_zero_copy_source_format,
 };
 use super::encoder::{EncoderInfo, detect_encoders};
 use super::pipeline::{CropRegion, Pipeline};
@@ -213,11 +214,15 @@ pub fn start_recording(
         None
     };
 
-    // Determine if we can use full zero-copy DMA-buf path
-    // TODO: DMA-buf path doesn't support frame repetition yet, disable until implemented
-    // Frame repetition is needed to maintain constant framerate when compositor is slow
-    let use_dmabuf = false;
-    // let use_dmabuf = dmabuf_format.is_some() && dmabuf_context.is_some() && wayland_dmabuf_supported;
+    let use_dmabuf = encoder_info.supports_dmabuf_zero_copy
+        && dmabuf_format.is_some()
+        && dmabuf_context.is_some()
+        && wayland_dmabuf_supported;
+    log::info!(
+        "Encoder path selection: {} ({})",
+        encoder_info.gst_element,
+        encoder_info.zero_copy_display_name()
+    );
 
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
@@ -298,10 +303,14 @@ pub fn start_recording(
         None
     };
 
-    let pipeline = if use_dmabuf {
-        let (drm_format, _modifier) = dmabuf_format.unwrap();
-        log::info!("Creating DMA-buf pipeline with format {:?}", drm_format);
-        Pipeline::new_dmabuf(
+    let (pipeline, requested_dmabuf) = if use_dmabuf {
+        let (drm_format, modifier) = dmabuf_format.unwrap();
+        log::info!(
+            "Attempting real zero-copy DMA-BUF pipeline with format {:?}, modifier={:?}",
+            drm_format,
+            modifier
+        );
+        match Pipeline::new_dmabuf(
             &encoder_info,
             container,
             &output_file,
@@ -310,19 +319,42 @@ pub fn start_recording(
             crop,
             framerate,
             drm_format,
-        )
-        .context("Failed to create DMA-buf GStreamer pipeline")?
+        ) {
+            Ok(pipeline) => (pipeline, true),
+            Err(err) => {
+                log::warn!(
+                    "Failed to create zero-copy DMA-BUF pipeline: {}. Falling back to copied SHM path.",
+                    err
+                );
+                (
+                    Pipeline::new(
+                        &encoder_info,
+                        container,
+                        &output_file,
+                        buffer_width,
+                        buffer_height,
+                        crop,
+                        framerate,
+                    )
+                    .context("Failed to create GStreamer pipeline. Check logs for details.")?,
+                    false,
+                )
+            }
+        }
     } else {
-        Pipeline::new(
-            &encoder_info,
-            container,
-            &output_file,
-            buffer_width,
-            buffer_height,
-            crop,
-            framerate,
+        (
+            Pipeline::new(
+                &encoder_info,
+                container,
+                &output_file,
+                buffer_width,
+                buffer_height,
+                crop,
+                framerate,
+            )
+            .context("Failed to create GStreamer pipeline. Check logs for details.")?,
+            false,
         )
-        .context("Failed to create GStreamer pipeline. Check logs for details.")?
     };
 
     pipeline
@@ -338,7 +370,7 @@ pub fn start_recording(
     let start_time = Instant::now();
 
     // Allocate triple buffer pool if using zero-copy path
-    let mut buffer_pool: Option<TripleBufferPool> = if use_dmabuf {
+    let mut buffer_pool: Option<TripleBufferPool> = if requested_dmabuf {
         let (drm_format, modifier) = dmabuf_format.unwrap();
         let ctx = dmabuf_context.as_ref().unwrap();
         log::info!(
@@ -375,11 +407,32 @@ pub fn start_recording(
     };
 
     // Determine actual capture mode
-    let actual_dmabuf = buffer_pool.is_some() && pipeline.is_dmabuf_mode();
+    let actual_dmabuf = requested_dmabuf && buffer_pool.is_some() && pipeline.is_dmabuf_mode();
     if actual_dmabuf {
-        log::info!("Using DMA-buf zero-copy capture path with triple buffering");
+        log::info!(
+            "ZERO_COPY_ACTIVE=true encoder={} path=dmabuf+vaapipostproc+hardware-encoder",
+            encoder_info.gst_element
+        );
     } else {
-        log::info!("Using SHM capture path");
+        log::info!(
+            "ZERO_COPY_ACTIVE=false encoder={} path=shm-copied fallback_reason={}",
+            encoder_info.gst_element,
+            if !encoder_info.supports_dmabuf_zero_copy {
+                "encoder_not_supported"
+            } else if !wayland_dmabuf_supported {
+                "wayland_dmabuf_unavailable"
+            } else if dmabuf_context.is_none() {
+                "dmabuf_context_unavailable"
+            } else if dmabuf_format.is_none() {
+                "no_compatible_dmabuf_format"
+            } else if !requested_dmabuf {
+                "dmabuf_pipeline_not_requested"
+            } else if buffer_pool.is_none() {
+                "triple_buffer_allocation_failed"
+            } else {
+                "pipeline_not_in_dmabuf_mode"
+            }
+        );
     }
 
     // For SHM mode: use async capture with frame repetition
@@ -755,6 +808,23 @@ fn select_dmabuf_format(
         available_formats.iter().map(|(f, _)| f).collect::<Vec<_>>()
     );
 
+    if encoder_info.supports_dmabuf_zero_copy {
+        let result = select_zero_copy_source_format(&available_formats);
+        if let Some((format, modifier)) = result {
+            log::info!(
+                "Selected zero-copy DMA-BUF source format: {:?}, modifier={:?}",
+                format,
+                modifier
+            );
+        } else {
+            log::debug!(
+                "No zero-copy compatible DMA-BUF source format found for encoder {}",
+                encoder_info.gst_element
+            );
+        }
+        return result;
+    }
+
     // Select the best format for the encoder
     let prefer_hardware = encoder_info.hardware;
     let result = select_best_format(&available_formats, prefer_hardware);
@@ -821,9 +891,8 @@ fn capture_frame_dmabuf_triple(
     // Cleanup wl_buffer (the underlying DMA-buf fd is still valid)
     wl_buffer.destroy();
 
-    // Push DMA-buf fd to GStreamer (zero-copy to encoder)
-    use std::os::fd::AsRawFd;
-    pipeline.push_dmabuf_frame(dmabuf.fd.as_raw_fd(), dmabuf.size, timestamp)?;
+            // Push DMA-buf-backed GstMemory to GStreamer without copying it to CPU memory.
+            pipeline.push_dmabuf_frame(dmabuf, timestamp)?;
 
     // Advance to next buffer for next frame
     pool.advance();
@@ -955,6 +1024,32 @@ pub fn start_recording_thread(
         encoder_info.codec
     );
 
+    let dmabuf_context = match DmabufContext::new() {
+        Ok(ctx) => {
+            log::info!("DMA-buf context initialized successfully");
+            Some(ctx)
+        }
+        Err(e) => {
+            log::warn!(
+                "Failed to initialize DMA-buf context: {}. Falling back to SHM.",
+                e
+            );
+            None
+        }
+    };
+    let wayland_dmabuf_supported = wayland_helper.has_dmabuf_support();
+    let dmabuf_format = if wayland_dmabuf_supported {
+        dmabuf_context
+            .as_ref()
+            .and_then(|ctx| select_dmabuf_format(&formats, &encoder_info, ctx))
+    } else {
+        None
+    };
+    let use_dmabuf = encoder_info.supports_dmabuf_zero_copy
+        && dmabuf_context.is_some()
+        && dmabuf_format.is_some()
+        && wayland_dmabuf_supported;
+
     // Calculate crop region if needed
     let (region_x, region_y, record_width, record_height) = region;
     let (logical_width, logical_height) = logical_size;
@@ -1000,21 +1095,109 @@ pub fn start_recording_thread(
 
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
-    let pipeline = Pipeline::new(
-        &encoder_info,
-        container,
-        &output_file,
-        buffer_width,
-        buffer_height,
-        crop,
-        framerate,
-    )
-    .context("Failed to create GStreamer pipeline")?;
+    let (pipeline, requested_dmabuf) = if use_dmabuf {
+        let (drm_format, modifier) = dmabuf_format.unwrap();
+        log::info!(
+            "Attempting real zero-copy DMA-BUF pipeline with format {:?}, modifier={:?}",
+            drm_format,
+            modifier
+        );
+        match Pipeline::new_dmabuf(
+            &encoder_info,
+            container,
+            &output_file,
+            buffer_width,
+            buffer_height,
+            crop,
+            framerate,
+            drm_format,
+        ) {
+            Ok(pipeline) => (pipeline, true),
+            Err(err) => {
+                log::warn!(
+                    "Failed to create zero-copy DMA-BUF pipeline: {}. Falling back to copied SHM path.",
+                    err
+                );
+                (
+                    Pipeline::new(
+                        &encoder_info,
+                        container,
+                        &output_file,
+                        buffer_width,
+                        buffer_height,
+                        crop,
+                        framerate,
+                    )
+                    .context("Failed to create GStreamer pipeline")?,
+                    false,
+                )
+            }
+        }
+    } else {
+        (
+            Pipeline::new(
+                &encoder_info,
+                container,
+                &output_file,
+                buffer_width,
+                buffer_height,
+                crop,
+                framerate,
+            )
+            .context("Failed to create GStreamer pipeline")?,
+            false,
+        )
+    };
 
     pipeline
         .start()
         .context("Failed to start GStreamer pipeline")?;
     log::info!("Recording started successfully!");
+
+    let mut buffer_pool: Option<TripleBufferPool> = if requested_dmabuf {
+        let (drm_format, modifier) = dmabuf_format.unwrap();
+        let ctx = dmabuf_context.as_ref().unwrap();
+        match TripleBufferPool::new(ctx, buffer_width, buffer_height, drm_format, modifier) {
+            Ok(pool) => Some(pool),
+            Err(e) => {
+                log::warn!(
+                    "Failed to allocate zero-copy triple buffer pool: {}. Falling back to SHM.",
+                    e
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let actual_dmabuf = requested_dmabuf && buffer_pool.is_some() && pipeline.is_dmabuf_mode();
+    if actual_dmabuf {
+        log::info!(
+            "ZERO_COPY_ACTIVE=true encoder={} path=dmabuf+vaapipostproc+hardware-encoder thread_mode=in_process",
+            encoder_info.gst_element
+        );
+    } else {
+        log::info!(
+            "ZERO_COPY_ACTIVE=false encoder={} path=shm-copied thread_mode=in_process fallback_reason={}",
+            encoder_info.gst_element,
+            if !encoder_info.supports_dmabuf_zero_copy {
+                "encoder_not_supported"
+            } else if !wayland_dmabuf_supported {
+                "wayland_dmabuf_unavailable"
+            } else if dmabuf_context.is_none() {
+                "dmabuf_context_unavailable"
+            } else if dmabuf_format.is_none() {
+                "no_compatible_dmabuf_format"
+            } else if !requested_dmabuf {
+                "dmabuf_pipeline_not_requested"
+            } else if buffer_pool.is_none() {
+                "triple_buffer_allocation_failed"
+            } else {
+                "pipeline_not_in_dmabuf_mode"
+            }
+        );
+    }
 
     // Main recording loop using SHM capture
     let frame_duration = Duration::from_secs_f64(1.0 / framerate as f64);
@@ -1023,18 +1206,19 @@ pub fn start_recording_thread(
     const MAX_CONSECUTIVE_ERRORS: u32 = 10;
     let start_time = Instant::now();
 
-    // Channel for passing captured frames from capture thread to main thread
-    let (frame_tx, frame_rx) = std::sync::mpsc::channel::<Vec<u8>>();
-    let stop_capture = std::sync::Arc::new(AtomicBool::new(false));
-    let stop_capture_clone = stop_capture.clone();
+    if !actual_dmabuf {
+        // Channel for passing captured frames from capture thread to main thread
+        let (frame_tx, frame_rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let stop_capture = std::sync::Arc::new(AtomicBool::new(false));
+        let stop_capture_clone = stop_capture.clone();
 
-    // Clone what we need for the capture thread
-    let formats_clone = formats.clone();
+        // Clone what we need for the capture thread
+        let formats_clone = formats.clone();
 
-    // Spawn capture thread - captures as fast as compositor allows
-    // Note: We pass the session directly since we're in the same process
-    let is_toplevel_capture = is_toplevel;
-    let capture_thread = std::thread::spawn(move || {
+        // Spawn capture thread - captures as fast as compositor allows
+        // Note: We pass the session directly since we're in the same process
+        let is_toplevel_capture = is_toplevel;
+        let capture_thread = std::thread::spawn(move || {
         let mut consecutive_failures = 0u32;
         let mut last_error_log = std::time::Instant::now();
         let max_consecutive_failures = 100;
@@ -1114,76 +1298,99 @@ pub fn start_recording_thread(
             }
         }
         log::debug!("Capture thread exiting");
-    });
+        });
 
-    // Main encoding loop - maintains constant framerate
-    let mut last_frame: Option<Vec<u8>> = None;
-    let mut new_frames = 0u64;
-    let mut repeated_frames = 0u64;
+        // Main encoding loop - maintains constant framerate
+        let mut last_frame: Option<Vec<u8>> = None;
+        let mut new_frames = 0u64;
+        let mut repeated_frames = 0u64;
 
-    while !stop_flag.load(Ordering::Relaxed) {
-        let frame_start = Instant::now();
-        // Use real elapsed time for timestamps to ensure correct playback speed
-        // (frame_count-based timestamps cause slow motion when capture is faster than target fps)
-        let timestamp = start_time.elapsed().as_nanos() as u64;
+        while !stop_flag.load(Ordering::Relaxed) {
+            let frame_start = Instant::now();
+            // Use real elapsed time for timestamps to ensure correct playback speed
+            // (frame_count-based timestamps cause slow motion when capture is faster than target fps)
+            let timestamp = start_time.elapsed().as_nanos() as u64;
 
-        // Try to get a new frame (non-blocking)
-        let frame_data = match frame_rx.try_recv() {
-            Ok(data) => {
-                last_frame = Some(data.clone());
-                new_frames += 1;
-                data
+            let frame_data = match frame_rx.try_recv() {
+                Ok(data) => {
+                    last_frame = Some(data.clone());
+                    new_frames += 1;
+                    data
+                }
+                Err(_) => match &last_frame {
+                    Some(data) => {
+                        repeated_frames += 1;
+                        data.clone()
+                    }
+                    None => {
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
+                    }
+                },
+            };
+
+            match pipeline.push_frame(&frame_data, timestamp) {
+                Ok(()) => {
+                    consecutive_errors = 0;
+                    frame_count += 1;
+
+                    if frame_count % 60 == 0 {
+                        let elapsed = start_time.elapsed();
+                        let fps = frame_count as f64 / elapsed.as_secs_f64();
+                        let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
+                        log::info!(
+                            "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
+                            frame_count,
+                            fps,
+                            capture_fps,
+                            repeated_frames
+                        );
+                    }
+                }
+                Err(e) => {
+                    log::error!("Failed to push frame: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        break;
+                    }
+                }
             }
-            Err(_) => match &last_frame {
-                Some(data) => {
-                    repeated_frames += 1;
-                    data.clone()
-                }
-                None => {
-                    std::thread::sleep(Duration::from_millis(1));
-                    continue;
-                }
-            },
-        };
 
-        // Push frame to pipeline
-        match pipeline.push_frame(&frame_data, timestamp) {
-            Ok(()) => {
-                consecutive_errors = 0;
-                frame_count += 1;
-
-                if frame_count % 60 == 0 {
-                    let elapsed = start_time.elapsed();
-                    let fps = frame_count as f64 / elapsed.as_secs_f64();
-                    let capture_fps = new_frames as f64 / elapsed.as_secs_f64();
-                    log::info!(
-                        "Recording: {} frames ({:.1} fps output, {:.1} fps capture, {} repeated)",
-                        frame_count,
-                        fps,
-                        capture_fps,
-                        repeated_frames
-                    );
-                }
-            }
-            Err(e) => {
-                log::error!("Failed to push frame: {}", e);
-                consecutive_errors += 1;
-                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
-                    break;
-                }
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < frame_duration {
+                std::thread::sleep(frame_duration - frame_elapsed);
             }
         }
 
-        // Maintain target framerate
-        let frame_elapsed = frame_start.elapsed();
-        if frame_elapsed < frame_duration {
-            std::thread::sleep(frame_duration - frame_elapsed);
+        stop_capture.store(true, Ordering::Relaxed);
+        let _ = capture_thread.join();
+    } else {
+        while !stop_flag.load(Ordering::Relaxed) {
+            let frame_start = Instant::now();
+            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+
+            let pool = buffer_pool.as_mut().unwrap();
+            match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
+            {
+                Ok(()) => {
+                    consecutive_errors = 0;
+                    frame_count += 1;
+                }
+                Err(e) => {
+                    log::error!("Failed to capture/push frame: {}", e);
+                    consecutive_errors += 1;
+                    if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                        break;
+                    }
+                }
+            }
+
+            let frame_elapsed = frame_start.elapsed();
+            if frame_elapsed < frame_duration {
+                std::thread::sleep(frame_duration - frame_elapsed);
+            }
         }
     }
-
-    // Stop capture thread
-    stop_capture.store(true, Ordering::Relaxed);
-    let _ = capture_thread.join();
 
     // Graceful shutdown
     log::info!("Stopping recording... ({} frames captured)", frame_count);

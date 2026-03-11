@@ -42,6 +42,7 @@ pub fn draw_dark_overlay_around_selection(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             overlay,
         );
@@ -59,6 +60,7 @@ pub fn draw_dark_overlay_around_selection(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             overlay,
         );
@@ -74,6 +76,7 @@ pub fn draw_dark_overlay_around_selection(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             overlay,
         );
@@ -91,6 +94,7 @@ pub fn draw_dark_overlay_around_selection(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             overlay,
         );
@@ -115,6 +119,7 @@ pub fn draw_inactive_overlay_with_hint(
             bounds,
             border: Border::default(),
             shadow: Shadow::default(),
+            snap: false,
         },
         Background::Color(dark_overlay),
     );
@@ -145,6 +150,7 @@ pub fn draw_inactive_overlay_with_hint(
                 color: Color::TRANSPARENT,
             },
             shadow: Shadow::default(),
+            snap: false,
         },
         Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.5)),
     );
@@ -160,10 +166,11 @@ pub fn draw_inactive_overlay_with_hint(
                 weight: cosmic::iced_core::font::Weight::Medium,
                 ..Default::default()
             },
-            horizontal_alignment: cosmic::iced::alignment::Horizontal::Center,
-            vertical_alignment: cosmic::iced::alignment::Vertical::Center,
+            align_x: cosmic::iced::alignment::Horizontal::Center.into(),
+            align_y: cosmic::iced::alignment::Vertical::Center,
             shaping: cosmic::iced_core::text::Shaping::Advanced,
             wrapping: cosmic::iced_core::text::Wrapping::None,
+            ellipsize: cosmic::iced_core::text::Ellipsize::default(),
         },
         Point::new(box_x + box_width / 2.0, box_y + box_height / 2.0),
         Color::WHITE,
@@ -223,6 +230,7 @@ pub fn draw_selection_frame_with_handles(
                 color: accent_color,
             },
             shadow: Shadow::default(),
+            snap: false,
         },
         Background::Color(Color::TRANSPARENT),
     );
@@ -251,6 +259,7 @@ pub fn draw_selection_frame_with_handles(
                     color: Color::TRANSPARENT,
                 },
                 shadow: Shadow::default(),
+                snap: false,
             },
             Background::Color(accent_color),
         );

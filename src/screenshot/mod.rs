@@ -1,4 +1,5 @@
 use cosmic::cosmic_config::CosmicConfigEntry;
+use cosmic::iced::animation;
 use cosmic::iced::clipboard::mime::AsMimeTypes;
 use cosmic::iced::{Limits, window};
 use cosmic::iced_core::Length;
@@ -7,11 +8,11 @@ use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
     IcedOutput, SctkLayerSurfaceSettings,
 };
 use cosmic::iced_winit::commands::layer_surface::{destroy_layer_surface, get_layer_surface};
-use cosmic::widget::horizontal_space;
 use cosmic_client_toolkit::sctk::shell::wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 
 use image::RgbaImage;
 use std::borrow::Cow;
+use std::time::Instant;
 use std::{collections::HashMap, io, path::PathBuf};
 use tokio::sync::mpsc::Sender;
 
@@ -368,6 +369,7 @@ impl Screenshot {
                     // Start with empty encoders - they will be detected asynchronously
                     // This allows the UI to show immediately without waiting for GStreamer
                     UiState {
+                        now: Instant::now(),
                         toolbar_position: config.toolbar_position,
                         settings_drawer_open: false,
                         settings_tab: crate::session::state::SettingsTab::General,
@@ -386,6 +388,9 @@ impl Screenshot {
                         copy_to_clipboard_on_save: config.copy_to_clipboard_on_save,
                         toolbar_unhovered_opacity: config.toolbar_unhovered_opacity,
                         toolbar_is_hovered: false,
+                        toolbar_hover_animation: cosmic::iced::Animation::new(false)
+                            .quick()
+                            .easing(animation::Easing::EaseInOut),
                         toolbar_opacity_save_id: 0,
                         tesseract_available: is_tesseract_available(),
                         available_encoders: Vec::new(),
@@ -395,6 +400,9 @@ impl Screenshot {
                         video_framerate: config.video_framerate,
                         video_show_cursor: config.video_show_cursor,
                         is_video_mode: false,
+                        capture_mode_animation: cosmic::iced::Animation::new(false)
+                            .quick()
+                            .easing(animation::Easing::EaseInOut),
                         is_recording: false,
                         recording_annotation_mode: false,
                         pencil_popup_open: false,
@@ -402,7 +410,6 @@ impl Screenshot {
                         pencil_fade_duration: config.pencil_fade_duration,
                         pencil_thickness: config.pencil_thickness,
                         toolbar_bounds: None,
-                        timeline: cosmic_time::Timeline::new(),
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
                         move_offset: None,
                     }
@@ -430,13 +437,19 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
     use crate::widget::screenshot_selection::{OutputContext, ScreenshotSelectionWidget};
 
     let Some((i, output)) = app.outputs.iter().enumerate().find(|(_idx, o)| o.id == id) else {
-        return horizontal_space().width(Length::Fixed(1.0)).into();
+        return cosmic::iced::widget::space()
+            .width(Length::Fixed(1.0))
+            .into();
     };
     let Some(args) = app.screenshot_args.as_ref() else {
-        return horizontal_space().width(Length::Fixed(1.0)).into();
+        return cosmic::iced::widget::space()
+            .width(Length::Fixed(1.0))
+            .into();
     };
     let Some(img) = args.capture.output_images.get(&output.name) else {
-        return horizontal_space().width(Length::Fixed(1.0)).into();
+        return cosmic::iced::widget::space()
+            .width(Length::Fixed(1.0))
+            .into();
     };
 
     let theme = app.core.system_theme().cosmic();
@@ -845,18 +858,7 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             }
             SettingsMsg::ToolbarHoverChanged(is_hovered) => {
                 args.ui.toolbar_is_hovered = is_hovered;
-                // Start the appropriate animation
-                if is_hovered {
-                    args.ui
-                        .timeline
-                        .set_chain(crate::widget::toolbar::toolbar_fade_in())
-                        .start();
-                } else {
-                    args.ui
-                        .timeline
-                        .set_chain(crate::widget::toolbar::toolbar_fade_out())
-                        .start();
-                }
+                args.ui.toolbar_hover_animation.go_mut(is_hovered, args.ui.now);
                 cosmic::Task::none()
             }
             SettingsMsg::ToolbarBounds(bounds) => {
@@ -902,9 +904,8 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 args.ui.encoder_displays = encoder_displays;
                 cosmic::Task::none()
             }
-            SettingsMsg::TimelineTick(_window_id, instant) => {
-                // Update the timeline's current time for animation interpolation
-                args.ui.timeline.now(instant);
+            SettingsMsg::TimelineTick(_, instant) => {
+                args.ui.now = instant;
                 cosmic::Task::none()
             }
             SettingsMsg::SetMoveOffset(offset) => {
@@ -1317,6 +1318,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
         CaptureMsg::ToggleCaptureMode(is_video) => {
             log::info!("Capture mode toggled: is_video_mode = {}", is_video);
             if let Some(args) = app.screenshot_args.as_mut() {
+                args.ui.capture_mode_animation.go_mut(is_video, args.ui.now);
                 args.ui.is_video_mode = is_video;
                 // Reset UI state completely when switching modes
                 args.close_all_popups();
@@ -1324,13 +1326,6 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 args.clear_annotations();
                 // Reset selection to empty rectangle (no selection)
                 args.session.choice = Choice::Rectangle(Rect::default(), DragState::default());
-                // Set up the animation chain
-                let chain = if is_video {
-                    crate::widget::icon_toggle::toggle_to_video()
-                } else {
-                    crate::widget::icon_toggle::toggle_to_screenshot()
-                };
-                args.ui.timeline.set_chain(chain).start();
             }
             cosmic::Task::none()
         }
@@ -2271,34 +2266,6 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
         return cosmic::Task::none();
     }
 
-    // update output bg sources
-    if let Ok(c) = cosmic::cosmic_config::Config::new_state(
-        cosmic_bg_config::NAME,
-        cosmic_bg_config::state::State::version(),
-    ) {
-        let bg_state = match cosmic_bg_config::state::State::get_entry(&c) {
-            Ok(state) => state,
-            Err((err, s)) => {
-                log::error!("Failed to get bg config state: {:?}", err);
-                s
-            }
-        };
-        for o in &mut app.outputs {
-            let source = bg_state.wallpapers.iter().find(|s| s.0 == o.name);
-            o.bg_source = Some(source.cloned().map(|s| s.1).unwrap_or_else(|| {
-                cosmic_bg_config::Source::Path(
-                    "/usr/share/backgrounds/pop/kate-hazen-COSMIC-desktop-wallpaper.png".into(),
-                )
-            }));
-        }
-    } else {
-        log::error!("Failed to get bg config state");
-        for o in &mut app.outputs {
-            o.bg_source = Some(cosmic_bg_config::Source::Path(
-                "/usr/share/backgrounds/pop/kate-hazen-COSMIC-desktop-wallpaper.png".into(),
-            ));
-        }
-    }
     app.location_options = vec![
         fl!("save-to", "clipboard"),
         fl!("save-to", "pictures"),

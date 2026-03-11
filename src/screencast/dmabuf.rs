@@ -5,6 +5,7 @@
 
 use anyhow::{Context, Result};
 use drm_fourcc::{DrmFourcc, DrmModifier};
+use gstreamer_video as gst_video;
 use std::fs::{File, OpenOptions};
 use std::os::fd::OwnedFd;
 use std::path::PathBuf;
@@ -260,6 +261,53 @@ pub fn drm_format_to_gst_format(format: DrmFourcc) -> Option<&'static str> {
         DrmFourcc::Yuyv => Some("YUY2"),
         _ => None,
     }
+}
+
+/// Convert a DRM fourcc into the corresponding GStreamer `VideoFormat`.
+///
+/// This is limited to the single-plane formats we can currently export via the
+/// Wayland linux-dmabuf helper.
+pub fn drm_format_to_gst_video_format(format: DrmFourcc) -> Option<gst_video::VideoFormat> {
+    match format {
+        DrmFourcc::Xrgb8888 => Some(gst_video::VideoFormat::Bgrx),
+        DrmFourcc::Argb8888 => Some(gst_video::VideoFormat::Bgra),
+        DrmFourcc::Xbgr8888 => Some(gst_video::VideoFormat::Rgbx),
+        DrmFourcc::Abgr8888 => Some(gst_video::VideoFormat::Rgba),
+        _ => None,
+    }
+}
+
+/// Select a linear, single-plane DRM format suitable for the real zero-copy path.
+///
+/// The current Wayland helper creates a single-plane linux-dmabuf `wl_buffer`,
+/// so we intentionally constrain the zero-copy path to single-plane RGB formats.
+pub fn select_zero_copy_source_format(
+    available_formats: &[(DrmFourcc, Vec<DrmModifier>)],
+) -> Option<(DrmFourcc, DrmModifier)> {
+    let preferred_formats = [
+        DrmFourcc::Abgr8888,
+        DrmFourcc::Argb8888,
+        DrmFourcc::Xbgr8888,
+        DrmFourcc::Xrgb8888,
+    ];
+
+    for preferred in preferred_formats {
+        for (format, modifiers) in available_formats {
+            if *format != preferred || drm_format_to_gst_video_format(*format).is_none() {
+                continue;
+            }
+
+            if let Some(modifier) = modifiers
+                .iter()
+                .copied()
+                .find(|modifier| *modifier == DrmModifier::Linear)
+            {
+                return Some((*format, modifier));
+            }
+        }
+    }
+
+    None
 }
 
 /// Triple buffer pool for efficient frame capture

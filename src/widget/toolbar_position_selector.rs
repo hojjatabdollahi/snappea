@@ -109,7 +109,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
     }
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut cosmic::iced_core::widget::Tree,
         _renderer: &cosmic::Renderer,
         _limits: &cosmic::iced::Limits,
@@ -172,6 +172,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     color: accent,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(top_color),
         );
@@ -198,6 +199,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     color: accent,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(bottom_color),
         );
@@ -224,6 +226,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     color: accent,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(left_color),
         );
@@ -250,6 +253,7 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                     color: accent,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(right_color),
         );
@@ -271,17 +275,17 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
         cosmic::iced_core::mouse::Interaction::default()
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         _state: &mut cosmic::iced_core::widget::Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: cosmic::iced_core::mouse::Cursor,
         _renderer: &cosmic::Renderer,
         _clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         _viewport: &cosmic::iced_core::Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         if let cosmic::iced_core::Event::Mouse(cosmic::iced_core::mouse::Event::ButtonPressed(
             cosmic::iced_core::mouse::Button::Left,
         )) = event
@@ -295,9 +299,8 @@ impl<Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Re
                 ToolbarPosition::Right => self.on_right.clone(),
             };
             shell.publish(msg);
-            return cosmic::iced_core::event::Status::Captured;
+            shell.capture_event();
         }
-        cosmic::iced_core::event::Status::Ignored
     }
 }
 

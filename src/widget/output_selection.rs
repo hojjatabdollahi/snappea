@@ -74,7 +74,7 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         tree::Tag::of::<MyState>()
     }
 
-    fn layout(&self, _tree: &mut Tree, _renderer: &cosmic::Renderer, limits: &Limits) -> Node {
+    fn layout(&mut self, _tree: &mut Tree, _renderer: &cosmic::Renderer, limits: &Limits) -> Node {
         let limits = limits.width(Length::Fill).height(Length::Fill);
         Node::new(limits.resolve(Length::Fill, Length::Fill, Size::ZERO))
     }
@@ -114,6 +114,7 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
                         color: accent,
                     },
                     shadow: Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(Color::TRANSPARENT),
             );
@@ -159,6 +160,7 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
                         color: Color::TRANSPARENT,
                     },
                     shadow: Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7)),
             );
@@ -185,10 +187,11 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
                     size: text_size,
                     line_height: text::LineHeight::default(),
                     font,
-                    horizontal_alignment: alignment::Horizontal::Center,
-                    vertical_alignment: alignment::Vertical::Center,
+                    align_x: alignment::Horizontal::Center.into(),
+                    align_y: alignment::Vertical::Center,
                     shaping: text::Shaping::Advanced,
                     wrapping: text::Wrapping::Word,
+                    ellipsize: text::Ellipsize::default(),
                 },
                 cosmic::iced_core::Point::new(text_center_x, text_center_y),
                 text_color,
@@ -212,17 +215,17 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         state: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: cosmic::iced_core::Layout<'_>,
         cursor: cosmic::iced_core::mouse::Cursor,
         _renderer: &cosmic::Renderer,
         _clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         _viewport: &cosmic::iced_core::Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         let my_state = state.state.downcast_mut::<MyState>();
         let hovered = cursor.is_over(layout.bounds());
         let hover_changed = my_state.hovered != hovered;
@@ -242,7 +245,8 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
                 | cosmic::iced_core::Event::Mouse(mouse::Event::CursorEntered) => {
                     my_state.entered_published = true;
                     shell.publish(self.on_enter.clone());
-                    return cosmic::iced_core::event::Status::Captured;
+                    shell.capture_event();
+                    return;
                 }
                 _ => {}
             };
@@ -256,10 +260,8 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
             && let Some(on_click) = &self.on_click
         {
             shell.publish(on_click.clone());
-            return cosmic::iced_core::event::Status::Captured;
+            shell.capture_event();
         }
-
-        cosmic::iced_core::event::Status::Ignored
     }
 }
 

@@ -36,6 +36,8 @@ pub struct EncoderInfo {
     pub codec: Codec,
     /// Whether this is hardware-accelerated
     pub hardware: bool,
+    /// Whether this encoder can participate in the real DMA-BUF zero-copy path
+    pub supports_dmabuf_zero_copy: bool,
     /// Priority (lower = better, hardware encoders have lower priority)
     pub priority: u8,
 }
@@ -49,6 +51,14 @@ impl EncoderInfo {
             " (Software)"
         };
         format!("{}{}", self.name, hw_indicator)
+    }
+
+    pub fn zero_copy_display_name(&self) -> &'static str {
+        if self.supports_dmabuf_zero_copy {
+            "DMA-BUF zero-copy capable"
+        } else {
+            "copied-memory path only"
+        }
     }
 }
 
@@ -65,6 +75,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "vaapih264enc".to_string(),
             codec: Codec::H264,
             hardware: true,
+            supports_dmabuf_zero_copy: true,
             priority: 10,
         });
     }
@@ -74,6 +85,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "vaapih265enc".to_string(),
             codec: Codec::H265,
             hardware: true,
+            supports_dmabuf_zero_copy: true,
             priority: 11,
         });
     }
@@ -83,6 +95,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "vaapivp9enc".to_string(),
             codec: Codec::VP9,
             hardware: true,
+            supports_dmabuf_zero_copy: true,
             priority: 12,
         });
     }
@@ -94,6 +107,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "nvh264enc".to_string(),
             codec: Codec::H264,
             hardware: true,
+            supports_dmabuf_zero_copy: false,
             priority: 20,
         });
     }
@@ -103,6 +117,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "nvh265enc".to_string(),
             codec: Codec::H265,
             hardware: true,
+            supports_dmabuf_zero_copy: false,
             priority: 21,
         });
     }
@@ -114,6 +129,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "x264enc".to_string(),
             codec: Codec::H264,
             hardware: false,
+            supports_dmabuf_zero_copy: false,
             priority: 100,
         });
     }
@@ -123,6 +139,7 @@ pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
             gst_element: "vp9enc".to_string(),
             codec: Codec::VP9,
             hardware: false,
+            supports_dmabuf_zero_copy: false,
             priority: 101,
         });
     }
@@ -166,6 +183,7 @@ mod tests {
             gst_element: "vaapih264enc".to_string(),
             codec: Codec::H264,
             hardware: true,
+            supports_dmabuf_zero_copy: true,
             priority: 10,
         };
         assert_eq!(hw_encoder.display_name(), "VA-API H.264 (Hardware)");
@@ -175,6 +193,7 @@ mod tests {
             gst_element: "x264enc".to_string(),
             codec: Codec::H264,
             hardware: false,
+            supports_dmabuf_zero_copy: false,
             priority: 100,
         };
         assert_eq!(sw_encoder.display_name(), "x264 H.264 (Software)");

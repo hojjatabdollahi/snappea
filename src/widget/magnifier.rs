@@ -70,6 +70,7 @@ pub fn draw_magnifier(
                     color: Color::TRANSPARENT,
                 },
                 shadow: Shadow::default(),
+                snap: false,
             },
             Color::from_rgba(0.0, 0.0, 0.0, 0.9),
         );
@@ -108,6 +109,7 @@ pub fn draw_magnifier(
                             bounds: pixel_bounds,
                             border: Border::default(),
                             shadow: Shadow::default(),
+                            snap: false,
                         },
                         color,
                     );
@@ -128,6 +130,7 @@ pub fn draw_magnifier(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             crosshair_color,
         );
@@ -141,6 +144,7 @@ pub fn draw_magnifier(
                 ),
                 border: Border::default(),
                 shadow: Shadow::default(),
+                snap: false,
             },
             crosshair_color,
         );
@@ -155,6 +159,7 @@ pub fn draw_magnifier(
                     color: accent,
                 },
                 shadow: Shadow::default(),
+                snap: false,
             },
             Color::TRANSPARENT,
         );

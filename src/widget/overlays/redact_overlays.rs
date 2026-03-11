@@ -45,6 +45,7 @@ pub fn draw_redaction(
                 bounds: rect,
                 border: Border::default(),
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::BLACK),
         );
@@ -169,6 +170,7 @@ pub fn draw_pixelation_preview(
                     radius: 0.0.into(),
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::TRANSPARENT),
         );
@@ -216,6 +218,7 @@ pub fn draw_redaction_preview(
                     radius: 0.0.into(),
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7)),
         );
@@ -263,6 +266,7 @@ fn draw_pixelation_blocks_screenshot(
                             },
                             border: Border::default(),
                             shadow: cosmic::iced_core::Shadow::default(),
+                            snap: false,
                         },
                         Background::Color(color),
                     );

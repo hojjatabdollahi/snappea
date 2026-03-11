@@ -2,54 +2,21 @@
 
 use std::rc::Rc;
 
+use cosmic::iced::Animation;
 use cosmic::iced::Length;
 use cosmic::iced_core::{layout, widget::Tree, Background, Border, Color, Layout, Size};
 use cosmic::iced_renderer::geometry::Renderer as GeometryRenderer;
 use cosmic::iced_widget::{canvas, column, container, row};
 use cosmic::widget::{button, icon, text, tooltip};
 use cosmic::Element;
-use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{chain, lazy, toggler, Duration, Ease, Exponential, Timeline};
 
-/// Animation ID for toolbar hover opacity
-pub static TOOLBAR_HOVER_ID: Lazy<cosmic_time::id::Toggler> =
-    Lazy::new(cosmic_time::id::Toggler::unique);
-
-/// Animation duration for toolbar fade in milliseconds
-const TOOLBAR_FADE_DURATION_MS: u64 = 200;
-
-/// Get the current toolbar opacity from the timeline
-/// Returns 1.0 when hovered (faded in), base_opacity when not hovered (faded out)
-pub fn get_toolbar_opacity(timeline: &Timeline, base_opacity: f32, is_hovered: bool) -> f32 {
-    let anim_value = timeline
-        .get(&TOOLBAR_HOVER_ID.clone().into(), 0)
-        .map_or(if is_hovered { 1.0 } else { 0.0 }, |interped| {
-            interped.value
-        });
-    // Interpolate between base_opacity and 1.0
-    base_opacity + (1.0 - base_opacity) * anim_value
-}
-
-/// Create an animation chain for fading in (unhovered -> hovered)
-pub fn toolbar_fade_in() -> cosmic_time::chain::Toggler {
-    chain!(
-        TOOLBAR_HOVER_ID.clone(),
-        lazy::toggler(Duration::ZERO),
-        toggler(Duration::from_millis(TOOLBAR_FADE_DURATION_MS))
-            .percent(1.0)
-            .ease(Ease::Exponential(Exponential::Out)),
-    )
-}
-
-/// Create an animation chain for fading out (hovered -> unhovered)
-pub fn toolbar_fade_out() -> cosmic_time::chain::Toggler {
-    chain!(
-        TOOLBAR_HOVER_ID.clone(),
-        lazy::toggler(Duration::ZERO),
-        toggler(Duration::from_millis(TOOLBAR_FADE_DURATION_MS))
-            .percent(0.0)
-            .ease(Ease::Exponential(Exponential::In)),
-    )
+/// Returns full opacity while hovered and the configured base opacity otherwise.
+pub fn get_toolbar_opacity(
+    animation: &Animation<bool>,
+    now: std::time::Instant,
+    base_opacity: f32,
+) -> f32 {
+    animation.interpolate(base_opacity, 1.0, now)
 }
 
 /// Helper to create an SVG icon with opacity support
@@ -652,13 +619,13 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &cosmic::Renderer,
         limits: &cosmic::iced::Limits,
     ) -> layout::Node {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -708,6 +675,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                     ..Default::default()
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(bg_color),
         );
@@ -729,28 +697,28 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+        operation: &mut dyn cosmic::iced_core::widget::Operation,
     ) {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: cosmic::iced_core::mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         viewport: &cosmic::iced_core::Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         // Check for hover state changes on any mouse event
         if let cosmic::iced_core::Event::Mouse(_) = &event {
             if let Some(ref on_hover_change) = self.on_hover_change {
@@ -768,7 +736,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             }
         }
 
-        self.content.as_widget_mut().on_event(
+        self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
             layout,
@@ -777,7 +745,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             clipboard,
             shell,
             viewport,
-        )
+        );
     }
 
     fn mouse_interaction(
@@ -800,13 +768,14 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &cosmic::Renderer,
+        viewport: &cosmic::iced_core::Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
         self.content
             .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, translation)
+            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
     }
 }
 
@@ -822,18 +791,18 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &cosmic::Renderer,
         limits: &cosmic::iced::Limits,
     ) -> layout::Node {
         let header_node = self
             .header
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits);
         let body_node = self
             .body
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[1], renderer, limits);
 
         let header_bounds = header_node.bounds();
@@ -976,18 +945,18 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+        operation: &mut dyn cosmic::iced_core::widget::Operation,
     ) {
         let mut children = layout.children();
         let header_layout = children.next();
         let body_layout = children.next();
 
         if let Some(header_layout) = header_layout {
-            self.header.as_widget().operate(
+            self.header.as_widget_mut().operate(
                 &mut tree.children[0],
                 header_layout,
                 renderer,
@@ -997,22 +966,22 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
 
         if let Some(body_layout) = body_layout {
             self.body
-                .as_widget()
+                .as_widget_mut()
                 .operate(&mut tree.children[1], body_layout, renderer, operation);
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: cosmic::iced_core::mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         viewport: &cosmic::iced_core::Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         let mut children = layout.children();
         let header_layout = children.next();
         let body_layout = children.next();
@@ -1051,9 +1020,9 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         let body_layout = children.next();
 
         if let Some(header_layout) = header_layout {
-            let status = self.header.as_widget_mut().on_event(
+            self.header.as_widget_mut().update(
                 &mut tree.children[0],
-                event.clone(),
+                event,
                 header_layout,
                 cursor,
                 renderer,
@@ -1061,14 +1030,13 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                 shell,
                 viewport,
             );
-
-            if status == cosmic::iced_core::event::Status::Captured {
-                return status;
+            if shell.is_event_captured() {
+                return;
             }
         }
 
         if let Some(body_layout) = body_layout {
-            return self.body.as_widget_mut().on_event(
+            self.body.as_widget_mut().update(
                 &mut tree.children[1],
                 event,
                 body_layout,
@@ -1079,8 +1047,6 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                 viewport,
             );
         }
-
-        cosmic::iced_core::event::Status::Ignored
     }
 
     fn mouse_interaction(
@@ -1139,8 +1105,9 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &cosmic::Renderer,
+        viewport: &cosmic::iced_core::Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
         use cosmic::iced_core::overlay;
@@ -1159,6 +1126,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                 &mut header_tree[0],
                 header_layout,
                 renderer,
+                viewport,
                 translation,
             ) {
                 overlays.push(overlay);
@@ -1170,6 +1138,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
                 &mut body_tree[0],
                 body_layout,
                 renderer,
+                viewport,
                 translation,
             ) {
                 overlays.push(overlay);
@@ -1177,7 +1146,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         }
 
         // Return combined overlays as a group
-        (!overlays.is_empty()).then(|| overlay::Group::with_children(overlays).overlay())
+        (!overlays.is_empty()).then(move || overlay::Group::with_children(overlays).overlay())
     }
 }
 

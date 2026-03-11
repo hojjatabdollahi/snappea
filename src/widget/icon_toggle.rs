@@ -6,6 +6,7 @@
 //! Supports smooth animation via cosmic-time.
 
 use cosmic::Element;
+use cosmic::iced::Animation;
 use cosmic::iced::Size;
 use cosmic::iced_core::{
     Background, Border, Color, Layout, Length, Rectangle, layout,
@@ -14,46 +15,14 @@ use cosmic::iced_core::{
     widget::Tree,
 };
 use cosmic::widget::icon;
-use cosmic_time::once_cell::sync::Lazy;
-use cosmic_time::{Duration, Ease, Exponential, Timeline, chain, lazy, toggler};
 use std::rc::Rc;
 
-/// Animation ID for the capture mode toggle
-pub static CAPTURE_MODE_TOGGLE_ID: Lazy<cosmic_time::id::Toggler> =
-    Lazy::new(cosmic_time::id::Toggler::unique);
-
-/// Animation duration for the toggle in milliseconds
-const TOGGLE_ANIM_DURATION_MS: u64 = 180;
-
-/// Get the current animation percent for the capture mode toggle from the timeline
-pub fn get_toggle_percent(timeline: &Timeline, is_video_mode: bool) -> f32 {
-    timeline
-        .get(&CAPTURE_MODE_TOGGLE_ID.clone().into(), 0)
-        .map_or(if is_video_mode { 1.0 } else { 0.0 }, |interped| {
-            interped.value
-        })
-}
-
-/// Create an animation chain for toggling to video mode (A -> B)
-pub fn toggle_to_video() -> cosmic_time::chain::Toggler {
-    chain!(
-        CAPTURE_MODE_TOGGLE_ID.clone(),
-        lazy::toggler(Duration::ZERO),
-        toggler(Duration::from_millis(TOGGLE_ANIM_DURATION_MS))
-            .percent(1.0)
-            .ease(Ease::Exponential(Exponential::In)),
-    )
-}
-
-/// Create an animation chain for toggling to screenshot mode (B -> A)
-pub fn toggle_to_screenshot() -> cosmic_time::chain::Toggler {
-    chain!(
-        CAPTURE_MODE_TOGGLE_ID.clone(),
-        lazy::toggler(Duration::ZERO),
-        toggler(Duration::from_millis(TOGGLE_ANIM_DURATION_MS))
-            .percent(0.0)
-            .ease(Ease::Exponential(Exponential::In)),
-    )
+/// Get the current toggle position.
+pub fn get_toggle_percent(
+    animation: &Animation<bool>,
+    now: std::time::Instant,
+) -> f32 {
+    animation.interpolate(0.0, 1.0, now)
 }
 
 // Layout constants
@@ -203,7 +172,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
     fn diff(&mut self, _tree: &mut Tree) {}
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut Tree,
         _renderer: &cosmic::Renderer,
         limits: &cosmic::iced::Limits,
@@ -282,6 +251,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
                     color: Color::TRANSPARENT,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(pill_color),
         );
@@ -314,6 +284,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
                     color: Color::TRANSPARENT,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(accent_color),
         );
@@ -342,6 +313,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
                         color: Color::TRANSPARENT,
                     },
                     shadow: cosmic::iced_core::Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(hover_color),
             );
@@ -444,20 +416,20 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         );
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         _tree: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: Cursor,
         _renderer: &cosmic::Renderer,
         _clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         _viewport: &Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         // Only handle events if we have a callback
         let Some(ref on_toggle) = self.on_toggle else {
-            return cosmic::iced_core::event::Status::Ignored;
+            return;
         };
 
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) =
@@ -470,15 +442,15 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
 
                 if icon_a_bounds.contains(pos) && self.is_b_selected {
                     shell.publish(on_toggle(false));
-                    return cosmic::iced_core::event::Status::Captured;
+                    shell.capture_event();
+                    return;
                 } else if icon_b_bounds.contains(pos) && !self.is_b_selected {
                     shell.publish(on_toggle(true));
-                    return cosmic::iced_core::event::Status::Captured;
+                    shell.capture_event();
+                    return;
                 }
             }
         }
-
-        cosmic::iced_core::event::Status::Ignored
     }
 
     fn mouse_interaction(
@@ -506,11 +478,11 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
     }
 
     fn operate(
-        &self,
+        &mut self,
         _tree: &mut Tree,
         _layout: Layout<'_>,
         _renderer: &cosmic::Renderer,
-        _operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+        _operation: &mut dyn cosmic::iced_core::widget::Operation,
     ) {
     }
 
@@ -519,6 +491,7 @@ impl<'a, Msg: Clone + 'a> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic::Ren
         _tree: &'b mut Tree,
         _layout: Layout<'_>,
         _renderer: &cosmic::Renderer,
+        _viewport: &Rectangle,
         _translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
         None

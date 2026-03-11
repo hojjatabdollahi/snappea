@@ -51,13 +51,13 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn layout(
-        &self,
+        &mut self,
         tree: &mut Tree,
         renderer: &cosmic::Renderer,
         limits: &cosmic::iced::Limits,
     ) -> layout::Node {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .layout(&mut tree.children[0], renderer, limits)
     }
 
@@ -82,31 +82,32 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         );
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         tree: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: cosmic::iced_core::mouse::Cursor,
         renderer: &cosmic::Renderer,
         clipboard: &mut dyn cosmic::iced_core::Clipboard,
         shell: &mut cosmic::iced_core::Shell<'_, Msg>,
         viewport: &Rectangle,
-    ) -> cosmic::iced_core::event::Status {
+    ) {
         // Check for right-click
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)) =
-            &event
+            event
             && let Some(pos) = cursor.position()
             && layout.bounds().contains(pos)
             && let Some(ref msg) = self.on_right_click
         {
             shell.publish(msg.clone());
-            return cosmic::iced_core::event::Status::Captured;
+            shell.capture_event();
+            return;
         }
 
         // Track press start for long-press detection
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) =
-            &event
+            event
             && let Some(pos) = cursor.position()
             && layout.bounds().contains(pos)
         {
@@ -115,7 +116,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
 
         // Check for long-press on release (500ms threshold)
         if let cosmic::iced_core::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Left)) =
-            &event
+            event
             && let Some(start) = self.press_start.take()
             && start.elapsed() >= std::time::Duration::from_millis(500)
             && let Some(pos) = cursor.position()
@@ -123,11 +124,12 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             && let Some(ref msg) = self.on_right_click
         {
             shell.publish(msg.clone());
-            return cosmic::iced_core::event::Status::Captured;
+            shell.capture_event();
+            return;
         }
 
         // Pass event to content
-        self.content.as_widget_mut().on_event(
+        self.content.as_widget_mut().update(
             &mut tree.children[0],
             event,
             layout,
@@ -136,7 +138,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             clipboard,
             shell,
             viewport,
-        )
+        );
     }
 
     fn mouse_interaction(
@@ -157,27 +159,28 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
     }
 
     fn operate(
-        &self,
+        &mut self,
         tree: &mut Tree,
         layout: Layout<'_>,
         renderer: &cosmic::Renderer,
-        operation: &mut dyn cosmic::iced_core::widget::Operation<()>,
+        operation: &mut dyn cosmic::iced_core::widget::Operation,
     ) {
         self.content
-            .as_widget()
+            .as_widget_mut()
             .operate(&mut tree.children[0], layout, renderer, operation);
     }
 
     fn overlay<'b>(
         &'b mut self,
         tree: &'b mut Tree,
-        layout: Layout<'_>,
+        layout: Layout<'b>,
         renderer: &cosmic::Renderer,
+        viewport: &Rectangle,
         translation: cosmic::iced::Vector,
     ) -> Option<cosmic::iced_core::overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
         self.content
             .as_widget_mut()
-            .overlay(&mut tree.children[0], layout, renderer, translation)
+            .overlay(&mut tree.children[0], layout, renderer, viewport, translation)
     }
 }
 
@@ -327,7 +330,7 @@ pub fn build_tool_button<'a, Msg: Clone + 'static>(
     let make_dot = move |index: usize| {
         let is_active_dot = index == current_option_index;
         let opacity = content_opacity;
-        container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+        container(cosmic::iced::widget::space().width(Length::Fixed(0.0)))
             .width(Length::Fixed(dot_size))
             .height(Length::Fixed(dot_size))
             .class(cosmic::theme::Container::Custom(Box::new(move |theme| {
@@ -513,7 +516,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
 
         tooltip(
             button::custom(
-                container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+                container(cosmic::iced::widget::space().width(Length::Fixed(0.0)))
                     .width(Length::Fixed(24.0))
                     .height(Length::Fixed(24.0))
                     .class(cosmic::theme::Container::Custom(Box::new(move |_theme| {
@@ -580,7 +583,7 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
     // Shadow toggle
     let shadow_row = row![
         text::body(fl!("shadow")),
-        cosmic::widget::horizontal_space(),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         toggler(shadow_enabled)
             .on_toggle(move |_| on_shadow_toggle.clone())
             .size(20.0),
@@ -807,7 +810,7 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
 
         tooltip(
             button::custom(
-                container(cosmic::widget::horizontal_space().width(Length::Fixed(0.0)))
+                container(cosmic::iced::widget::space().width(Length::Fixed(0.0)))
                     .width(Length::Fixed(24.0))
                     .height(Length::Fixed(24.0))
                     .class(cosmic::theme::Container::Custom(Box::new(move |_theme| {

@@ -183,7 +183,7 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
     fn diff(&mut self, _tree: &mut Tree) {}
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut Tree,
         _renderer: &cosmic::Renderer,
         limits: &layout::Limits,
@@ -222,6 +222,7 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     },
                     border: Border::default(),
                     shadow: cosmic::iced_core::Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(Color::BLACK),
             );
@@ -286,19 +287,19 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         _tree: &mut Tree,
-        event: cosmic::iced_core::Event,
+        event: &cosmic::iced_core::Event,
         layout: Layout<'_>,
         cursor: mouse::Cursor,
         _renderer: &cosmic::Renderer,
         _clipboard: &mut dyn Clipboard,
         shell: &mut Shell<'_, Msg>,
         _viewport: &Rectangle,
-    ) -> event::Status {
+    ) {
         let Some(on_event) = &self.on_event else {
-            return event::Status::Ignored;
+            return;
         };
 
         let bounds = layout.bounds();
@@ -328,7 +329,7 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 if let Some(pos) = cursor.position_in(bounds) {
                     // Only start drawing if inside selection
                     if !is_inside_selection(pos.x, pos.y) {
-                        return event::Status::Ignored;
+                        return;
                     }
 
                     let (clamped_x, clamped_y) = clamp_to_selection(pos.x, pos.y);
@@ -356,7 +357,8 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
                     if let Some(msg) = msg {
                         shell.publish(msg);
-                        return event::Status::Captured;
+                        shell.capture_event();
+                        return;
                     }
                 }
             }
@@ -390,14 +392,13 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
                     if let Some(msg) = msg {
                         shell.publish(msg);
-                        return event::Status::Captured;
+                        shell.capture_event();
+                        return;
                     }
                 }
             }
             _ => {}
         }
-
-        event::Status::Ignored
     }
 
     fn mouse_interaction(
@@ -420,6 +421,7 @@ impl<'a, Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         _tree: &'b mut Tree,
         _layout: Layout<'_>,
         _renderer: &cosmic::Renderer,
+        _viewport: &Rectangle,
         _translation: cosmic::iced::Vector,
     ) -> Option<overlay::Element<'b, Msg, cosmic::Theme, cosmic::Renderer>> {
         None
@@ -653,6 +655,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                     },
                     border: Border::default(),
                     shadow: cosmic::iced_core::Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(color),
             );
@@ -771,6 +774,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                 },
                 border: Border::default(),
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(color),
         );
@@ -786,6 +790,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                 },
                 border: Border::default(),
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(color),
         );
@@ -801,6 +806,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                 },
                 border: Border::default(),
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(color),
         );
@@ -816,6 +822,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                 },
                 border: Border::default(),
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(color),
         );
@@ -854,6 +861,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                     radius: cosmic::iced_core::border::Radius::from(0.0),
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.7)),
         );
@@ -926,6 +934,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                     radius: cosmic::iced_core::border::Radius::from(0.0),
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::TRANSPARENT),
         );
@@ -982,6 +991,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                                 },
                                 border: Border::default(),
                                 shadow: cosmic::iced_core::Shadow::default(),
+                                snap: false,
                             },
                             Background::Color(color),
                         );
@@ -1021,6 +1031,7 @@ impl<'a, Msg: Clone + 'static> AnnotationCanvas<'a, Msg> {
                                 },
                                 border: Border::default(),
                                 shadow: cosmic::iced_core::Shadow::default(),
+                                snap: false,
                             },
                             Background::Color(color),
                         );

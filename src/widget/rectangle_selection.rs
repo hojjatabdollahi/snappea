@@ -358,7 +358,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
     }
 
     fn layout(
-        &self,
+        &mut self,
         _tree: &mut cosmic::iced_core::widget::Tree,
         _renderer: &cosmic::Renderer,
         limits: &cosmic::iced_core::layout::Limits,
@@ -413,24 +413,24 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
         }
     }
 
-    fn on_event(
+    fn update(
         &mut self,
         _state: &mut iced_core::widget::Tree,
-        event: iced_core::Event,
+        event: &iced_core::Event,
         layout: iced_core::Layout<'_>,
         cursor: iced_core::mouse::Cursor,
         _renderer: &cosmic::Renderer,
-        clipboard: &mut dyn iced_core::Clipboard,
+        _clipboard: &mut dyn iced_core::Clipboard,
         shell: &mut iced_core::Shell<'_, Msg>,
         _viewport: &Rectangle,
-    ) -> iced_core::event::Status {
+    ) {
         if self.is_recording {
-            return cosmic::iced_core::event::Status::Ignored;
+            return;
         }
         match event {
             cosmic::iced_core::Event::Mouse(e) => {
                 if !cursor.is_over(layout.bounds()) {
-                    return cosmic::iced_core::event::Status::Ignored;
+                    return;
                 }
 
                 // Skip rectangle drawing when arrow, redact, pixelate, shape mode is active, or popup is open
@@ -441,7 +441,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     || self.rect_outline_mode
                     || self.popup_open
                 {
-                    return cosmic::iced_core::event::Status::Ignored;
+                    return;
                 }
 
                 match e {
@@ -483,7 +483,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                             shell.publish((self.on_move_offset)(None));
                             shell.publish((self.on_rectangle)(s, self.rectangle_selection));
                         }
-                        cosmic::iced_core::event::Status::Captured
+                        shell.capture_event();
                     }
                     iced_core::mouse::Event::CursorMoved { .. } => {
                         // Handle all drag operations without DnD for proper cursor control
@@ -493,9 +493,9 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                                 let y = pos.y.round() as i32;
                                 self.handle_drag_pos(x, y, shell);
                             }
-                            return cosmic::iced_core::event::Status::Captured;
+                            shell.capture_event();
+                            return;
                         }
-                        cosmic::iced_core::event::Status::Ignored
                     }
                     iced_core::mouse::Event::ButtonReleased(iced_core::mouse::Button::Left) => {
                         // End any drag operation
@@ -513,14 +513,14 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                                 shell
                                     .publish((self.on_rectangle)(DragState::None, Rect::default()));
                             }
-                            return cosmic::iced_core::event::Status::Captured;
+                            shell.capture_event();
+                            return;
                         }
-                        cosmic::iced_core::event::Status::Ignored
                     }
-                    _ => cosmic::iced_core::event::Status::Ignored,
+                    _ => {}
                 }
             }
-            _ => cosmic::iced_core::event::Status::Ignored,
+            _ => {}
         }
     }
 
@@ -579,6 +579,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 color: accent,
             },
             shadow: Shadow::default(),
+            snap: false,
         };
         renderer.fill_quad(quad, Color::TRANSPARENT);
 
@@ -612,6 +613,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     color: Color::TRANSPARENT,
                 },
                 shadow: Shadow::default(),
+                snap: false,
             };
             renderer.fill_quad(quad, accent);
         }

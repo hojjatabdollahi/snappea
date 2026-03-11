@@ -1,9 +1,9 @@
 [package]
 name = "snappea"
-version = "0.3.1"
+version = "0.4.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
-description = "Screenshot portal implementation for COSMIC desktop"
+description = "Screenshot and screen recording for COSMIC desktop"
 
 [features]
 default = ["wgpu"]
@@ -12,7 +12,6 @@ wgpu = ["cosmic/wgpu"]
 [dependencies]
 anyhow = "1.0.100"
 chrono = "0.4"
-cosmic-bg-config = { git = "https://github.com/pop-os/cosmic-bg" }
 cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
 cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
 cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
@@ -44,10 +43,10 @@ ksni = { version = "0.3.3", features = ["blocking"] }
 crossbeam-channel = "0.5"
 
 # Screen recording
-gstreamer = "0.24"
-gstreamer-app = "0.24"
-gstreamer-video = "0.24"
-gstreamer-allocators = "0.24"
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = "0.25"
+gstreamer-allocators = "0.25"
 gbm = "0.18"
 drm-fourcc = "2"
 
@@ -65,11 +64,13 @@ git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
 
-[dependencies.cosmic-time]
-git = "https://github.com/pop-os/cosmic-time"
-features = ["once_cell"]
-
 [profile.release]
 opt-level = 3
 lto = "thin"
 panic = "abort"
+
+# [patch."https://github.com/pop-os/libcosmic"]
+# libcosmic = { path = "../libcosmic" }
+# cosmic-config = { path = "../libcosmic/cosmic-config" }
+# cosmic-config-derive = { path = "../libcosmic/cosmic-config-derive" }
+# cosmic-theme = { path = "../libcosmic/cosmic-theme" }

@@ -79,10 +79,10 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
     fn update(
         &self,
         state: &mut Self::State,
-        event: canvas::Event,
+        event: &cosmic::iced::Event,
         bounds: cosmic::iced_core::Rectangle,
         cursor: cosmic::iced_core::mouse::Cursor,
-    ) -> (canvas::event::Status, Option<Message>) {
+    ) -> Option<canvas::Action<Message>> {
         use cosmic::iced_core::keyboard;
         use cosmic::iced_core::mouse::{Button, Event as MouseEvent};
 
@@ -119,11 +119,11 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 state.latch_ctrl_if_needed(
                     self.circle_drawing.is_some() || self.rect_outline_drawing.is_some(),
                 );
-                return (canvas::event::Status::Captured, None);
+                return Some(canvas::Action::capture());
             }
             canvas::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) => {
                 let Some(pos) = cursor.position_in(bounds) else {
-                    return (canvas::event::Status::Ignored, None);
+                    return None;
                 };
                 // Check if inside inner bounds (with margin)
                 let inside = inner_w > 0.0
@@ -133,7 +133,7 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     && pos.y >= inner_y
                     && pos.y <= inner_y + inner_h;
                 if !inside {
-                    return (canvas::event::Status::Ignored, None);
+                    return None;
                 }
 
                 // Clamp and convert to global coordinates
@@ -144,19 +144,19 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                 if self.circle_mode {
                     state.ctrl_latched = state.ctrl_down;
                     if let Some(ref cb) = self.on_circle_start {
-                        return (canvas::event::Status::Captured, Some(cb(gx, gy)));
+                        return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
                     }
                 }
                 if self.rect_outline_mode {
                     state.ctrl_latched = state.ctrl_down;
                     if let Some(ref cb) = self.on_rect_start {
-                        return (canvas::event::Status::Captured, Some(cb(gx, gy)));
+                        return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
                     }
                 }
             }
             canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
                 let Some(pos) = cursor.position_in(bounds) else {
-                    return (canvas::event::Status::Ignored, None);
+                    return None;
                 };
                 // Clamp and convert to global coordinates
                 let (cx, cy) = clamp_pos(pos.x, pos.y);
@@ -172,7 +172,7 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     };
                     state.ctrl_latched = false;
                     if let Some(ref cb) = self.on_circle_end {
-                        return (canvas::event::Status::Captured, Some(cb(ex, ey)));
+                        return Some(canvas::Action::publish(cb(ex, ey)).and_capture());
                     }
                 }
 
@@ -185,14 +185,14 @@ impl<'a, Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmi
                     };
                     state.ctrl_latched = false;
                     if let Some(ref cb) = self.on_rect_end {
-                        return (canvas::event::Status::Captured, Some(cb(ex, ey)));
+                        return Some(canvas::Action::publish(cb(ex, ey)).and_capture());
                     }
                 }
             }
             _ => {}
         }
 
-        (canvas::event::Status::Ignored, None)
+        None
     }
 
     fn draw(

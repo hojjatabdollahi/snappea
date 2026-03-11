@@ -57,6 +57,7 @@ pub fn draw_status_badge(
                     color: border_color,
                 },
                 shadow: cosmic::iced_core::Shadow::default(),
+                snap: false,
             },
             Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
         );
@@ -67,10 +68,11 @@ pub fn draw_status_badge(
             size: cosmic::iced::Pixels(font_size),
             line_height: cosmic::iced_core::text::LineHeight::default(),
             font: cosmic::iced::Font::default(),
-            horizontal_alignment: alignment::Horizontal::Center,
-            vertical_alignment: alignment::Vertical::Center,
+            align_x: alignment::Horizontal::Center.into(),
+            align_y: alignment::Vertical::Center,
             shaping: cosmic::iced_core::text::Shaping::Advanced,
             wrapping: cosmic::iced_core::text::Wrapping::None,
+            ellipsize: cosmic::iced_core::text::Ellipsize::default(),
         };
 
         renderer.fill_text(
@@ -216,6 +218,7 @@ pub fn draw_qr_code_overlays(
                         color: accent_color,
                     },
                     shadow: cosmic::iced_core::Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(Color::from_rgba(0.0, 0.0, 0.0, 0.80)),
             );
@@ -227,10 +230,11 @@ pub fn draw_qr_code_overlays(
                 size: cosmic::iced::Pixels(font_size),
                 line_height: cosmic::iced_core::text::LineHeight::Relative(1.3),
                 font: cosmic::iced::Font::default(),
-                horizontal_alignment: alignment::Horizontal::Left,
-                vertical_alignment: alignment::Vertical::Top,
+                align_x: alignment::Horizontal::Left.into(),
+                align_y: alignment::Vertical::Top,
                 shaping: cosmic::iced_core::text::Shaping::Advanced,
                 wrapping: cosmic::iced_core::text::Wrapping::Word,
+                ellipsize: cosmic::iced_core::text::Ellipsize::default(),
             };
 
             renderer.fill_text(
@@ -261,6 +265,7 @@ pub fn draw_qr_code_overlays(
                             color: accent_color,
                         },
                         shadow: cosmic::iced_core::Shadow::default(),
+                        snap: false,
                     },
                     Background::Color(accent_color),
                 );
@@ -271,10 +276,11 @@ pub fn draw_qr_code_overlays(
                     size: cosmic::iced::Pixels(16.0),
                     line_height: cosmic::iced_core::text::LineHeight::default(),
                     font: cosmic::iced::Font::default(),
-                    horizontal_alignment: alignment::Horizontal::Center,
-                    vertical_alignment: alignment::Vertical::Center,
+                    align_x: alignment::Horizontal::Center.into(),
+                    align_y: alignment::Vertical::Center,
                     shaping: cosmic::iced_core::text::Shaping::Advanced,
                     wrapping: cosmic::iced_core::text::Wrapping::None,
+                    ellipsize: cosmic::iced_core::text::Ellipsize::default(),
                 };
 
                 renderer.fill_text(
@@ -329,6 +335,7 @@ pub fn draw_ocr_overlays(
                         color: border_color,
                     },
                     shadow: cosmic::iced_core::Shadow::default(),
+                    snap: false,
                 },
                 Background::Color(Color::TRANSPARENT),
             );
