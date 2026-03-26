@@ -67,7 +67,7 @@ pub fn handle_key_event(
         Key::Named(Named::Enter) if modifiers.control() => Some(Msg::save_to_pictures()),
         Key::Named(Named::Escape) => Some(Msg::cancel()),
         // Space/Enter to confirm selection in picker mode (screen)
-        Key::Named(Named::Space) if in_screen_picker => Some(Msg::confirm()),
+        Key::Character(c) if c.as_str() == " " && in_screen_picker => Some(Msg::confirm()),
         Key::Named(Named::Enter) if in_screen_picker => Some(Msg::confirm()),
         // Enter to copy when not in picker mode
         Key::Named(Named::Enter) => Some(Msg::copy_to_clipboard()),

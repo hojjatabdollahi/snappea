@@ -18,6 +18,12 @@ use crossbeam_channel::{Receiver as CbReceiver, Sender as CbSender};
 use futures::SinkExt;
 use std::any::TypeId;
 use std::time::Instant;
+use cosmic::cctk::sctk::shell::wlr_layer;
+use cosmic::iced_core::layout::Limits;
+use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
+    IcedMargin, IcedOutput, SctkLayerSurfaceSettings,
+};
+use cosmic::iced_winit::commands::layer_surface::get_layer_surface;
 use wayland_client::protocol::wl_output::WlOutput;
 
 /// Flags for app initialization
@@ -69,6 +75,8 @@ pub struct App {
     pub toolbar_visible: bool,
     /// Whether running in direct screenshot mode (no D-Bus portal)
     pub direct_screenshot: bool,
+    /// Dummy layer surface held so the app retains a Wayland surface for clipboard ownership
+    pub dummy_id: window::Id,
 }
 
 /// A single annotation stroke with fade state
@@ -200,6 +208,7 @@ impl cosmic::Application for App {
         let wayland_helper = crate::wayland::WaylandHelper::new(wayland_conn);
         // Create channel for tray communication
         let (tray_tx, tray_rx) = crossbeam_channel::unbounded::<TrayAction>();
+        let dummy_id = window::Id::unique();
 
         (
             Self {
@@ -217,8 +226,21 @@ impl cosmic::Application for App {
                 tray_tx: Some(tray_tx),
                 toolbar_visible: true,
                 direct_screenshot: flags.direct_screenshot,
+                dummy_id,
             },
-            cosmic::iced::Task::none(),
+            get_layer_surface(SctkLayerSurfaceSettings {
+                id: dummy_id,
+                layer: wlr_layer::Layer::Bottom,
+                keyboard_interactivity: wlr_layer::KeyboardInteractivity::None,
+                input_zone: Some(Vec::new()),
+                anchor: wlr_layer::Anchor::empty(),
+                output: IcedOutput::Active,
+                namespace: "snappea_dummy".into(),
+                size: Some((Some(6), Some(6))),
+                exclusive_zone: -1,
+                size_limits: Limits::NONE,
+                ..Default::default()
+            }),
         )
     }
 
@@ -229,6 +251,11 @@ impl cosmic::Application for App {
     fn view_window(&self, id: window::Id) -> cosmic::Element<'_, Self::Message> {
         if self.outputs.iter().any(|o| o.id == id) {
             screenshot::view(self, id).map(Msg::Screenshot)
+        } else if id == self.dummy_id {
+            cosmic::iced::widget::Space::new()
+                .width(cosmic::iced_core::Length::Fill)
+                .height(cosmic::iced_core::Length::Fill)
+                .into()
         } else if let Some(indicator) = &self.recording_indicator {
             if indicator.window_id == id {
                 // Render the blinking recording indicator
@@ -409,16 +436,8 @@ impl cosmic::Application for App {
                     let wl_output = indicator.output.clone();
                     let annotation_mode = indicator.annotation_mode;
 
-                    use cosmic::iced_core::layout::Limits;
-                    use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
-                        IcedOutput, SctkLayerSurfaceSettings,
-                    };
-                    use cosmic::iced_winit::commands::layer_surface::{
-                        destroy_layer_surface, get_layer_surface,
-                    };
-                    use cosmic_client_toolkit::sctk::shell::wlr_layer::{
-                        Anchor, KeyboardInteractivity, Layer,
-                    };
+                    use cosmic::iced_winit::commands::layer_surface::destroy_layer_surface;
+                    use wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 
                     let input_zone = if annotation_mode {
                         // Annotation mode: capture region for drawing + toolbar for controls
@@ -541,16 +560,8 @@ impl cosmic::Application for App {
                     let annotation_mode = indicator.annotation_mode;
                     let region = indicator.region;
 
-                    use cosmic::iced_core::layout::Limits;
-                    use cosmic::iced_runtime::platform_specific::wayland::layer_surface::{
-                        IcedOutput, SctkLayerSurfaceSettings,
-                    };
-                    use cosmic::iced_winit::commands::layer_surface::{
-                        destroy_layer_surface, get_layer_surface,
-                    };
-                    use cosmic_client_toolkit::sctk::shell::wlr_layer::{
-                        Anchor, KeyboardInteractivity, Layer,
-                    };
+                    use cosmic::iced_winit::commands::layer_surface::destroy_layer_surface;
+                    use wlr_layer::{Anchor, KeyboardInteractivity, Layer};
 
                     // Build input zones based on annotation mode
                     let input_zone = if annotation_mode {

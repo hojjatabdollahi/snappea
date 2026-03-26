@@ -280,6 +280,7 @@ where
         include_bytes!("../../data/icons/hicolor/scalable/actions/github.svg");
 
     let version = env!("CARGO_PKG_VERSION");
+    let git_hash = env!("GIT_HASH");
 
     let snappea_logo =
         cosmic::widget::icon(cosmic::widget::icon::from_svg_bytes(SNAPPEA_LOGO).symbolic(false))
@@ -291,7 +292,7 @@ where
         column![
             row![
                 text::title4(fl!("app-name")),
-                text::caption(format!("v{}", version)),
+                text::caption(format!("v{} ({})", version, git_hash)),
             ]
             .spacing(space_xs)
             .align_y(cosmic::iced_core::Alignment::Center),
