@@ -181,6 +181,8 @@ pub enum Msg {
     TrayAction(TrayAction),
     /// D-Bus control command received
     Control(ControlCommand),
+    /// A layer surface was closed by the compositor (e.g. output disconnected)
+    LayerClosed(window::Id),
 }
 
 impl cosmic::Application for App {
@@ -234,7 +236,7 @@ impl cosmic::Application for App {
                 keyboard_interactivity: wlr_layer::KeyboardInteractivity::OnDemand,
                 input_zone: Some(Vec::new()),
                 anchor: wlr_layer::Anchor::empty(),
-                output: IcedOutput::Active,
+                output: IcedOutput::All,
                 namespace: "snappea_dummy".into(),
                 size: Some((Some(6), Some(6))),
                 exclusive_zone: -1,
@@ -680,6 +682,24 @@ impl cosmic::Application for App {
                 }
                 cosmic::iced::Task::none()
             }
+            Msg::LayerClosed(id) if id == self.dummy_id => {
+                log::warn!("Dummy layer surface was closed by compositor (output removed?), re-creating it");
+                self.dummy_id = window::Id::unique();
+                get_layer_surface(SctkLayerSurfaceSettings {
+                    id: self.dummy_id,
+                    layer: wlr_layer::Layer::Bottom,
+                    keyboard_interactivity: wlr_layer::KeyboardInteractivity::OnDemand,
+                    input_zone: Some(Vec::new()),
+                    anchor: wlr_layer::Anchor::empty(),
+                    output: IcedOutput::All,
+                    namespace: "snappea_dummy".into(),
+                    size: Some((Some(6), Some(6))),
+                    exclusive_zone: -1,
+                    size_limits: Limits::NONE,
+                    ..Default::default()
+                })
+            }
+            Msg::LayerClosed(_) => cosmic::iced::Task::none(),
             Msg::Output(o_event, wl_output) => {
                 match o_event {
                     OutputEvent::Created(Some(info))
@@ -763,6 +783,15 @@ impl cosmic::Application for App {
                         cosmic::iced_core::event::wayland::Event::Output(o_event, wl_output),
                     ),
                 ) => Some(Msg::Output(o_event, wl_output)),
+                cosmic::iced_core::Event::PlatformSpecific(
+                    cosmic::iced_core::event::PlatformSpecific::Wayland(
+                        cosmic::iced_core::event::wayland::Event::Layer(
+                            cosmic::iced_core::event::wayland::LayerEvent::Done,
+                            _surface,
+                            id,
+                        ),
+                    ),
+                ) => Some(Msg::LayerClosed(id)),
                 cosmic::iced_core::Event::Keyboard(keyboard_event) => {
                     Some(Msg::Keyboard(keyboard_event))
                 }

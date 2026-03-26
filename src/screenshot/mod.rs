@@ -2261,8 +2261,8 @@ fn handle_open_url_inner(app: &mut App, url: String) -> cosmic::Task<crate::core
 
 pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::Msg> {
     if app.outputs.len() != args.capture.output_images.len() {
-        log::error!(
-            "Screenshot output count mismatch: {} != {}",
+        log::warn!(
+            "Screenshot output count mismatch: {} outputs vs {} images — proceeding anyway (monitor reconnect?)",
             app.outputs.len(),
             args.capture.output_images.len()
         );
@@ -2271,7 +2271,6 @@ pub fn update_args(app: &mut App, args: Args) -> cosmic::Task<crate::core::app::
             "Screenshot images: {:?}",
             args.capture.output_images.keys().collect::<Vec<_>>()
         );
-        return cosmic::Task::none();
     }
 
     app.location_options = vec![
