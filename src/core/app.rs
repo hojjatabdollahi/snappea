@@ -231,7 +231,7 @@ impl cosmic::Application for App {
             get_layer_surface(SctkLayerSurfaceSettings {
                 id: dummy_id,
                 layer: wlr_layer::Layer::Bottom,
-                keyboard_interactivity: wlr_layer::KeyboardInteractivity::None,
+                keyboard_interactivity: wlr_layer::KeyboardInteractivity::OnDemand,
                 input_zone: Some(Vec::new()),
                 anchor: wlr_layer::Anchor::empty(),
                 output: IcedOutput::Active,

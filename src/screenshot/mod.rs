@@ -1461,14 +1461,15 @@ fn handle_ocr_msg(app: &mut App, msg: OcrMsg) -> cosmic::Task<crate::core::app::
 // ============================================================================
 
 fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
-    let mut cmds: Vec<cosmic::Task<crate::core::app::Msg>> = app
+    let destroy_cmds: Vec<cosmic::Task<crate::core::app::Msg>> = app
         .outputs
         .iter()
         .map(|o| destroy_layer_surface(o.id))
         .collect();
+    let mut cmds: Vec<cosmic::Task<crate::core::app::Msg>> = Vec::new();
     let Some(args) = app.screenshot_args.take() else {
         log::error!("Failed to find screenshot Args for Capture message.");
-        return cosmic::Task::batch(cmds);
+        return cosmic::Task::batch(destroy_cmds);
     };
     let outputs = app.outputs.clone();
     let Args {
@@ -1759,6 +1760,13 @@ fn handle_capture_inner(app: &mut App) -> cosmic::Task<crate::core::app::Msg> {
             log::error!("Failed to send screenshot event");
         }
     });
+    // Clipboard writes must be sequenced BEFORE surface destroys.
+    // Wayland's wl_data_device.set_selection requires the client to hold keyboard
+    // focus at call time. The overlay surfaces have KeyboardInteractivity::Exclusive,
+    // so we must write to clipboard before destroying them (which releases focus).
+    // Since Task::batch sends all tasks concurrently, we put clipboard tasks first
+    // in the vec so they are dispatched before destroy messages on the same connection.
+    cmds.extend(destroy_cmds);
     cosmic::Task::batch(cmds)
 }
 
