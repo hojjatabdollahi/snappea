@@ -95,6 +95,8 @@ video = Video
 
 # Settings drawer - General
 magnifier = Magnifier
+set-as-default-portal = Set as Default
+set-as-default-portal-description = Use SnapPea as the default screenshot portal for your system
 toolbar-opacity = Toolbar opacity (idle): { $percent }%
 app-name = SnapPea
 app-author = by Hojjat Abdollahi

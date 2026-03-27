@@ -32,6 +32,22 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 
 ## Installation
 
+### From the Cloudsmith Debian Repository (recommended)
+
+SnapPea is published to a Cloudsmith apt repository for Ubuntu/Pop!_OS 24.04 (Noble):
+
+```sh
+# Add the Cloudsmith repository
+curl -1sLf 'https://dl.cloudsmith.io/public/cosmetics/snappea/setup.deb.sh' | sudo -E bash
+
+# Install SnapPea
+sudo apt install snappea
+```
+
+Packages are built automatically on every release and include the binary and desktop entry.
+
+### From Source
+
 Build and install with [just](https://github.com/casey/just):
 
 ```sh
@@ -51,27 +67,18 @@ This installs the binary to `/usr/bin/snappea` and adds a desktop entry to your 
 > [!NOTE]
 > Running `snappea` multiple times communicates with the existing instance. If you're recording and press the shortcut again, it will stop the recording.
 
-### Optional: System Integration
+### Optional: Set as Default Screenshot Tool
 
-To use SnapPea as the default screenshot tool (replacing the COSMIC screenshot tool):
+To use SnapPea as the default screenshot portal (replacing the COSMIC screenshot tool when `Print Screen` is pressed):
 
-```sh
-just install-portal
-```
+1. Open SnapPea
+2. Click the **Settings** gear icon
+3. Under the **General** tab, enable **Set as Default**
 
-This creates `~/.config/xdg-desktop-portal/cosmic-portals.conf` to configure xdg-desktop-portal.
-
-After installing, reload the portal:
-
-```bash
-systemctl --user restart xdg-desktop-portal
-```
-
-Now pressing `Print Screen` will open SnapPea instead of the default screenshot tool.
-
+This automatically registers SnapPea as the preferred screenshot portal for your user account and restarts `xdg-desktop-portal` to apply the change immediately. No root access or manual config editing required.
 
 > [!IMPORTANT]
-> SnapPea used to install its config to `~/.config/xdg-desktop-portal/portals.conf`. This breaks theming in Flatpaks. The new `just install-portal` will delete the old file if you haven't changed it. But if you had the older version of SnapPea, make sure `portals.conf` is deleted.
+> SnapPea used to install its config to `~/.config/xdg-desktop-portal/portals.conf`. This breaks theming in Flatpaks. If you had an older version of SnapPea, make sure `portals.conf` is deleted.
 
 ### Optional: OCR Support
 

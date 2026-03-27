@@ -19,11 +19,6 @@ desktop-dst := base-dir / 'share' / 'applications' / 'io.github.hojjatabdollahi.
 appicon-src := 'data' / 'logo.svg'
 appicon-dst := base-dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'io.github.hojjatabdollahi.snappea.svg'
 
-portal-src := 'data' / 'snappea.portal'
-portal-dst := base-dir / 'share' / 'xdg-desktop-portal' / 'portals' / 'snappea.portal'
-
-service-src := 'data' / 'io.github.hojjatabdollahi.snappea.service'
-service-dst := base-dir / 'share' / 'dbus-1' / 'services' / 'io.github.hojjatabdollahi.snappea.service'
 
 icons-src := 'data' / 'icons'
 icons-dst := base-dir / 'share' / 'icons'
@@ -55,8 +50,6 @@ install:
     install -Dm0755 {{bin-src}} {{bin-dst}}
     install -Dm0644 {{desktop-src}} {{desktop-dst}}
     install -Dm0644 {{appicon-src}} {{appicon-dst}}
-    install -Dm0644 {{portal-src}} {{portal-dst}}
-    install -Dm0644 {{service-src}} {{service-dst}}
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/ocr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/qr-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
     install -Dm0644 {{icons-src}}/hicolor/scalable/actions/arrow-symbolic.svg {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
@@ -86,8 +79,6 @@ uninstall:
     rm -f {{bin-dst}}
     rm -f {{desktop-dst}}
     rm -f {{appicon-dst}}
-    rm -f {{portal-dst}}
-    rm -f {{service-dst}}
     rm -f {{icons-dst}}/hicolor/scalable/actions/ocr-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/qr-symbolic.svg
     rm -f {{icons-dst}}/hicolor/scalable/actions/arrow-symbolic.svg
