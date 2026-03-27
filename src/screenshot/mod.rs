@@ -412,6 +412,7 @@ impl Screenshot {
                         toolbar_bounds: None,
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
                         move_offset: None,
+                        is_default_portal: is_snappea_default_portal(),
                     }
                 },
             }))
@@ -911,6 +912,9 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
             SettingsMsg::SetMoveOffset(offset) => {
                 args.ui.move_offset = offset;
                 cosmic::Task::none()
+            }
+            SettingsMsg::SetAsDefaultPortal => {
+                settings_handlers::handle_set_as_default_portal(args)
             }
         }
     })
@@ -2234,6 +2238,26 @@ fn handle_qr_copy_and_close_inner(app: &mut App) -> cosmic::Task<crate::core::ap
         });
     }
     cosmic::Task::batch(cmds)
+}
+
+/// Check whether snappea is currently the default screenshot portal for the current user.
+///
+/// Reads `~/.config/xdg-desktop-portal/cosmic-portals.conf` and looks for
+/// `org.freedesktop.impl.portal.Screenshot=snappea`.
+pub fn is_snappea_default_portal() -> bool {
+    let Some(config_dir) = dirs::config_dir() else {
+        return false;
+    };
+    let conf_path = config_dir
+        .join("xdg-desktop-portal")
+        .join("cosmic-portals.conf");
+    std::fs::read_to_string(&conf_path)
+        .map(|contents| {
+            contents
+                .lines()
+                .any(|l| l.trim() == "org.freedesktop.impl.portal.Screenshot=snappea")
+        })
+        .unwrap_or(false)
 }
 
 fn handle_open_url_inner(app: &mut App, url: String) -> cosmic::Task<crate::core::app::Msg> {

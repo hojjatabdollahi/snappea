@@ -1,6 +1,6 @@
 [package]
 name = "snappea"
-version = "0.5.1"
+version = "0.6.0"
 edition = "2024"
 license = "GPL-3.0-or-later"
 description = "Screenshot and screen recording for COSMIC desktop"
@@ -63,6 +63,81 @@ package = "libcosmic"
 git = "https://github.com/pop-os/libcosmic"
 default-features = false
 features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
+
+[package.metadata.deb]
+maintainer = "Hojjat Abdollahi"
+copyright = "2024, Hojjat Abdollahi"
+license-file = ["LICENSE", "4"]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+  [
+    "target/release/snappea",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "data/io.github.hojjatabdollahi.snappea.desktop",
+    "usr/share/applications/",
+    "644",
+  ],
+  [
+    "data/logo.svg",
+    "usr/share/icons/hicolor/scalable/apps/io.github.hojjatabdollahi.snappea.svg",
+    "644",
+  ],
+  [
+    "data/snappea.portal",
+    "usr/share/xdg-desktop-portal/portals/snappea.portal",
+    "644",
+  ],
+  [
+    "data/io.github.hojjatabdollahi.snappea.service",
+    "usr/share/dbus-1/services/io.github.hojjatabdollahi.snappea.service",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/ocr-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/qr-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/arrow-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/circle-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/square-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/redact-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/pixelate-symbolic.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/icons/hicolor/scalable/actions/drag.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+]
 
 [profile.release]
 opt-level = 3

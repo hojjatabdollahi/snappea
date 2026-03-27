@@ -408,6 +408,8 @@ where
                 on_event(ScreenshotEvent::show_cursor_toggle()),
                 ui.hide_toolbar_to_tray,
                 on_event(ScreenshotEvent::hide_to_tray_toggle()),
+                ui.is_default_portal,
+                on_event(ScreenshotEvent::set_as_default_portal()),
                 space_s,
                 space_xs,
             ))

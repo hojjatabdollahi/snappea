@@ -256,6 +256,8 @@ pub struct UiState {
     pub hide_toolbar_to_tray: bool,
     /// Move offset for dragging selection rectangle (cursor pos relative to rect top-left when move started)
     pub move_offset: Option<(i32, i32)>,
+    /// Whether snappea is currently set as the default screenshot portal for the current user
+    pub is_default_portal: bool,
 }
 
 impl UiState {

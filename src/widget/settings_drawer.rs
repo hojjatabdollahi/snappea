@@ -55,6 +55,8 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     on_show_cursor_toggle: Msg,
     hide_toolbar_to_tray: bool,
     on_hide_to_tray_toggle: Msg,
+    is_default_portal: bool,
+    on_set_as_default_portal: Msg,
     space_s: u16,
     space_xs: u16,
 ) -> Element<'a, Msg>
@@ -368,10 +370,29 @@ where
     .spacing(space_xs)
     .into();
 
+    let default_portal_row = column![
+        row![
+            text::body(fl!("set-as-default-portal")),
+            cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
+            toggler(is_default_portal)
+                .on_toggle(move |_| on_set_as_default_portal.clone())
+                .size(24.0),
+        ]
+        .spacing(space_s)
+        .align_y(cosmic::iced_core::Alignment::Center)
+        .width(Length::Fill),
+        text::caption(fl!("set-as-default-portal-description"))
+            .width(Length::Fill),
+    ]
+    .spacing(space_xs)
+    .width(Length::Fill);
+
     let general_tab_content: Element<'_, Msg> = column![
         magnifier_row,
         cosmic::widget::divider::horizontal::light(),
         toolbar_opacity_section,
+        cosmic::widget::divider::horizontal::light(),
+        default_portal_row,
         cosmic::widget::divider::horizontal::light(),
         about_section,
     ]

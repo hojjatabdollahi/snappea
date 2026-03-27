@@ -274,6 +274,8 @@ pub enum SettingsMsg {
     TimelineTick(window::Id, Instant),
     /// Set move offset for dragging selection rectangle
     SetMoveOffset(Option<(i32, i32)>),
+    /// Set snappea as the default screenshot portal for the current user
+    SetAsDefaultPortal,
 }
 
 // ============================================================================
@@ -594,5 +596,8 @@ impl Msg {
     }
     pub fn set_move_offset(offset: Option<(i32, i32)>) -> Self {
         Self::Settings(SettingsMsg::SetMoveOffset(offset))
+    }
+    pub fn set_as_default_portal() -> Self {
+        Self::Settings(SettingsMsg::SetAsDefaultPortal)
     }
 }
