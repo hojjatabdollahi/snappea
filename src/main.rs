@@ -30,11 +30,23 @@ fn main() -> cosmic::iced::Result {
         println!("Options:");
         println!("  --portal        Run as D-Bus portal service (for desktop integration)");
         println!("  --record        Start screen recording (requires additional arguments)");
+        println!("  --version, -V   Show version information");
         println!("  --help, -h      Show this help message");
         println!();
         println!("When run without arguments, opens the screenshot UI directly.");
         println!("If an instance is already running, sends command to it.");
         println!("Use --portal for D-Bus portal mode (system integration).");
+        return Ok(());
+    }
+
+    // Check for --version flag
+    if args.len() > 1 && (args[1] == "--version" || args[1] == "-V") {
+        println!(
+            "{} {} ({})",
+            env!("CARGO_PKG_NAME"),
+            env!("CARGO_PKG_VERSION"),
+            env!("GIT_HASH")
+        );
         return Ok(());
     }
 
