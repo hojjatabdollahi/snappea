@@ -284,11 +284,13 @@ pub fn drm_format_to_gst_video_format(format: DrmFourcc) -> Option<gst_video::Vi
 pub fn select_zero_copy_source_format(
     available_formats: &[(DrmFourcc, Vec<DrmModifier>)],
 ) -> Option<(DrmFourcc, DrmModifier)> {
+    // Prefer opaque RGB formats for VAAPI post-processing. Alpha-carrying
+    // formats can trigger driver-specific blending paths we do not need.
     let preferred_formats = [
-        DrmFourcc::Abgr8888,
-        DrmFourcc::Argb8888,
-        DrmFourcc::Xbgr8888,
         DrmFourcc::Xrgb8888,
+        DrmFourcc::Xbgr8888,
+        DrmFourcc::Argb8888,
+        DrmFourcc::Abgr8888,
     ];
 
     for preferred in preferred_formats {

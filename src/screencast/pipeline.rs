@@ -28,6 +28,32 @@ pub struct CropRegion {
     pub height: u32,
 }
 
+fn align_crop_axis(offset: u32, length: u32, capture_length: u32) -> (u32, u32) {
+    if capture_length == 0 {
+        return (0, 0);
+    }
+
+    let mut start = offset.min(capture_length.saturating_sub(1));
+    let mut end = start.saturating_add(length.max(1)).min(capture_length);
+    if end <= start {
+        end = (start + 1).min(capture_length);
+    }
+
+    // Prefer even encoded dimensions. If an odd-sized crop hits the far edge,
+    // shift it inward instead of advertising a size the crop cannot produce.
+    if capture_length > 1 && ((end - start) & 1) == 1 {
+        if end < capture_length {
+            end += 1;
+        } else if start > 0 {
+            start -= 1;
+        } else if end - start > 1 {
+            end -= 1;
+        }
+    }
+
+    (start, end - start)
+}
+
 /// Calculate clamped and aligned crop parameters for video encoding
 /// Returns (left, top, width, height, right, bottom) where right/bottom are the amounts to crop from those edges
 fn calculate_aligned_crop(
@@ -35,53 +61,158 @@ fn calculate_aligned_crop(
     capture_width: u32,
     capture_height: u32,
 ) -> (u32, u32, u32, u32, u32, u32) {
-    // Clamp region to capture bounds to prevent overflow
-    let clamped_left = region.left.min(capture_width.saturating_sub(1));
-    let clamped_top = region.top.min(capture_height.saturating_sub(1));
-    let max_width = capture_width.saturating_sub(clamped_left);
-    let max_height = capture_height.saturating_sub(clamped_top);
-    let clamped_width = region.width.min(max_width).max(1);
-    let clamped_height = region.height.min(max_height).max(1);
+    let requested_left = region.left.min(capture_width.saturating_sub(1));
+    let requested_top = region.top.min(capture_height.saturating_sub(1));
+    let requested_width = region
+        .width
+        .min(capture_width.saturating_sub(requested_left))
+        .max(1);
+    let requested_height = region
+        .height
+        .min(capture_height.saturating_sub(requested_top))
+        .max(1);
 
-    // Round dimensions down to even numbers (required by most video encoders)
-    // This prevents green lines on the right/bottom edge caused by YUV padding
-    // We crop 1 extra pixel from the right/bottom if dimensions are odd
-    let aligned_width = (clamped_width & !1).max(2);
-    let aligned_height = (clamped_height & !1).max(2);
+    let (aligned_left, aligned_width) = align_crop_axis(region.left, region.width, capture_width);
+    let (aligned_top, aligned_height) = align_crop_axis(region.top, region.height, capture_height);
 
     // Calculate right/bottom crop amounts
     // right = total_width - left - desired_output_width
     let right = capture_width
-        .saturating_sub(clamped_left)
+        .saturating_sub(aligned_left)
         .saturating_sub(aligned_width);
     let bottom = capture_height
-        .saturating_sub(clamped_top)
+        .saturating_sub(aligned_top)
         .saturating_sub(aligned_height);
 
     log::debug!(
-        "Crop alignment: input {}x{}, region ({},{} {}x{}) -> aligned {}x{}, crop l={} t={} r={} b={}",
+        "Crop alignment: input {}x{}, region ({},{} {}x{}) -> requested ({},{} {}x{}) -> aligned ({},{} {}x{}), crop l={} t={} r={} b={}",
         capture_width,
         capture_height,
-        clamped_left,
-        clamped_top,
-        clamped_width,
-        clamped_height,
+        region.left,
+        region.top,
+        region.width,
+        region.height,
+        requested_left,
+        requested_top,
+        requested_width,
+        requested_height,
+        aligned_left,
+        aligned_top,
         aligned_width,
         aligned_height,
-        clamped_left,
-        clamped_top,
+        aligned_left,
+        aligned_top,
         right,
         bottom
     );
 
     (
-        clamped_left,
-        clamped_top,
+        aligned_left,
+        aligned_top,
         aligned_width,
         aligned_height,
         right,
         bottom,
     )
+}
+
+pub(crate) fn aligned_crop_output_size(
+    region: &CropRegion,
+    capture_width: u32,
+    capture_height: u32,
+) -> (u32, u32) {
+    let (_, _, width, height, _, _) = calculate_aligned_crop(region, capture_width, capture_height);
+    (width, height)
+}
+
+pub(crate) fn pipeline_output_size(
+    crop: Option<CropRegion>,
+    capture_width: u32,
+    capture_height: u32,
+) -> (u32, u32) {
+    crop.as_ref()
+        .map(|region| aligned_crop_output_size(region, capture_width, capture_height))
+        .unwrap_or((capture_width, capture_height))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crop_alignment_expands_odd_width_inside_bounds() {
+        let region = CropRegion {
+            left: 10,
+            top: 5,
+            width: 1,
+            height: 20,
+        };
+
+        assert_eq!(
+            calculate_aligned_crop(&region, 100, 100),
+            (10, 5, 2, 20, 88, 75)
+        );
+    }
+
+    #[test]
+    fn crop_alignment_shifts_one_pixel_selection_at_right_edge() {
+        let region = CropRegion {
+            left: 99,
+            top: 5,
+            width: 1,
+            height: 20,
+        };
+
+        assert_eq!(
+            calculate_aligned_crop(&region, 100, 100),
+            (98, 5, 2, 20, 0, 75)
+        );
+    }
+
+    #[test]
+    fn crop_alignment_shifts_one_pixel_selection_at_bottom_edge() {
+        let region = CropRegion {
+            left: 10,
+            top: 99,
+            width: 20,
+            height: 1,
+        };
+
+        assert_eq!(
+            calculate_aligned_crop(&region, 100, 100),
+            (10, 98, 20, 2, 70, 0)
+        );
+    }
+
+    #[test]
+    fn crop_alignment_handles_region_overflow_at_edge() {
+        let region = CropRegion {
+            left: 99,
+            top: 99,
+            width: 20,
+            height: 20,
+        };
+
+        assert_eq!(
+            calculate_aligned_crop(&region, 100, 100),
+            (98, 98, 2, 2, 0, 0)
+        );
+    }
+
+    #[test]
+    fn crop_alignment_preserves_even_region_inside_bounds() {
+        let region = CropRegion {
+            left: 10,
+            top: 12,
+            width: 40,
+            height: 30,
+        };
+
+        assert_eq!(
+            calculate_aligned_crop(&region, 100, 100),
+            (10, 12, 40, 30, 50, 58)
+        );
+    }
 }
 
 /// GStreamer pipeline for encoding screen capture to video file
@@ -324,9 +455,7 @@ impl Pipeline {
             anyhow::anyhow!("Unsupported DRM format for GStreamer: {:?}", drm_format)
         })?;
 
-        let output_size = crop
-            .map(|c| (c.width, c.height))
-            .unwrap_or((capture_width, capture_height));
+        let output_size = pipeline_output_size(crop, capture_width, capture_height);
         log::info!(
             "Creating DMA-buf pipeline: capture {}x{}, output {}x{} @ {} fps, format={:?} ({})",
             capture_width,
