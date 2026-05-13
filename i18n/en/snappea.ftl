@@ -142,3 +142,32 @@ tesseract-ocr-error = Tesseract OCR failed: { $error }
 # Command line usage
 cli-usage = Usage: snappea --record --output FILE --output-name NAME --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS] [--toplevel-index IDX]
 cli-missing-args = Missing required arguments for --record
+
+# Media editor
+edit-title = SnapPea Edit
+edit-about = About
+edit-system-tools = System Tools
+edit-ffmpeg-version = ffmpeg: { $version }
+edit-ffmpeg-not-installed = ffmpeg: not installed (needed for video trimming and GIF conversion)
+edit-gifski-version = gifski: { $version }
+edit-gifski-not-installed = gifski: not installed (cargo install gifski for higher quality GIFs)
+edit-loading = Loading
+edit-loading-video = Loading video...
+edit-encoding-gif = Encoding GIF...
+edit-loaded = Loaded
+edit-no-media = No media
+edit-save = Save
+edit-save-as = Save As...
+edit-discard = Discard
+edit-format = Format
+edit-format-gif = GIF
+edit-format-video = Video
+edit-scale = Scale
+edit-optimize-ffmpeg = Optimize (ffmpeg)
+edit-saved-size = Saved ({ $size } KB)
+edit-saved-path-size = Saved { $path } ({ $size } KB)
+edit-save-failed = Save failed: { $error }
+edit-copied-to-clipboard = Copied to clipboard
+edit-copied-file-path = Copied file path to clipboard
+edit-copy-failed = Copy failed: { $error }
+edit-copied = Copied

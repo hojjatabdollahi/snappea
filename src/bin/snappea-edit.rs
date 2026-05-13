@@ -23,6 +23,7 @@ use cosmic::{
 use iced_video_player::{Video, VideoPlayer};
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::{AnimationDecoder, Frame, RgbaImage};
+use snappea::fl;
 use std::borrow::Cow;
 use std::fs::File;
 use std::io::BufReader;
@@ -104,6 +105,7 @@ impl AsMimeTypes for ClipboardData {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
+    snappea::localize::localize();
 
     let args: Vec<String> = std::env::args().collect();
     let can_discard = args.iter().any(|a| a == "--discard");
@@ -598,7 +600,7 @@ impl Application for MediaEditor {
                                 MediaState::Loading,
                                 0.0,
                                 false,
-                                "Loading video...".to_string(),
+                                fl!("edit-loading-video"),
                                 Task::perform(
                                     async { tokio::time::sleep(Duration::from_millis(500)).await },
                                     |_| cosmic::Action::App(Message::PollFile),
@@ -611,7 +613,7 @@ impl Application for MediaEditor {
                         MediaState::Loading,
                         0.0,
                         false,
-                        "Loading video...".to_string(),
+                        fl!("edit-loading-video"),
                         Task::perform(
                             async { tokio::time::sleep(Duration::from_millis(500)).await },
                             |_| cosmic::Action::App(Message::PollFile),
@@ -650,7 +652,7 @@ impl Application for MediaEditor {
                                 MediaState::Loading,
                                 0.0,
                                 false,
-                                "Encoding GIF...".to_string(),
+                                fl!("edit-encoding-gif"),
                                 Task::perform(
                                     async { tokio::time::sleep(Duration::from_millis(200)).await },
                                     |_| cosmic::Action::App(Message::PollFile),
@@ -663,7 +665,7 @@ impl Application for MediaEditor {
                         MediaState::Loading,
                         0.0,
                         false,
-                        "Encoding GIF...".to_string(),
+                        fl!("edit-encoding-gif"),
                         Task::perform(
                             async { tokio::time::sleep(Duration::from_millis(200)).await },
                             |_| cosmic::Action::App(Message::PollFile),
@@ -876,7 +878,7 @@ impl Application for MediaEditor {
                 self.file_size_bytes = std::fs::metadata(&self.media_path)
                     .map(|m| m.len())
                     .unwrap_or(0);
-                self.status = format!("Loaded");
+                self.status = fl!("edit-loaded");
             }
             Message::VideoReady => {
                 let uri = url::Url::from_file_path(&self.media_path).unwrap();
@@ -932,8 +934,15 @@ impl Application for MediaEditor {
             Message::Save => {
                 let path = self.media_path.clone();
                 match self.export_to(&path) {
-                    Ok(size) => self.status = format!("Saved ({:.1} KB)", size as f64 / 1024.0),
-                    Err(e) => self.status = format!("Save failed: {}", e),
+                    Ok(size) => {
+                        self.status = fl!(
+                            "edit-saved-size",
+                            size = format!("{:.1}", size as f64 / 1024.0)
+                        )
+                    }
+                    Err(e) => {
+                        self.status = fl!("edit-save-failed", error = e.to_string())
+                    }
                 }
             }
             Message::SaveAs => {
@@ -966,10 +975,15 @@ impl Application for MediaEditor {
             }
             Message::SaveAsChosen(Some(path)) => match self.export_to(&path) {
                 Ok(size) => {
-                    self.status =
-                        format!("Saved {} ({:.1} KB)", path.display(), size as f64 / 1024.0)
+                    self.status = fl!(
+                        "edit-saved-path-size",
+                        path = path.display().to_string(),
+                        size = format!("{:.1}", size as f64 / 1024.0)
+                    )
                 }
-                Err(e) => self.status = format!("Save failed: {}", e),
+                Err(e) => {
+                    self.status = fl!("edit-save-failed", error = e.to_string())
+                }
             },
             Message::SaveAsChosen(None) => {}
             Message::CopyToClipboard => {
@@ -1004,7 +1018,7 @@ impl Application for MediaEditor {
                                 _ => Vec::new(),
                             };
                             let uri = format!("file://{}", tmp_path.display());
-                            self.status = "Copied to clipboard".to_string();
+                            self.status = fl!("edit-copied-to-clipboard");
                             return cosmic::iced::runtime::clipboard::write_data(ClipboardData {
                                 png_bytes,
                                 gif_bytes,
@@ -1014,7 +1028,7 @@ impl Application for MediaEditor {
                         } else {
                             // Video: copy file URI to clipboard
                             let uri = format!("file://{}", tmp_path.display());
-                            self.status = "Copied file path to clipboard".to_string();
+                            self.status = fl!("edit-copied-file-path");
                             return cosmic::iced::runtime::clipboard::write_data(ClipboardData {
                                 png_bytes: Vec::new(),
                                 gif_bytes: Vec::new(),
@@ -1024,14 +1038,14 @@ impl Application for MediaEditor {
                         }
                     }
                     Err(e) => {
-                        self.status = format!("Copy failed: {}", e);
+                        self.status = fl!("edit-copy-failed", error = e.to_string());
                     }
                 }
             }
             Message::CopyDone(r) => {
                 self.status = match r {
-                    Ok(()) => "Copied".to_string(),
-                    Err(e) => format!("Copy failed: {}", e),
+                    Ok(()) => fl!("edit-copied"),
+                    Err(e) => fl!("edit-copy-failed", error = e),
                 };
             }
             Message::Discard => {
@@ -1074,33 +1088,27 @@ impl Application for MediaEditor {
             .width(Length::Fill)
             .align_x(Alignment::Center)
             .into(),
-            widget::text::title3("SnapPea Edit").into(),
+            widget::text::title3(fl!("edit-title")).into(),
             widget::text::caption(format!("Version {} ({})", version, git_hash)).into(),
             cosmic::widget::divider::horizontal::light().into(),
         ];
 
-        items.push(widget::text::title4("System Tools").into());
+        items.push(widget::text::title4(fl!("edit-system-tools")).into());
 
         if let Some(ver) = &self.ffmpeg_version {
-            items.push(widget::text::body(format!("ffmpeg: {}", ver)).into());
-        } else {
             items.push(
-                widget::text::body(
-                    "ffmpeg: not installed (needed for video trimming and GIF conversion)",
-                )
-                .into(),
+                widget::text::body(fl!("edit-ffmpeg-version", version = ver.as_str())).into(),
             );
+        } else {
+            items.push(widget::text::body(fl!("edit-ffmpeg-not-installed")).into());
         }
 
         if let Some(ver) = &self.gifski_version {
-            items.push(widget::text::body(format!("gifski: {}", ver)).into());
-        } else {
             items.push(
-                widget::text::body(
-                    "gifski: not installed (cargo install gifski for higher quality GIFs)",
-                )
-                .into(),
+                widget::text::body(fl!("edit-gifski-version", version = ver.as_str())).into(),
             );
+        } else {
+            items.push(widget::text::body(fl!("edit-gifski-not-installed")).into());
         }
 
         let content = widget::column::with_children(items)
@@ -1110,7 +1118,7 @@ impl Application for MediaEditor {
 
         Some(
             cosmic::app::context_drawer::context_drawer(content, Message::ToggleAbout)
-                .title("About"),
+                .title(fl!("edit-about")),
         )
     }
 
@@ -1120,7 +1128,7 @@ impl Application for MediaEditor {
             let dots = ".".repeat((self.poll_count % 4) + 1);
             return widget::container(
                 widget::column::with_children(vec![
-                    widget::text::title3(format!("Loading{}", dots)).into(),
+                    widget::text::title3(format!("{}{}", fl!("edit-loading"), dots)).into(),
                     widget::text::caption(format!("{}", self.media_path.display())).into(),
                 ])
                 .spacing(12)
@@ -1173,7 +1181,7 @@ impl Application for MediaEditor {
                     .align_y(Alignment::Center)
                     .into()
             }
-            _ => widget::text::body("No media").into(),
+            _ => widget::text::body(fl!("edit-no-media")).into(),
         };
 
         // Play/pause overlay
@@ -1259,7 +1267,7 @@ impl Application for MediaEditor {
                     .size(16)
                     .icon()
                     .into(),
-                widget::text::body("Save").into(),
+                widget::text::body(fl!("edit-save")).into(),
             ])
             .spacing(6)
             .align_y(Alignment::Center),
@@ -1267,7 +1275,7 @@ impl Application for MediaEditor {
         .class(cosmic::theme::Button::Suggested)
         .on_press(Message::Save);
 
-        let btn_save_as = widget::button::standard("Save As...").on_press(Message::SaveAs);
+        let btn_save_as = widget::button::standard(fl!("edit-save-as")).on_press(Message::SaveAs);
         let btn_copy =
             widget::button::custom(icon::from_name("edit-copy-symbolic").size(20).icon())
                 .class(cosmic::theme::Button::Icon)
@@ -1276,7 +1284,7 @@ impl Application for MediaEditor {
         let mut actions: Vec<cosmic::Element<'_, Message>> = Vec::new();
         if self.can_discard {
             actions.push(
-                widget::button::destructive("Discard")
+                widget::button::destructive(fl!("edit-discard"))
                     .on_press(Message::Discard)
                     .into(),
             );
@@ -1292,10 +1300,12 @@ impl Application for MediaEditor {
         let status_bar = widget::text::caption(&self.status);
 
         // ── Output settings ───────────────────────────────────────
+        let format_gif_label = fl!("edit-format-gif");
+        let format_video_label = fl!("edit-format-video");
         let format_section: cosmic::Element<'_, Message> = widget::row::with_children(vec![
-            widget::text::caption("Format").into(),
+            widget::text::caption(fl!("edit-format")).into(),
             Toggle::with_labels(
-                &["GIF", "Video"],
+                &[&format_gif_label, &format_video_label],
                 match self.export_format {
                     ExportFormat::Gif => 0,
                     _ => 1,
@@ -1312,7 +1322,7 @@ impl Application for MediaEditor {
 
         let original_fps_label = format!("{:.0}", self.original_fps());
         let scale_section: cosmic::Element<'_, Message> = widget::row::with_children(vec![
-            widget::text::caption("Scale").into(),
+            widget::text::caption(fl!("edit-scale")).into(),
             Toggle::with_labels(
                 &["100%", "75%", "50%"],
                 match self.output_scale {
@@ -1363,7 +1373,7 @@ impl Application for MediaEditor {
             if self.ffmpeg_available && self.media_type == MediaType::Gif {
                 output_items.push(
                     widget::checkbox(self.use_ffmpeg)
-                        .label("Optimize (ffmpeg)")
+                        .label(fl!("edit-optimize-ffmpeg"))
                         .on_toggle(Message::SetUseFfmpeg)
                         .into(),
                 );
