@@ -9,7 +9,6 @@
 //! Usage: snappea-edit [--discard] <path-to-media>
 
 use cosmetics::widgets::gif_player::{self, Frames as GifFrames};
-use cosmetics::widgets::scrubber::scrubber;
 use cosmetics::widgets::toggle::Toggle;
 use cosmic::{
     Application,
@@ -24,7 +23,12 @@ use iced_video_player::{Video, VideoPlayer};
 use image::codecs::gif::{GifDecoder, GifEncoder, Repeat};
 use image::{AnimationDecoder, Frame, RgbaImage};
 use snappea::fl;
+
+#[path = "../widget/video_scrubber.rs"]
+mod video_scrubber;
+use video_scrubber::video_scrubber;
 use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -161,6 +165,12 @@ struct MediaEditor {
     playing: bool,
     dragging: bool,
 
+    // Cut editing
+    cuts: Vec<f64>,
+    selected_chunk: Option<usize>,
+    deleted_chunks: HashSet<usize>,
+    frame_colors: Vec<[u8; 3]>,
+
     // UI state
     loaded: bool,
     poll_count: usize,
@@ -180,11 +190,17 @@ struct MediaEditor {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum Message {
     // Timeline
     Seek(f64),
     SeekRelease,
     TrimChanged((f64, f64)),
+    // Cut editing
+    CutAtPlayhead,
+    SelectChunk(Option<usize>),
+    DeleteSelectedChunk,
+    ColorsExtracted(Vec<[u8; 3]>),
     // Playback
     TogglePlay,
     NewFrame,
@@ -274,8 +290,8 @@ fn build_gif_frames(frames: &[RgbaImage], delay_ms: u32) -> GifFrames {
 fn save_trimmed_gif(
     frames: &[RgbaImage],
     delay_ms: u32,
-    trim_start_frame: usize,
-    trim_end_frame: usize,
+    segments: &[(f64, f64)],
+    duration: f64,
     output_scale: u32,
     output_fps: Option<u32>,
     use_ffmpeg: bool,
@@ -285,9 +301,26 @@ fn save_trimmed_gif(
     let mut encoder = GifEncoder::new_with_speed(file, 10);
     encoder.set_repeat(Repeat::Infinite)?;
 
-    let start = trim_start_frame.min(frames.len());
-    let end = trim_end_frame.min(frames.len());
-    let src = &frames[start..end];
+    let total = frames.len();
+    let time_to_frame = |t: f64| -> usize {
+        if duration <= 0.0 || total == 0 {
+            return 0;
+        }
+        ((t / duration * total as f64) as usize).min(total.saturating_sub(1))
+    };
+
+    let mut kept_frames: Vec<&RgbaImage> = Vec::new();
+    for &(seg_start, seg_end) in segments {
+        let f_start = time_to_frame(seg_start);
+        let f_end = time_to_frame(seg_end).min(total);
+        for f in &frames[f_start..f_end] {
+            kept_frames.push(f);
+        }
+    }
+
+    if kept_frames.is_empty() {
+        return Err(anyhow::anyhow!("No frames to export"));
+    }
 
     let original_fps = 1000.0 / delay_ms.max(1) as f64;
     let (step, actual_delay) = match output_fps {
@@ -301,7 +334,7 @@ fn save_trimmed_gif(
     let delay = image::Delay::from_numer_denom_ms(actual_delay, 1);
 
     let (out_w, out_h) = if output_scale < 100 {
-        src.first()
+        kept_frames.first()
             .map(|f| {
                 let s = output_scale as f64 / 100.0;
                 (
@@ -314,11 +347,11 @@ fn save_trimmed_gif(
         (0, 0)
     };
 
-    for rgba in src.iter().step_by(step) {
+    for rgba in kept_frames.iter().step_by(step) {
         let img = if out_w > 0 && out_h > 0 {
-            image::imageops::resize(rgba, out_w, out_h, image::imageops::FilterType::Triangle)
+            image::imageops::resize(*rgba, out_w, out_h, image::imageops::FilterType::Triangle)
         } else {
-            rgba.clone()
+            (*rgba).clone()
         };
         encoder.encode_frame(Frame::from_parts(img, 0, 0, delay))?;
     }
@@ -349,8 +382,7 @@ fn save_trimmed_gif(
 
 fn save_as_gif_ffmpeg(
     source: &Path,
-    trim_start: f64,
-    trim_dur: f64,
+    segments: &[(f64, f64)],
     scale: u32,
     fps: Option<u32>,
     gifski: bool,
@@ -363,15 +395,79 @@ fn save_as_gif_ffmpeg(
         String::new()
     };
 
+    let input_source = if segments.len() == 1 {
+        None
+    } else {
+        let temp_dir = tempfile::TempDir::new()?;
+        let mut part_paths = Vec::new();
+        for (i, &(start, end)) in segments.iter().enumerate() {
+            let part = temp_dir.path().join(format!("part{}.mp4", i));
+            let o = std::process::Command::new("ffmpeg")
+                .args(["-y", "-ss"])
+                .arg(format!("{:.3}", start))
+                .args(["-t"])
+                .arg(format!("{:.3}", end - start))
+                .args(["-i"])
+                .arg(source)
+                .args(["-c", "copy"])
+                .arg(&part)
+                .output()?;
+            if !o.status.success() {
+                return Err(anyhow::anyhow!(
+                    "ffmpeg segment {} failed: {}",
+                    i,
+                    String::from_utf8_lossy(&o.stderr)
+                ));
+            }
+            part_paths.push(part);
+        }
+        let list_file = temp_dir.path().join("concat.txt");
+        let list_content: String = part_paths
+            .iter()
+            .map(|p| format!("file '{}'\n", p.display()))
+            .collect();
+        std::fs::write(&list_file, &list_content)?;
+
+        let merged = temp_dir.path().join("merged.mp4");
+        let o = std::process::Command::new("ffmpeg")
+            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+            .arg(&list_file)
+            .args(["-c", "copy"])
+            .arg(&merged)
+            .output()?;
+        if !o.status.success() {
+            return Err(anyhow::anyhow!(
+                "ffmpeg concat failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        }
+        // Keep temp_dir alive by leaking it; files cleaned up at process exit
+        let merged_owned = merged.to_path_buf();
+        std::mem::forget(temp_dir);
+        Some(merged_owned)
+    };
+
+    let (actual_source, ss_arg, t_arg) = match &input_source {
+        Some(merged) => (merged.as_path(), None, None),
+        None => {
+            let (start, end) = segments[0];
+            (source, Some(start), Some(end - start))
+        }
+    };
+
     if gifski {
         let vf = format!("fps={}{}", fps, sf);
-        let ff = std::process::Command::new("ffmpeg")
-            .args(["-y", "-ss"])
-            .arg(format!("{:.3}", trim_start))
-            .args(["-t"])
-            .arg(format!("{:.3}", trim_dur))
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.arg("-y");
+        if let Some(ss) = ss_arg {
+            cmd.args(["-ss", &format!("{:.3}", ss)]);
+        }
+        if let Some(t) = t_arg {
+            cmd.args(["-t", &format!("{:.3}", t)]);
+        }
+        let ff = cmd
             .args(["-i"])
-            .arg(source)
+            .arg(actual_source)
             .args(["-vf", &vf, "-f", "yuv4mpegpipe", "pipe:1"])
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::null())
@@ -392,13 +488,17 @@ fn save_as_gif_ffmpeg(
             "fps={}{},split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse=dither=bayer",
             fps, sf
         );
-        let o = std::process::Command::new("ffmpeg")
-            .args(["-y", "-ss"])
-            .arg(format!("{:.3}", trim_start))
-            .args(["-t"])
-            .arg(format!("{:.3}", trim_dur))
+        let mut cmd = std::process::Command::new("ffmpeg");
+        cmd.arg("-y");
+        if let Some(ss) = ss_arg {
+            cmd.args(["-ss", &format!("{:.3}", ss)]);
+        }
+        if let Some(t) = t_arg {
+            cmd.args(["-t", &format!("{:.3}", t)]);
+        }
+        let o = cmd
             .args(["-i"])
-            .arg(source)
+            .arg(actual_source)
             .args(["-vf", &vf])
             .arg(out)
             .output()?;
@@ -409,45 +509,153 @@ fn save_as_gif_ffmpeg(
             ));
         }
     }
+
+    if let Some(merged) = input_source {
+        let _ = std::fs::remove_file(&merged);
+        if let Some(parent) = merged.parent() {
+            let _ = std::fs::remove_dir_all(parent);
+        }
+    }
+
     Ok(std::fs::metadata(out)?.len())
 }
 
-fn save_video_trimmed(
+fn save_video_segments(
     source: &Path,
-    trim_start: f64,
-    trim_dur: f64,
+    segments: &[(f64, f64)],
     out: &Path,
 ) -> anyhow::Result<u64> {
-    // ffmpeg can't read+write same file — use temp then rename
     let tmp = out.with_extension("tmp.mp4");
-    let o = std::process::Command::new("ffmpeg")
-        .args(["-y", "-ss"])
-        .arg(format!("{:.3}", trim_start))
-        .args(["-t"])
-        .arg(format!("{:.3}", trim_dur))
-        .args(["-i"])
-        .arg(source)
-        .args(["-c", "copy"])
-        .arg(&tmp)
-        .output()?;
-    if !o.status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        return Err(anyhow::anyhow!(
-            "ffmpeg trim failed: {}",
-            String::from_utf8_lossy(&o.stderr)
-        ));
+
+    if segments.len() == 1 {
+        let (start, end) = segments[0];
+        let o = std::process::Command::new("ffmpeg")
+            .args(["-y", "-ss"])
+            .arg(format!("{:.3}", start))
+            .args(["-t"])
+            .arg(format!("{:.3}", end - start))
+            .args(["-i"])
+            .arg(source)
+            .args(["-c", "copy"])
+            .arg(&tmp)
+            .output()?;
+        if !o.status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(anyhow::anyhow!(
+                "ffmpeg trim failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        }
+    } else {
+        let temp_dir = tempfile::TempDir::new()?;
+        let mut part_paths = Vec::new();
+        for (i, &(start, end)) in segments.iter().enumerate() {
+            let part = temp_dir.path().join(format!("part{}.mp4", i));
+            let o = std::process::Command::new("ffmpeg")
+                .args(["-y", "-ss"])
+                .arg(format!("{:.3}", start))
+                .args(["-t"])
+                .arg(format!("{:.3}", end - start))
+                .args(["-i"])
+                .arg(source)
+                .args(["-c", "copy"])
+                .arg(&part)
+                .output()?;
+            if !o.status.success() {
+                return Err(anyhow::anyhow!(
+                    "ffmpeg segment {} failed: {}",
+                    i,
+                    String::from_utf8_lossy(&o.stderr)
+                ));
+            }
+            part_paths.push(part);
+        }
+        let list_file = temp_dir.path().join("concat.txt");
+        let list_content: String = part_paths
+            .iter()
+            .map(|p| format!("file '{}'\n", p.display()))
+            .collect();
+        std::fs::write(&list_file, &list_content)?;
+
+        let o = std::process::Command::new("ffmpeg")
+            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+            .arg(&list_file)
+            .args(["-c", "copy"])
+            .arg(&tmp)
+            .output()?;
+        if !o.status.success() {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(anyhow::anyhow!(
+                "ffmpeg concat failed: {}",
+                String::from_utf8_lossy(&o.stderr)
+            ));
+        }
     }
+
     std::fs::rename(&tmp, out)?;
     Ok(std::fs::metadata(out)?.len())
+}
+
+// ── Color extraction ─────────────────────────────────────────────────────
+
+fn extract_gif_colors(frames: &[RgbaImage]) -> Vec<[u8; 3]> {
+    frames
+        .iter()
+        .map(|img| {
+            let pixels = img.as_raw();
+            let count = (pixels.len() / 4) as u64;
+            if count == 0 {
+                return [0, 0, 0];
+            }
+            let (mut r_sum, mut g_sum, mut b_sum) = (0u64, 0u64, 0u64);
+            for chunk in pixels.chunks_exact(4) {
+                r_sum += chunk[0] as u64;
+                g_sum += chunk[1] as u64;
+                b_sum += chunk[2] as u64;
+            }
+            [
+                (r_sum / count) as u8,
+                (g_sum / count) as u8,
+                (b_sum / count) as u8,
+            ]
+        })
+        .collect()
+}
+
+fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[u8; 3]> {
+    if duration <= 0.0 || num_samples == 0 {
+        return Vec::new();
+    }
+    let fps = num_samples as f64 / duration;
+    let output = std::process::Command::new("ffmpeg")
+        .args(["-i"])
+        .arg(path)
+        .args([
+            "-vf",
+            &format!("fps={:.4},scale=1:1", fps),
+            "-f",
+            "rawvideo",
+            "-pix_fmt",
+            "rgb24",
+            "pipe:1",
+        ])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .output();
+
+    match output {
+        Ok(o) if o.status.success() => o
+            .stdout
+            .chunks_exact(3)
+            .map(|c| [c[0], c[1], c[2]])
+            .collect(),
+        _ => Vec::new(),
+    }
 }
 
 // ── MediaEditor impl ──────────────────────────────────────────────────────
 
 impl MediaEditor {
-    fn trimmed_duration(&self) -> f64 {
-        self.trim_end - self.trim_start
-    }
-
     fn original_fps(&self) -> f64 {
         match &self.media {
             MediaState::Gif { delay_ms, .. } => 1000.0 / (*delay_ms).max(1) as f64,
@@ -458,10 +666,7 @@ impl MediaEditor {
 
     /// For GIF mode: map position (seconds) to frame index.
     fn frame_at_seconds(&self, secs: f64) -> usize {
-        if let MediaState::Gif {
-            frames, delay_ms, ..
-        } = &self.media
-        {
+        if let MediaState::Gif { frames, .. } = &self.media {
             if frames.is_empty() || self.duration <= 0.0 {
                 return 0;
             }
@@ -472,18 +677,94 @@ impl MediaEditor {
         }
     }
 
+    fn is_in_deleted_chunk(&self, time: f64) -> bool {
+        Self::time_in_deleted(time, &self.cuts, &self.deleted_chunks)
+    }
+
+    fn next_non_deleted_time(&self, time: f64) -> Option<f64> {
+        Self::find_next_non_deleted(time, &self.cuts, &self.deleted_chunks)
+    }
+
+    fn first_non_deleted_time(&self) -> f64 {
+        Self::find_first_non_deleted(&self.cuts, &self.deleted_chunks)
+    }
+
+    fn time_in_deleted(time: f64, cuts: &[f64], deleted: &HashSet<usize>) -> bool {
+        let chunk = match cuts.iter().position(|&c| time < c) {
+            Some(i) => i,
+            None => cuts.len(),
+        };
+        deleted.contains(&chunk)
+    }
+
+    fn find_next_non_deleted(
+        time: f64,
+        cuts: &[f64],
+        deleted: &HashSet<usize>,
+    ) -> Option<f64> {
+        let num_chunks = cuts.len() + 1;
+        let chunk = match cuts.iter().position(|&c| time < c) {
+            Some(i) => i,
+            None => cuts.len(),
+        };
+        for i in chunk..num_chunks {
+            if !deleted.contains(&i) {
+                let start = if i == 0 { 0.0 } else { cuts[i - 1] };
+                return Some(start.max(time));
+            }
+        }
+        None
+    }
+
+    fn find_first_non_deleted(cuts: &[f64], deleted: &HashSet<usize>) -> f64 {
+        let num_chunks = cuts.len() + 1;
+        for i in 0..num_chunks {
+            if !deleted.contains(&i) {
+                return if i == 0 { 0.0 } else { cuts[i - 1] };
+            }
+        }
+        0.0
+    }
+
     fn current_frame_index(&self) -> usize {
         self.frame_at_seconds(self.position)
     }
 
+    fn kept_segments(&self) -> Vec<(f64, f64)> {
+        let num_chunks = self.cuts.len() + 1;
+        let mut segments = Vec::new();
+        for i in 0..num_chunks {
+            if self.deleted_chunks.contains(&i) {
+                continue;
+            }
+            let start = if i == 0 {
+                self.trim_start
+            } else {
+                self.cuts[i - 1].max(self.trim_start)
+            };
+            let end = if i < self.cuts.len() {
+                self.cuts[i].min(self.trim_end)
+            } else {
+                self.trim_end
+            };
+            if end > start {
+                segments.push((start, end));
+            }
+        }
+        if segments.is_empty() {
+            segments.push((self.trim_start, self.trim_end));
+        }
+        segments
+    }
+
     fn export_to(&self, output_path: &Path) -> anyhow::Result<u64> {
+        let segments = self.kept_segments();
         match self.export_format {
             ExportFormat::Gif => {
                 if self.ffmpeg_available && self.media_type == MediaType::Video {
                     save_as_gif_ffmpeg(
                         &self.media_path,
-                        self.trim_start,
-                        self.trimmed_duration(),
+                        &segments,
                         self.output_scale,
                         self.output_fps,
                         self.gifski_available,
@@ -493,13 +774,11 @@ impl MediaEditor {
                     frames, delay_ms, ..
                 } = &self.media
                 {
-                    let start = self.frame_at_seconds(self.trim_start);
-                    let end = self.frame_at_seconds(self.trim_end);
                     save_trimmed_gif(
                         frames,
                         *delay_ms,
-                        start,
-                        end,
+                        &segments,
+                        self.duration,
                         self.output_scale,
                         self.output_fps,
                         self.use_ffmpeg,
@@ -511,10 +790,9 @@ impl MediaEditor {
             }
             ExportFormat::Video => {
                 if self.ffmpeg_available {
-                    save_video_trimmed(
+                    save_video_segments(
                         &self.media_path,
-                        self.trim_start,
-                        self.trimmed_duration(),
+                        &segments,
                         output_path,
                     )
                 } else {
@@ -576,7 +854,7 @@ impl Application for MediaEditor {
             .unwrap_or(0);
 
         // Try loading based on media type
-        let (media, duration, loaded, status, task) = match flags.media_type {
+        let (media, duration, loaded, status, task, init_colors) = match flags.media_type {
             MediaType::Video => {
                 if flags.media_path.exists() {
                     let uri = url::Url::from_file_path(&flags.media_path).unwrap();
@@ -586,12 +864,25 @@ impl Application for MediaEditor {
                             let dur = video.duration().as_secs_f64();
                             let (w, h) = video.size();
                             let status = format!("{:.1}s, {}x{}", dur, w, h);
+                            let color_path = flags.media_path.clone();
                             (
                                 MediaState::VideoLoaded { video },
                                 dur,
                                 true,
                                 status,
-                                Task::none(),
+                                Task::perform(
+                                    async move {
+                                        tokio::task::spawn_blocking(move || {
+                                            extract_video_colors(&color_path, dur, 300)
+                                        })
+                                        .await
+                                        .unwrap_or_default()
+                                    },
+                                    |colors| {
+                                        cosmic::Action::App(Message::ColorsExtracted(colors))
+                                    },
+                                ),
+                                Vec::new(),
                             )
                         }
                         Err(e) => {
@@ -605,6 +896,7 @@ impl Application for MediaEditor {
                                     async { tokio::time::sleep(Duration::from_millis(500)).await },
                                     |_| cosmic::Action::App(Message::PollFile),
                                 ),
+                                Vec::new(),
                             )
                         }
                     }
@@ -618,6 +910,7 @@ impl Application for MediaEditor {
                             async { tokio::time::sleep(Duration::from_millis(500)).await },
                             |_| cosmic::Action::App(Message::PollFile),
                         ),
+                        Vec::new(),
                     )
                 }
             }
@@ -633,6 +926,7 @@ impl Application for MediaEditor {
                                 frames.first().map_or(0, |f| f.width()),
                                 frames.first().map_or(0, |f| f.height()),
                             );
+                            let colors = extract_gif_colors(&frames);
                             let gif_frames = build_gif_frames(&frames, delay_ms);
                             (
                                 MediaState::Gif {
@@ -644,6 +938,7 @@ impl Application for MediaEditor {
                                 true,
                                 status,
                                 Task::none(),
+                                colors,
                             )
                         }
                         Err(e) => {
@@ -657,6 +952,7 @@ impl Application for MediaEditor {
                                     async { tokio::time::sleep(Duration::from_millis(200)).await },
                                     |_| cosmic::Action::App(Message::PollFile),
                                 ),
+                                Vec::new(),
                             )
                         }
                     }
@@ -670,6 +966,7 @@ impl Application for MediaEditor {
                             async { tokio::time::sleep(Duration::from_millis(200)).await },
                             |_| cosmic::Action::App(Message::PollFile),
                         ),
+                        Vec::new(),
                     )
                 }
             }
@@ -688,6 +985,10 @@ impl Application for MediaEditor {
                 trim_end: duration,
                 playing: false,
                 dragging: false,
+                cuts: Vec::new(),
+                selected_chunk: None,
+                deleted_chunks: HashSet::new(),
+                frame_colors: init_colors,
                 loaded,
                 poll_count: 0,
                 status,
@@ -736,7 +1037,6 @@ impl Application for MediaEditor {
             Message::TrimChanged((s, e)) => {
                 self.trim_start = s;
                 self.trim_end = e;
-                // Always keep position within trim range
                 if self.position < s || self.position > e {
                     self.position = s;
                     if let MediaState::VideoLoaded { video } = &mut self.media {
@@ -748,17 +1048,49 @@ impl Application for MediaEditor {
                 }
             }
 
+            // ── Cut editing ──────────────────────────────────────────
+            Message::CutAtPlayhead => {
+                let pos = self.position;
+                if pos > 0.0 && pos < self.duration {
+                    if !self.cuts.iter().any(|&c| (c - pos).abs() < 0.01) {
+                        self.cuts.push(pos);
+                        self.cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    }
+                }
+            }
+            Message::SelectChunk(chunk) => {
+                self.selected_chunk = chunk;
+            }
+            Message::DeleteSelectedChunk => {
+                if let Some(chunk) = self.selected_chunk {
+                    if self.deleted_chunks.contains(&chunk) {
+                        self.deleted_chunks.remove(&chunk);
+                    } else {
+                        self.deleted_chunks.insert(chunk);
+                    }
+                }
+            }
+            Message::ColorsExtracted(colors) => {
+                self.frame_colors = colors;
+            }
+
             // ── Playback ──────────────────────────────────────────────
             Message::TogglePlay => {
                 self.playing = !self.playing;
+                let in_deleted = Self::time_in_deleted(
+                    self.position, &self.cuts, &self.deleted_chunks,
+                );
+                let fallback = Self::find_next_non_deleted(
+                    self.trim_start, &self.cuts, &self.deleted_chunks,
+                ).unwrap_or(self.trim_start);
                 match &mut self.media {
                     MediaState::VideoLoaded { video } => {
                         if self.playing {
-                            // Seek to trim_start with flush, then unpause
                             let start = if self.position < self.trim_start
                                 || self.position >= self.trim_end
+                                || in_deleted
                             {
-                                self.trim_start
+                                fallback
                             } else {
                                 self.position
                             };
@@ -772,7 +1104,7 @@ impl Application for MediaEditor {
                     }
                     MediaState::Gif { .. } => {
                         if self.playing {
-                            self.position = self.trim_start;
+                            self.position = fallback;
                         }
                     }
                     _ => {}
@@ -782,14 +1114,29 @@ impl Application for MediaEditor {
                 if !self.dragging {
                     if let MediaState::VideoLoaded { video } = &mut self.media {
                         let pos = video.position().as_secs_f64();
+                        let in_deleted = Self::time_in_deleted(
+                            pos, &self.cuts, &self.deleted_chunks,
+                        );
+                        let loop_start = Self::find_first_non_deleted(
+                            &self.cuts, &self.deleted_chunks,
+                        ).max(self.trim_start);
+
                         if self.playing && pos >= self.trim_end {
-                            // Loop back to trim start
-                            let _ = video.seek(Duration::from_secs_f64(self.trim_start), true);
-                            self.position = self.trim_start;
+                            let _ = video.seek(Duration::from_secs_f64(loop_start), true);
+                            self.position = loop_start;
                         } else if self.playing && pos < self.trim_start {
-                            // Seek forward if somehow behind trim start
                             let _ = video.seek(Duration::from_secs_f64(self.trim_start), true);
                             self.position = self.trim_start;
+                        } else if self.playing && in_deleted {
+                            let next = Self::find_next_non_deleted(
+                                pos, &self.cuts, &self.deleted_chunks,
+                            );
+                            let target = match next {
+                                Some(t) if t <= self.trim_end => t,
+                                _ => loop_start,
+                            };
+                            let _ = video.seek(Duration::from_secs_f64(target), true);
+                            self.position = target;
                         } else {
                             self.position = pos;
                         }
@@ -799,7 +1146,20 @@ impl Application for MediaEditor {
             Message::GifFrameChanged(index) => {
                 if let MediaState::Gif { frames, .. } = &self.media {
                     if !frames.is_empty() && self.duration > 0.0 {
-                        self.position = index as f64 / frames.len() as f64 * self.duration;
+                        let pos = index as f64 / frames.len() as f64 * self.duration;
+                        if self.playing && self.is_in_deleted_chunk(pos) {
+                            if let Some(next) = self.next_non_deleted_time(pos) {
+                                if next <= self.trim_end {
+                                    self.position = next;
+                                } else {
+                                    self.position = self.first_non_deleted_time();
+                                }
+                            } else {
+                                self.position = self.first_non_deleted_time();
+                            }
+                        } else {
+                            self.position = pos;
+                        }
                     }
                 }
             }
@@ -866,6 +1226,7 @@ impl Application for MediaEditor {
                             .unwrap_or_else(|| RgbaImage::new(1, 1))
                     })
                     .collect();
+                self.frame_colors = extract_gif_colors(&frames);
                 let gif_frames = build_gif_frames(&frames, delay_ms);
                 self.duration = duration;
                 self.trim_end = duration;
@@ -895,6 +1256,18 @@ impl Application for MediaEditor {
                             .map(|m| m.len())
                             .unwrap_or(0);
                         self.status = format!("{:.1}s, {}x{}", dur, w, h);
+
+                        let path = self.media_path.clone();
+                        return Task::perform(
+                            async move {
+                                tokio::task::spawn_blocking(move || {
+                                    extract_video_colors(&path, dur, 300)
+                                })
+                                .await
+                                .unwrap_or_default()
+                            },
+                            |colors| cosmic::Action::App(Message::ColorsExtracted(colors)),
+                        );
                     }
                     Err(_) => {
                         return Task::perform(
@@ -1158,9 +1531,7 @@ impl Application for MediaEditor {
             .align_y(Alignment::Center)
             .into(),
             MediaState::Gif {
-                gif_frames,
-                frames,
-                delay_ms,
+                gif_frames, ..
             } => {
                 let trim_s = self.frame_at_seconds(self.trim_start);
                 let trim_e = self.frame_at_seconds(self.trim_end);
@@ -1231,34 +1602,94 @@ impl Application for MediaEditor {
         };
 
         // ── Scrubber ──────────────────────────────────────────────
-        let step = if self.duration > 0.0 {
-            self.duration / 200.0
-        } else {
-            0.01
-        };
         let scrub = widget::container(
-            scrubber(
-                0.0..=self.duration,
-                self.position,
-                (self.trim_start, self.trim_end),
-            )
-            .on_scrub(Message::Seek)
-            .on_trim(Message::TrimChanged)
-            .on_release(Message::SeekRelease)
-            .step(step)
-            .height(28.0),
+            video_scrubber(self.duration, self.position)
+                .colors(&self.frame_colors)
+                .cuts(&self.cuts)
+                .deleted_chunks(&self.deleted_chunks)
+                .selected_chunk(self.selected_chunk)
+                .on_seek(Message::Seek)
+                .on_release(Message::SeekRelease)
+                .on_select_chunk(Message::SelectChunk),
         )
         .padding([0, 8]);
 
+        // ── Cut toolbar ──────────────────────────────────────────
+        let btn_cut = widget::button::custom(
+            widget::row::with_children(vec![
+                icon::from_name("edit-cut-symbolic").size(16).icon().into(),
+                widget::text::body(fl!("edit-cut")).into(),
+            ])
+            .spacing(4)
+            .align_y(Alignment::Center),
+        )
+        .class(cosmic::theme::Button::Standard)
+        .on_press(Message::CutAtPlayhead);
+
+        let selected_is_deleted = self
+            .selected_chunk
+            .is_some_and(|idx| self.deleted_chunks.contains(&idx));
+
+        let btn_delete_chunk = if self.selected_chunk.is_some() {
+            let (icon_name, label) = if selected_is_deleted {
+                ("edit-undo-symbolic", fl!("edit-undelete-chunk"))
+            } else {
+                ("edit-delete-symbolic", fl!("edit-delete-chunk"))
+            };
+            widget::button::custom(
+                widget::row::with_children(vec![
+                    icon::from_name(icon_name).size(16).icon().into(),
+                    widget::text::body(label).into(),
+                ])
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .class(if selected_is_deleted {
+                cosmic::theme::Button::Standard
+            } else {
+                cosmic::theme::Button::Destructive
+            })
+            .on_press(Message::DeleteSelectedChunk)
+        } else {
+            widget::button::custom(
+                widget::row::with_children(vec![
+                    icon::from_name("edit-delete-symbolic")
+                        .size(16)
+                        .icon()
+                        .into(),
+                    widget::text::body(fl!("edit-delete-chunk")).into(),
+                ])
+                .spacing(4)
+                .align_y(Alignment::Center),
+            )
+            .class(cosmic::theme::Button::Standard)
+        };
+
+        let cut_toolbar = widget::row::with_children(vec![
+            btn_cut.into(),
+            btn_delete_chunk.into(),
+        ])
+        .spacing(8)
+        .align_y(Alignment::Center);
+
         // ── Info ──────────────────────────────────────────────────
+        let chunk_info = if let Some(sel) = self.selected_chunk {
+            let deleted = if self.deleted_chunks.contains(&sel) {
+                format!(" [{}]", fl!("edit-deleted"))
+            } else {
+                String::new()
+            };
+            format!("  |  {} {}{}", fl!("edit-chunk"), sel + 1, deleted)
+        } else {
+            String::new()
+        };
         let info = widget::text::caption(format!(
-            "{:.2}s / {:.2}s  |  {}: {:.2}s \u{2013} {:.2}s ({:.1}s)",
+            "{:.2}s / {:.2}s  |  {} {}{}",
             self.position,
             self.duration,
-            fl!("edit-trim"),
-            self.trim_start,
-            self.trim_end,
-            self.trimmed_duration(),
+            fl!("edit-cuts"),
+            self.cuts.len(),
+            chunk_info,
         ));
 
         // ── Action buttons ────────────────────────────────────────
@@ -1390,6 +1821,7 @@ impl Application for MediaEditor {
         widget::column::with_children(vec![
             preview.into(),
             scrub.into(),
+            cut_toolbar.into(),
             info.into(),
             output_settings.into(),
             cosmic::widget::divider::horizontal::light().into(),
