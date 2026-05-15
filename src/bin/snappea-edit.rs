@@ -205,6 +205,9 @@ enum Message {
     SelectChunk(Option<usize>),
     DeleteSelectedChunk,
     SetChunkSpeed(usize),
+    MoveCut(usize, f64),
+    AddCut(f64),
+    RemoveCut(usize),
     ColorsExtracted(Vec<[u8; 3]>),
     // Playback
     TogglePlay,
@@ -1092,6 +1095,28 @@ impl Application for MediaEditor {
                     }
                 }
             }
+            Message::MoveCut(index, new_time) => {
+                if index < self.cuts.len() {
+                    self.cuts[index] = new_time;
+                    self.cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                }
+            }
+            Message::AddCut(time) => {
+                if time > 0.0 && time < self.duration {
+                    if !self.cuts.iter().any(|&c| (c - time).abs() < 0.01) {
+                        self.cuts.push(time);
+                        self.cuts.sort_by(|a, b| a.partial_cmp(b).unwrap());
+                    }
+                }
+            }
+            Message::RemoveCut(index) => {
+                if index < self.cuts.len() {
+                    self.cuts.remove(index);
+                    self.deleted_chunks.clear();
+                    self.selected_chunk = None;
+                    self.chunk_speeds.clear();
+                }
+            }
             Message::ColorsExtracted(colors) => {
                 self.frame_colors = colors;
             }
@@ -1653,7 +1678,10 @@ impl Application for MediaEditor {
                 .selected_chunk(self.selected_chunk)
                 .on_seek(Message::Seek)
                 .on_release(Message::SeekRelease)
-                .on_select_chunk(Message::SelectChunk),
+                .on_select_chunk(Message::SelectChunk)
+                .on_cut_moved(Message::MoveCut)
+                .on_cut_added(Message::AddCut)
+                .on_cut_removed(Message::RemoveCut),
         )
         .padding([0, 8]);
 
