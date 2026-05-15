@@ -28,13 +28,16 @@ use snappea::fl;
 mod video_scrubber;
 use video_scrubber::video_scrubber;
 use std::borrow::Cow;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs::File;
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 // ── Types ─────────────────────────────────────────────────────────────────
+
+const SPEED_OPTIONS: &[f64] = &[0.25, 0.5, 0.75, 1.0, 1.5, 2.0, 4.0];
+const SPEED_LABELS: &[&str] = &["0.25x", "0.5x", "0.75x", "1x", "1.5x", "2x", "4x"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MediaType {
@@ -169,6 +172,7 @@ struct MediaEditor {
     cuts: Vec<f64>,
     selected_chunk: Option<usize>,
     deleted_chunks: HashSet<usize>,
+    chunk_speeds: HashMap<usize, f64>,
     frame_colors: Vec<[u8; 3]>,
 
     // UI state
@@ -200,6 +204,7 @@ enum Message {
     CutAtPlayhead,
     SelectChunk(Option<usize>),
     DeleteSelectedChunk,
+    SetChunkSpeed(usize),
     ColorsExtracted(Vec<[u8; 3]>),
     // Playback
     TogglePlay,
@@ -290,7 +295,7 @@ fn build_gif_frames(frames: &[RgbaImage], delay_ms: u32) -> GifFrames {
 fn save_trimmed_gif(
     frames: &[RgbaImage],
     delay_ms: u32,
-    segments: &[(f64, f64)],
+    segments: &[(f64, f64, f64)],
     duration: f64,
     output_scale: u32,
     output_fps: Option<u32>,
@@ -309,50 +314,62 @@ fn save_trimmed_gif(
         ((t / duration * total as f64) as usize).min(total.saturating_sub(1))
     };
 
-    let mut kept_frames: Vec<&RgbaImage> = Vec::new();
-    for &(seg_start, seg_end) in segments {
+    let original_fps = 1000.0 / delay_ms.max(1) as f64;
+
+    struct FrameEntry<'a> {
+        image: &'a RgbaImage,
+        delay_ms: u32,
+    }
+
+    let mut kept: Vec<FrameEntry<'_>> = Vec::new();
+    for &(seg_start, seg_end, speed) in segments {
         let f_start = time_to_frame(seg_start);
         let f_end = time_to_frame(seg_end).min(total);
-        for f in &frames[f_start..f_end] {
-            kept_frames.push(f);
+        let seg_delay = ((delay_ms as f64) / speed).round().max(1.0) as u32;
+
+        let (step, actual_delay) = match output_fps {
+            Some(fps) if (fps as f64) < original_fps * speed => {
+                let s = (original_fps * speed / fps as f64).round() as usize;
+                (s.max(1), seg_delay * s.max(1) as u32)
+            }
+            _ => (1, seg_delay),
+        };
+
+        for f in frames[f_start..f_end].iter().step_by(step) {
+            kept.push(FrameEntry {
+                image: f,
+                delay_ms: actual_delay,
+            });
         }
     }
 
-    if kept_frames.is_empty() {
+    if kept.is_empty() {
         return Err(anyhow::anyhow!("No frames to export"));
     }
 
-    let original_fps = 1000.0 / delay_ms.max(1) as f64;
-    let (step, actual_delay) = match output_fps {
-        Some(fps) if (fps as f64) < original_fps => {
-            let s = (original_fps / fps as f64).round() as usize;
-            (s.max(1), delay_ms * s.max(1) as u32)
-        }
-        _ => (1, delay_ms),
-    };
-
-    let delay = image::Delay::from_numer_denom_ms(actual_delay, 1);
-
     let (out_w, out_h) = if output_scale < 100 {
-        kept_frames.first()
-            .map(|f| {
-                let s = output_scale as f64 / 100.0;
-                (
-                    ((f.width() as f64 * s) as u32).max(1),
-                    ((f.height() as f64 * s) as u32).max(1),
-                )
-            })
-            .unwrap_or((0, 0))
+        let f = kept[0].image;
+        let s = output_scale as f64 / 100.0;
+        (
+            ((f.width() as f64 * s) as u32).max(1),
+            ((f.height() as f64 * s) as u32).max(1),
+        )
     } else {
         (0, 0)
     };
 
-    for rgba in kept_frames.iter().step_by(step) {
+    for entry in &kept {
         let img = if out_w > 0 && out_h > 0 {
-            image::imageops::resize(*rgba, out_w, out_h, image::imageops::FilterType::Triangle)
+            image::imageops::resize(
+                entry.image,
+                out_w,
+                out_h,
+                image::imageops::FilterType::Triangle,
+            )
         } else {
-            (*rgba).clone()
+            entry.image.clone()
         };
+        let delay = image::Delay::from_numer_denom_ms(entry.delay_ms, 1);
         encoder.encode_frame(Frame::from_parts(img, 0, 0, delay))?;
     }
     drop(encoder);
@@ -382,7 +399,7 @@ fn save_trimmed_gif(
 
 fn save_as_gif_ffmpeg(
     source: &Path,
-    segments: &[(f64, f64)],
+    segments: &[(f64, f64, f64)],
     scale: u32,
     fps: Option<u32>,
     gifski: bool,
@@ -395,30 +412,16 @@ fn save_as_gif_ffmpeg(
         String::new()
     };
 
-    let input_source = if segments.len() == 1 {
+    let any_speed_change = segments.iter().any(|&(_, _, s)| (s - 1.0).abs() >= 0.001);
+
+    let input_source = if segments.len() == 1 && !any_speed_change {
         None
     } else {
         let temp_dir = tempfile::TempDir::new()?;
         let mut part_paths = Vec::new();
-        for (i, &(start, end)) in segments.iter().enumerate() {
+        for (i, &(start, end, speed)) in segments.iter().enumerate() {
             let part = temp_dir.path().join(format!("part{}.mp4", i));
-            let o = std::process::Command::new("ffmpeg")
-                .args(["-y", "-ss"])
-                .arg(format!("{:.3}", start))
-                .args(["-t"])
-                .arg(format!("{:.3}", end - start))
-                .args(["-i"])
-                .arg(source)
-                .args(["-c", "copy"])
-                .arg(&part)
-                .output()?;
-            if !o.status.success() {
-                return Err(anyhow::anyhow!(
-                    "ffmpeg segment {} failed: {}",
-                    i,
-                    String::from_utf8_lossy(&o.stderr)
-                ));
-            }
+            ffmpeg_export_segment(source, start, end - start, speed, &part)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -441,7 +444,6 @@ fn save_as_gif_ffmpeg(
                 String::from_utf8_lossy(&o.stderr)
             ));
         }
-        // Keep temp_dir alive by leaking it; files cleaned up at process exit
         let merged_owned = merged.to_path_buf();
         std::mem::forget(temp_dir);
         Some(merged_owned)
@@ -450,7 +452,7 @@ fn save_as_gif_ffmpeg(
     let (actual_source, ss_arg, t_arg) = match &input_source {
         Some(merged) => (merged.as_path(), None, None),
         None => {
-            let (start, end) = segments[0];
+            let (start, end, _) = segments[0];
             (source, Some(start), Some(end - start))
         }
     };
@@ -520,54 +522,54 @@ fn save_as_gif_ffmpeg(
     Ok(std::fs::metadata(out)?.len())
 }
 
+fn ffmpeg_export_segment(
+    source: &Path,
+    start: f64,
+    dur: f64,
+    speed: f64,
+    out: &Path,
+) -> anyhow::Result<()> {
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-y", "-ss"])
+        .arg(format!("{:.3}", start))
+        .args(["-t"])
+        .arg(format!("{:.3}", dur))
+        .args(["-i"])
+        .arg(source);
+
+    if (speed - 1.0).abs() < 0.001 {
+        cmd.args(["-c", "copy"]);
+    } else {
+        let setpts = format!("setpts={}*PTS", 1.0 / speed);
+        cmd.args(["-filter:v", &setpts, "-an"]);
+    }
+
+    let o = cmd.arg(out).output()?;
+    if !o.status.success() {
+        return Err(anyhow::anyhow!(
+            "ffmpeg failed: {}",
+            String::from_utf8_lossy(&o.stderr)
+        ));
+    }
+    Ok(())
+}
+
 fn save_video_segments(
     source: &Path,
-    segments: &[(f64, f64)],
+    segments: &[(f64, f64, f64)],
     out: &Path,
 ) -> anyhow::Result<u64> {
     let tmp = out.with_extension("tmp.mp4");
 
     if segments.len() == 1 {
-        let (start, end) = segments[0];
-        let o = std::process::Command::new("ffmpeg")
-            .args(["-y", "-ss"])
-            .arg(format!("{:.3}", start))
-            .args(["-t"])
-            .arg(format!("{:.3}", end - start))
-            .args(["-i"])
-            .arg(source)
-            .args(["-c", "copy"])
-            .arg(&tmp)
-            .output()?;
-        if !o.status.success() {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(anyhow::anyhow!(
-                "ffmpeg trim failed: {}",
-                String::from_utf8_lossy(&o.stderr)
-            ));
-        }
+        let (start, end, speed) = segments[0];
+        ffmpeg_export_segment(source, start, end - start, speed, &tmp)?;
     } else {
         let temp_dir = tempfile::TempDir::new()?;
         let mut part_paths = Vec::new();
-        for (i, &(start, end)) in segments.iter().enumerate() {
+        for (i, &(start, end, speed)) in segments.iter().enumerate() {
             let part = temp_dir.path().join(format!("part{}.mp4", i));
-            let o = std::process::Command::new("ffmpeg")
-                .args(["-y", "-ss"])
-                .arg(format!("{:.3}", start))
-                .args(["-t"])
-                .arg(format!("{:.3}", end - start))
-                .args(["-i"])
-                .arg(source)
-                .args(["-c", "copy"])
-                .arg(&part)
-                .output()?;
-            if !o.status.success() {
-                return Err(anyhow::anyhow!(
-                    "ffmpeg segment {} failed: {}",
-                    i,
-                    String::from_utf8_lossy(&o.stderr)
-                ));
-            }
+            ffmpeg_export_segment(source, start, end - start, speed, &part)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -730,7 +732,7 @@ impl MediaEditor {
         self.frame_at_seconds(self.position)
     }
 
-    fn kept_segments(&self) -> Vec<(f64, f64)> {
+    fn kept_segments(&self) -> Vec<(f64, f64, f64)> {
         let num_chunks = self.cuts.len() + 1;
         let mut segments = Vec::new();
         for i in 0..num_chunks {
@@ -747,12 +749,13 @@ impl MediaEditor {
             } else {
                 self.trim_end
             };
+            let speed = self.chunk_speeds.get(&i).copied().unwrap_or(1.0);
             if end > start {
-                segments.push((start, end));
+                segments.push((start, end, speed));
             }
         }
         if segments.is_empty() {
-            segments.push((self.trim_start, self.trim_end));
+            segments.push((self.trim_start, self.trim_end, 1.0));
         }
         segments
     }
@@ -988,6 +991,7 @@ impl Application for MediaEditor {
                 cuts: Vec::new(),
                 selected_chunk: None,
                 deleted_chunks: HashSet::new(),
+                chunk_speeds: HashMap::new(),
                 frame_colors: init_colors,
                 loaded,
                 poll_count: 0,
@@ -1067,6 +1071,16 @@ impl Application for MediaEditor {
                         self.deleted_chunks.remove(&chunk);
                     } else {
                         self.deleted_chunks.insert(chunk);
+                    }
+                }
+            }
+            Message::SetChunkSpeed(speed_idx) => {
+                if let Some(chunk) = self.selected_chunk {
+                    let speed = SPEED_OPTIONS[speed_idx.min(SPEED_OPTIONS.len() - 1)];
+                    if (speed - 1.0).abs() < f64::EPSILON {
+                        self.chunk_speeds.remove(&chunk);
+                    } else {
+                        self.chunk_speeds.insert(chunk, speed);
                     }
                 }
             }
@@ -1665,12 +1679,40 @@ impl Application for MediaEditor {
             .class(cosmic::theme::Button::Standard)
         };
 
-        let cut_toolbar = widget::row::with_children(vec![
+        let mut cut_items: Vec<cosmic::Element<'_, Message>> = vec![
             btn_cut.into(),
             btn_delete_chunk.into(),
-        ])
-        .spacing(8)
-        .align_y(Alignment::Center);
+        ];
+
+        if let Some(sel) = self.selected_chunk {
+            let current_speed = self.chunk_speeds.get(&sel).copied().unwrap_or(1.0);
+            let active_idx = SPEED_OPTIONS
+                .iter()
+                .position(|&s| (s - current_speed).abs() < 0.001)
+                .unwrap_or(3);
+
+            cut_items.push(
+                widget::row::with_children(vec![
+                    icon::from_name("media-playback-speed-symbolic")
+                        .size(16)
+                        .icon()
+                        .into(),
+                    widget::text::caption(fl!("edit-speed")).into(),
+                    Toggle::with_labels(SPEED_LABELS, active_idx)
+                        .on_select(Message::SetChunkSpeed)
+                        .pill_thickness(26.0)
+                        .circle_size(22.0)
+                        .into(),
+                ])
+                .spacing(4)
+                .align_y(Alignment::Center)
+                .into(),
+            );
+        }
+
+        let cut_toolbar = widget::row::with_children(cut_items)
+            .spacing(8)
+            .align_y(Alignment::Center);
 
         // ── Info ──────────────────────────────────────────────────
         let chunk_info = if let Some(sel) = self.selected_chunk {

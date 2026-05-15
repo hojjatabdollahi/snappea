@@ -202,3 +202,4 @@ edit-undelete-chunk = Restore
 edit-cuts = Cuts:
 edit-chunk = Chunk
 edit-deleted = deleted
+edit-speed = Speed
