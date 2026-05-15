@@ -13,3 +13,4 @@ pub mod tool_button;
 pub mod tool_handlers;
 pub mod toolbar;
 pub mod toolbar_position_selector;
+pub mod video_scrubber;

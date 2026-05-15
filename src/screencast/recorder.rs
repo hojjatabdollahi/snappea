@@ -10,11 +10,11 @@ use std::time::{Duration, Instant};
 use wayland_client::Connection;
 
 use super::dmabuf::{
-    drm_format_to_gst_format, select_best_format, select_zero_copy_source_format, DmabufContext,
-    TripleBufferPool,
+    DmabufContext, TripleBufferPool, drm_format_to_gst_format, select_best_format,
+    select_zero_copy_source_format,
 };
-use super::encoder::{detect_encoders, Codec, EncoderInfo};
-use super::pipeline::{crop_touches_trailing_edge, pipeline_output_size, CropRegion, Pipeline};
+use super::encoder::{Codec, EncoderInfo, detect_encoders};
+use super::pipeline::{CropRegion, Pipeline, crop_touches_trailing_edge, pipeline_output_size};
 use crate::config::Container;
 use crate::wayland::{CaptureSource, Rect, WaylandHelper};
 

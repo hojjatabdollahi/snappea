@@ -131,7 +131,10 @@ impl Screenshot {
             }
         }?;
         let name = chrono::Local::now()
-            .format(&format!("{}_%Y-%m-%d_%H-%M-%S.png", fl!("screenshot-filename-prefix")))
+            .format(&format!(
+                "{}_%Y-%m-%d_%H-%M-%S.png",
+                fl!("screenshot-filename-prefix")
+            ))
             .to_string();
         path.push(name);
 

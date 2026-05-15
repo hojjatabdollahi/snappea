@@ -11,7 +11,7 @@ use gstreamer_video as gst_video;
 use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
-use super::dmabuf::{drm_format_to_gst_format, drm_format_to_gst_video_format, DmabufBuffer};
+use super::dmabuf::{DmabufBuffer, drm_format_to_gst_format, drm_format_to_gst_video_format};
 use super::encoder::EncoderInfo;
 use crate::config::Container;
 
