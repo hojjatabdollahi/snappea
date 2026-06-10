@@ -955,11 +955,7 @@ fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[
     }
     let fps = num_samples as f64 / duration;
     let output = std::process::Command::new("ffmpeg")
-        // Decode only keyframes. The timeline color strip is a coarse overview, so
-        // sampling keyframes (≈1/sec) instead of every frame avoids a full decode of
-        // the whole file — the main reason opening a long recording felt slow. The
-        // fps filter still resamples to `num_samples` colours.
-        .args(["-skip_frame", "nokey", "-i"])
+        .args(["-i"])
         .arg(path)
         .args([
             "-vf",
@@ -967,6 +963,11 @@ fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[
             // bands (area filter = box average), so each output pixel is the mean
             // colour of one row-slice of the frame. Output is sample-major: all
             // bands of one frame (top→bottom), then the next frame.
+            //
+            // We decode every frame (no `-skip_frame`) so the fps filter samples the
+            // actual frame nearest each output time. Keyframe-only decoding is faster
+            // but only has ~1 sample/sec, which makes mid-second colour changes appear
+            // up to a keyframe-interval late in the strip.
             &format!(
                 "fps={:.4},scale=1:{}:flags=area",
                 fps,
