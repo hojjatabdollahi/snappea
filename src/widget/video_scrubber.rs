@@ -14,6 +14,10 @@ use cosmic::iced::core::{
 use std::collections::HashSet;
 
 const COLOR_AREA_HEIGHT: f32 = 40.0;
+/// Number of vertical bands sampled per frame for the color strip. Each band is
+/// the average colour of a horizontal slice of the frame, so a column of the
+/// scrubber mirrors the top-to-bottom colour layout of the frame at that instant.
+pub const COLOR_BANDS: usize = 24;
 const LABEL_HEIGHT: f32 = 18.0;
 const TICK_HEIGHT: f32 = 5.0;
 const PLAYHEAD_WIDTH: f32 = 2.0;
@@ -61,6 +65,8 @@ pub struct VideoScrubber<'a, Message> {
     duration: f64,
     position: f64,
     colors: &'a [[u8; 3]],
+    /// Number of vertical bands per time-sample in `colors` (sample-major layout).
+    bands: usize,
     cuts: &'a [f64],
     deleted_chunks: &'a HashSet<usize>,
     selected_chunk: Option<usize>,
@@ -82,6 +88,7 @@ where
             duration,
             position,
             colors: &[],
+            bands: COLOR_BANDS,
             cuts: &[],
             deleted_chunks: &EMPTY_SET,
             selected_chunk: None,
@@ -97,6 +104,12 @@ where
 
     pub fn colors(mut self, colors: &'a [[u8; 3]]) -> Self {
         self.colors = colors;
+        self
+    }
+
+    /// Set how many vertical bands each time-sample in `colors` contains.
+    pub fn bands(mut self, bands: usize) -> Self {
+        self.bands = bands.max(1);
         self
     }
 
@@ -189,14 +202,6 @@ fn chunk_time_range(chunk: usize, cuts: &[f64], duration: f64) -> (f64, f64) {
     (start, end)
 }
 
-fn color_at_time(time: f64, duration: f64, colors: &[[u8; 3]]) -> [u8; 3] {
-    if colors.is_empty() || duration <= 0.0 {
-        return [40, 40, 40];
-    }
-    let frac = (time / duration).clamp(0.0, 1.0);
-    let idx = ((frac * colors.len() as f64) as usize).min(colors.len() - 1);
-    colors[idx]
-}
 
 fn pick_tick_interval(visible_duration: f64) -> (f64, usize) {
     const NICE: &[(f64, usize)] = &[
@@ -569,27 +574,39 @@ impl<Message: Clone + 'static> Widget<Message, cosmic::Theme, cosmic::Renderer>
             Background::Color(Color::from_rgba(0.15, 0.15, 0.15, 1.0)),
         );
 
-        // Color columns
-        if !self.colors.is_empty() && self.duration > 0.0 {
+        // Color columns: each 1px-wide column is a vertical gradient whose bands
+        // mirror the top-to-bottom colour layout of the frame at that time.
+        let bands = self.bands.max(1);
+        let num_samples = self.colors.len() / bands;
+        if num_samples > 0 && self.duration > 0.0 {
             for i in 0..width as usize {
                 let sx = i as f32;
                 let time = screen_x_to_time(sx, self.duration, zoom, scroll, width);
                 if time < 0.0 || time > self.duration {
                     continue;
                 }
-                let [r, g, b] = color_at_time(time, self.duration, self.colors);
-                renderer.fill_quad(
-                    Quad {
-                        bounds: Rectangle {
-                            x: bounds.x + sx,
-                            y: bounds.y,
-                            width: 1.0,
-                            height: color_h,
+                let frac = (time / self.duration).clamp(0.0, 1.0);
+                let sample = ((frac * num_samples as f64) as usize).min(num_samples - 1);
+                let base = sample * bands;
+                for b in 0..bands {
+                    // Exact tiling: each band's bottom edge is the next band's top
+                    // edge, so there are no sub-pixel gaps regardless of band height.
+                    let y0 = bounds.y + (b as f32 * color_h / bands as f32);
+                    let y1 = bounds.y + ((b + 1) as f32 * color_h / bands as f32);
+                    let [r, g, bl] = self.colors[base + b];
+                    renderer.fill_quad(
+                        Quad {
+                            bounds: Rectangle {
+                                x: bounds.x + sx,
+                                y: y0,
+                                width: 1.0,
+                                height: y1 - y0,
+                            },
+                            ..Quad::default()
                         },
-                        ..Quad::default()
-                    },
-                    Background::Color(Color::from_rgb8(r, g, b)),
-                );
+                        Background::Color(Color::from_rgb8(r, g, bl)),
+                    );
+                }
             }
         }
 
