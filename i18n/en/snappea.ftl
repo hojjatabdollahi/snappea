@@ -189,6 +189,7 @@ edit-quality = Quality
 edit-quality-low = Low
 edit-quality-medium = Medium
 edit-quality-high = High
+edit-converting = Converting…
 edit-scale = Scale
 edit-trim = Trim
 edit-trimmed-filename = { $stem }-trimmed.{ $ext }

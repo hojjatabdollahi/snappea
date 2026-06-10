@@ -72,6 +72,17 @@ impl WebmQuality {
     }
 }
 
+/// What to do once an asynchronous export finishes.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExportIntent {
+    /// Save next to the source (`Save` button).
+    SaveInPlace,
+    /// Save to a user-chosen path (`Save As`).
+    SaveAs,
+    /// Export to a temp file and put it on the clipboard.
+    Copy,
+}
+
 fn detect_media_type(path: &Path) -> MediaType {
     match path
         .extension()
@@ -207,6 +218,15 @@ struct MediaEditor {
     webm_quality: WebmQuality,
     output_scale: u32,
     output_fps: Option<u32>,
+
+    // Async export / progress state
+    exporting: bool,
+    export_progress: f32,
+    export_total_secs: f64,
+    export_progress_path: PathBuf,
+    export_ticks: u32,
+    export_intent: Option<ExportIntent>,
+    export_out: PathBuf,
     ffmpeg_available: bool,
     ffmpeg_version: Option<String>,
     gifski_available: bool,
@@ -244,6 +264,9 @@ enum Message {
     // Output settings
     SetExportFormat(usize),
     SetWebmQuality(usize),
+    // Async export
+    ExportTick,
+    ExportFinished(Result<u64, String>),
     SetOutputScale(usize),
     SetOutputFps(usize),
     SetUseFfmpeg(bool),
@@ -672,6 +695,7 @@ fn save_video_webm(
     segments: &[(f64, f64, f64)],
     quality: WebmQuality,
     scale: u32,
+    progress: Option<&Path>,
     out: &Path,
 ) -> anyhow::Result<u64> {
     let crf = quality.crf();
@@ -697,8 +721,8 @@ fn save_video_webm(
     }
     fc.push_str("[out]");
 
-    let o = std::process::Command::new("ffmpeg")
-        .args(["-y", "-i"])
+    let mut cmd = std::process::Command::new("ffmpeg");
+    cmd.args(["-y", "-i"])
         .arg(source)
         .args(["-filter_complex", &fc, "-map", "[out]"])
         .args([
@@ -717,9 +741,11 @@ fn save_video_webm(
             "-pix_fmt",
             "yuv420p",
             "-an",
-        ])
-        .arg(&tmp)
-        .output()?;
+        ]);
+    if let Some(progress) = progress {
+        cmd.arg("-progress").arg(progress).arg("-nostats");
+    }
+    let o = cmd.arg(&tmp).output()?;
     if !o.status.success() {
         let _ = std::fs::remove_file(&tmp);
         return Err(anyhow::anyhow!(
@@ -730,6 +756,90 @@ fn save_video_webm(
 
     std::fs::rename(&tmp, out)?;
     Ok(std::fs::metadata(out)?.len())
+}
+
+/// Owned snapshot of everything an export needs, so it can run on a blocking
+/// thread without borrowing the editor state.
+struct ExportRequest {
+    format: ExportFormat,
+    media_path: PathBuf,
+    media_type: MediaType,
+    segments: Vec<(f64, f64, f64)>,
+    webm_quality: WebmQuality,
+    output_scale: u32,
+    output_fps: Option<u32>,
+    use_ffmpeg: bool,
+    ffmpeg_available: bool,
+    gifski_available: bool,
+    duration: f64,
+    /// Frames + frame delay for the GIF-from-GIF path (only populated then).
+    gif_frames: Option<(Vec<RgbaImage>, u32)>,
+    out: PathBuf,
+    /// File ffmpeg writes `-progress` to (polled by the UI for the progress bar).
+    progress_path: PathBuf,
+}
+
+/// Run an export to completion. Intended to be called on a blocking thread.
+fn run_export(req: ExportRequest) -> Result<u64, String> {
+    let result = match req.format {
+        ExportFormat::Gif => {
+            if req.ffmpeg_available && req.media_type == MediaType::Video {
+                save_as_gif_ffmpeg(
+                    &req.media_path,
+                    &req.segments,
+                    req.output_scale,
+                    req.output_fps,
+                    req.gifski_available,
+                    &req.out,
+                )
+            } else if let Some((frames, delay_ms)) = &req.gif_frames {
+                save_trimmed_gif(
+                    frames,
+                    *delay_ms,
+                    &req.segments,
+                    req.duration,
+                    req.output_scale,
+                    req.output_fps,
+                    req.use_ffmpeg,
+                    &req.out,
+                )
+            } else {
+                Err(anyhow::anyhow!("No frames to export"))
+            }
+        }
+        ExportFormat::Video => {
+            if req.ffmpeg_available {
+                save_video_segments(&req.media_path, &req.segments, &req.out)
+            } else {
+                Err(anyhow::anyhow!("ffmpeg required for video export"))
+            }
+        }
+        ExportFormat::Webm => {
+            if req.ffmpeg_available {
+                save_video_webm(
+                    &req.media_path,
+                    &req.segments,
+                    req.webm_quality,
+                    req.output_scale,
+                    Some(&req.progress_path),
+                    &req.out,
+                )
+            } else {
+                Err(anyhow::anyhow!("ffmpeg required for WebM export"))
+            }
+        }
+    };
+    result.map_err(|e| e.to_string())
+}
+
+/// Read the most recent encoded position (seconds) from an ffmpeg `-progress` file.
+fn read_progress_seconds(path: &Path) -> Option<f64> {
+    let content = std::fs::read_to_string(path).ok()?;
+    content.lines().rev().find_map(|line| {
+        line.strip_prefix("out_time_us=")
+            .and_then(|v| v.trim().parse::<f64>().ok())
+            .map(|us| us / 1_000_000.0)
+    })
 }
 
 // ── Color extraction ─────────────────────────────────────────────────────
@@ -902,58 +1012,76 @@ impl MediaEditor {
         segments
     }
 
-    fn export_to(&self, output_path: &Path) -> anyhow::Result<u64> {
-        let segments = self.kept_segments();
-        match self.export_format {
-            ExportFormat::Gif => {
-                if self.ffmpeg_available && self.media_type == MediaType::Video {
-                    save_as_gif_ffmpeg(
-                        &self.media_path,
-                        &segments,
-                        self.output_scale,
-                        self.output_fps,
-                        self.gifski_available,
-                        output_path,
-                    )
-                } else if let MediaState::Gif {
-                    frames, delay_ms, ..
-                } = &self.media
-                {
-                    save_trimmed_gif(
-                        frames,
-                        *delay_ms,
-                        &segments,
-                        self.duration,
-                        self.output_scale,
-                        self.output_fps,
-                        self.use_ffmpeg,
-                        output_path,
-                    )
-                } else {
-                    Err(anyhow::anyhow!("No frames to export"))
-                }
+    /// Build an owned export request for the current state, to run on a worker thread.
+    fn export_request(&self, out: PathBuf, progress_path: PathBuf) -> ExportRequest {
+        // Only the GIF-from-GIF path needs the decoded frames; capturing them
+        // otherwise would clone a large buffer for nothing.
+        let gif_frames = if self.export_format == ExportFormat::Gif {
+            if let MediaState::Gif {
+                frames, delay_ms, ..
+            } = &self.media
+            {
+                Some((frames.clone(), *delay_ms))
+            } else {
+                None
             }
-            ExportFormat::Video => {
-                if self.ffmpeg_available {
-                    save_video_segments(&self.media_path, &segments, output_path)
-                } else {
-                    Err(anyhow::anyhow!("ffmpeg required for video export"))
-                }
-            }
-            ExportFormat::Webm => {
-                if self.ffmpeg_available {
-                    save_video_webm(
-                        &self.media_path,
-                        &segments,
-                        self.webm_quality,
-                        self.output_scale,
-                        output_path,
-                    )
-                } else {
-                    Err(anyhow::anyhow!("ffmpeg required for WebM export"))
-                }
-            }
+        } else {
+            None
+        };
+
+        ExportRequest {
+            format: self.export_format,
+            media_path: self.media_path.clone(),
+            media_type: self.media_type,
+            segments: self.kept_segments(),
+            webm_quality: self.webm_quality,
+            output_scale: self.output_scale,
+            output_fps: self.output_fps,
+            use_ffmpeg: self.use_ffmpeg,
+            ffmpeg_available: self.ffmpeg_available,
+            gifski_available: self.gifski_available,
+            duration: self.duration,
+            gif_frames,
+            out,
+            progress_path,
         }
+    }
+
+    /// Total output duration (seconds) of the kept segments, for progress scaling.
+    fn export_output_secs(&self) -> f64 {
+        self.kept_segments()
+            .iter()
+            .map(|&(s, e, speed)| ((e - s) / speed).max(0.0))
+            .sum()
+    }
+
+    /// Kick off an export on a worker thread and start the progress UI.
+    fn begin_export(&mut self, out: PathBuf, intent: ExportIntent) -> Task<Message> {
+        if self.exporting {
+            return Task::none();
+        }
+        let progress_path =
+            std::env::temp_dir().join(format!("snappea-export-{}.progress", std::process::id()));
+        let _ = std::fs::remove_file(&progress_path);
+
+        self.exporting = true;
+        self.export_progress = 0.0;
+        self.export_total_secs = self.export_output_secs();
+        self.export_progress_path = progress_path.clone();
+        self.export_ticks = 0;
+        self.export_intent = Some(intent);
+        self.export_out = out.clone();
+        self.status = fl!("edit-converting");
+
+        let req = self.export_request(out, progress_path);
+        Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || run_export(req))
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()))
+            },
+            |res| cosmic::Action::App(Message::ExportFinished(res)),
+        )
     }
 
     /// File extension for the current export format.
@@ -1165,6 +1293,13 @@ impl Application for MediaEditor {
                     MediaType::Video => ExportFormat::Video,
                 },
                 webm_quality: WebmQuality::default(),
+                exporting: false,
+                export_progress: 0.0,
+                export_total_secs: 0.0,
+                export_progress_path: PathBuf::new(),
+                export_ticks: 0,
+                export_intent: None,
+                export_out: PathBuf::new(),
                 output_scale: 100,
                 output_fps: None,
                 ffmpeg_available,
@@ -1534,15 +1669,7 @@ impl Application for MediaEditor {
                 // Write next to the source using the export format's extension, so a
                 // WebM/GIF export never overwrites the original MP4 with mismatched data.
                 let path = self.media_path.with_extension(self.export_extension());
-                match self.export_to(&path) {
-                    Ok(size) => {
-                        self.status = fl!(
-                            "edit-saved-size",
-                            size = format!("{:.1}", size as f64 / 1024.0)
-                        )
-                    }
-                    Err(e) => self.status = fl!("edit-save-failed", error = e.to_string()),
-                }
+                return self.begin_export(path, ExportIntent::SaveInPlace);
             }
             Message::SaveAs => {
                 let stem = self
@@ -1565,26 +1692,55 @@ impl Application for MediaEditor {
                     |p| cosmic::Action::App(Message::SaveAsChosen(p)),
                 );
             }
-            Message::SaveAsChosen(Some(path)) => match self.export_to(&path) {
-                Ok(size) => {
-                    self.status = fl!(
-                        "edit-saved-path-size",
-                        path = path.display().to_string(),
-                        size = format!("{:.1}", size as f64 / 1024.0)
-                    )
-                }
-                Err(e) => self.status = fl!("edit-save-failed", error = e.to_string()),
-            },
+            Message::SaveAsChosen(Some(path)) => {
+                return self.begin_export(path, ExportIntent::SaveAs);
+            }
             Message::SaveAsChosen(None) => {}
             Message::CopyToClipboard => {
-                let ext = self.export_extension();
-                let tmp_path = PathBuf::from(format!("/tmp/snappea-clipboard.{}", ext));
+                let tmp_path =
+                    PathBuf::from(format!("/tmp/snappea-clipboard.{}", self.export_extension()));
+                return self.begin_export(tmp_path, ExportIntent::Copy);
+            }
+            Message::ExportTick => {
+                // Real progress from ffmpeg when available, with a time-based creep so
+                // the bar always advances (even for formats that don't report progress)
+                // and never appears frozen.
+                self.export_ticks = self.export_ticks.saturating_add(1);
+                let elapsed = self.export_ticks as f64 * 0.12;
+                let creep = 0.92 * (1.0 - (-elapsed / 10.0).exp());
+                let real = if self.export_total_secs > 0.0 {
+                    read_progress_seconds(&self.export_progress_path)
+                        .map(|s| (s / self.export_total_secs).clamp(0.0, 0.99))
+                        .unwrap_or(0.0)
+                } else {
+                    0.0
+                };
+                self.export_progress = creep.max(real) as f32;
+            }
+            Message::ExportFinished(result) => {
+                self.exporting = false;
+                self.export_progress = 1.0;
+                let _ = std::fs::remove_file(&self.export_progress_path);
+                let intent = self.export_intent.take();
+                let out = self.export_out.clone();
 
-                match self.export_to(&tmp_path) {
-                    Ok(_) => {
+                match (result, intent) {
+                    (Ok(size), Some(ExportIntent::SaveInPlace)) => {
+                        self.status = fl!(
+                            "edit-saved-size",
+                            size = format!("{:.1}", size as f64 / 1024.0)
+                        );
+                    }
+                    (Ok(size), Some(ExportIntent::SaveAs)) => {
+                        self.status = fl!(
+                            "edit-saved-path-size",
+                            path = out.display().to_string(),
+                            size = format!("{:.1}", size as f64 / 1024.0)
+                        );
+                    }
+                    (Ok(_), Some(ExportIntent::Copy)) => {
                         if self.export_format == ExportFormat::Gif {
-                            // GIF: put image data on clipboard
-                            let gif_bytes = std::fs::read(&tmp_path).unwrap_or_default();
+                            let gif_bytes = std::fs::read(&out).unwrap_or_default();
                             let png_bytes = match &self.media {
                                 MediaState::Gif { frames, .. } => frames
                                     .get(self.current_frame_index())
@@ -1600,7 +1756,7 @@ impl Application for MediaEditor {
                                     .unwrap_or_default(),
                                 _ => Vec::new(),
                             };
-                            let uri = format!("file://{}", tmp_path.display());
+                            let uri = format!("file://{}", out.display());
                             self.status = fl!("edit-copied-to-clipboard");
                             return cosmic::iced::runtime::clipboard::write_data(ClipboardData {
                                 png_bytes,
@@ -1609,8 +1765,7 @@ impl Application for MediaEditor {
                             })
                             .map(|_: ()| cosmic::Action::App(Message::CopyDone(Ok(()))));
                         } else {
-                            // Video: copy file URI to clipboard
-                            let uri = format!("file://{}", tmp_path.display());
+                            let uri = format!("file://{}", out.display());
                             self.status = fl!("edit-copied-file-path");
                             return cosmic::iced::runtime::clipboard::write_data(ClipboardData {
                                 png_bytes: Vec::new(),
@@ -1620,9 +1775,13 @@ impl Application for MediaEditor {
                             .map(|_: ()| cosmic::Action::App(Message::CopyDone(Ok(()))));
                         }
                     }
-                    Err(e) => {
-                        self.status = fl!("edit-copy-failed", error = e.to_string());
+                    (Err(e), Some(ExportIntent::Copy)) => {
+                        self.status = fl!("edit-copy-failed", error = e);
                     }
+                    (Err(e), _) => {
+                        self.status = fl!("edit-save-failed", error = e);
+                    }
+                    (Ok(_), None) => {}
                 }
             }
             Message::CopyDone(r) => {
@@ -1641,6 +1800,16 @@ impl Application for MediaEditor {
             }
         }
         Task::none()
+    }
+
+    fn subscription(&self) -> cosmic::iced::Subscription<Self::Message> {
+        if self.exporting {
+            // Poll export progress a few times a second while a conversion runs.
+            cosmic::iced::time::every(std::time::Duration::from_millis(120))
+                .map(|_| Message::ExportTick)
+        } else {
+            cosmic::iced::Subscription::none()
+        }
     }
 
     fn header_end(&self) -> Vec<cosmic::Element<'_, Self::Message>> {
@@ -1944,13 +2113,14 @@ impl Application for MediaEditor {
             .align_y(Alignment::Center),
         )
         .class(cosmic::theme::Button::Suggested)
-        .on_press(Message::Save);
+        .on_press_maybe((!self.exporting).then_some(Message::Save));
 
-        let btn_save_as = widget::button::standard(fl!("edit-save-as")).on_press(Message::SaveAs);
+        let btn_save_as = widget::button::standard(fl!("edit-save-as"))
+            .on_press_maybe((!self.exporting).then_some(Message::SaveAs));
         let btn_copy =
             widget::button::custom(icon::from_name("edit-copy-symbolic").size(20).icon())
                 .class(cosmic::theme::Button::Icon)
-                .on_press(Message::CopyToClipboard);
+                .on_press_maybe((!self.exporting).then_some(Message::CopyToClipboard));
 
         let mut actions: Vec<cosmic::Element<'_, Message>> = Vec::new();
         if self.can_discard {
@@ -2083,6 +2253,25 @@ impl Application for MediaEditor {
             .align_items(Alignment::Center)
             .width(Length::Fill);
 
+        // ── Conversion progress ───────────────────────────────────
+        let progress_row: cosmic::Element<'_, Message> = if self.exporting {
+            let pct = (self.export_progress * 100.0).round() as u32;
+            widget::row::with_children(vec![
+                widget::text::caption(fl!("edit-converting")).into(),
+                cosmic::iced::widget::progress_bar(0.0..=1.0, self.export_progress)
+                    .girth(Length::Fixed(6.0))
+                    .length(Length::Fill)
+                    .into(),
+                widget::text::caption(format!("{}%", pct)).into(),
+            ])
+            .spacing(8)
+            .align_y(Alignment::Center)
+            .width(Length::Fill)
+            .into()
+        } else {
+            cosmic::iced::widget::space().height(Length::Fixed(0.0)).into()
+        };
+
         // ── About panel (collapsible) ─────────────────────────────
         widget::column::with_children(vec![
             preview.into(),
@@ -2092,6 +2281,7 @@ impl Application for MediaEditor {
             output_settings.into(),
             cosmic::widget::divider::horizontal::light().into(),
             action_row.into(),
+            progress_row,
             status_bar.into(),
         ])
         .spacing(8)
