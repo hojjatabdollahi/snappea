@@ -83,6 +83,68 @@ enum ExportIntent {
     Copy,
 }
 
+/// Cooperative cancellation handle for a running export.
+///
+/// The export runs ffmpeg on a worker thread via [`Cancel::run`], which registers
+/// the child's PID. Cancelling from the UI thread signals the flag and sends
+/// SIGKILL to the live ffmpeg, so the worker returns promptly with an error.
+#[derive(Clone, Default)]
+struct Cancel(std::sync::Arc<std::sync::Mutex<CancelState>>);
+
+#[derive(Default)]
+struct CancelState {
+    cancelled: bool,
+    pid: Option<u32>,
+}
+
+impl Cancel {
+    fn new() -> Self {
+        Cancel::default()
+    }
+
+    /// Signal cancellation and kill the currently running ffmpeg, if any.
+    fn request(&self) {
+        let mut state = self.0.lock().unwrap();
+        state.cancelled = true;
+        if let Some(pid) = state.pid.take() {
+            unsafe {
+                libc::kill(pid as libc::pid_t, libc::SIGKILL);
+            }
+        }
+    }
+
+    fn is_cancelled(&self) -> bool {
+        self.0.lock().unwrap().cancelled
+    }
+
+    /// Spawn `cmd`, registering it so it can be killed, and wait for its output.
+    fn run(&self, cmd: &mut std::process::Command) -> std::io::Result<std::process::Output> {
+        use std::process::Stdio;
+        if self.is_cancelled() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "export cancelled",
+            ));
+        }
+        let child = cmd.stdout(Stdio::piped()).stderr(Stdio::piped()).spawn()?;
+        let pid = child.id();
+        {
+            let mut state = self.0.lock().unwrap();
+            if state.cancelled {
+                drop(state);
+                unsafe {
+                    libc::kill(pid as libc::pid_t, libc::SIGKILL);
+                }
+            } else {
+                state.pid = Some(pid);
+            }
+        }
+        let output = child.wait_with_output();
+        self.0.lock().unwrap().pid = None;
+        output
+    }
+}
+
 fn detect_media_type(path: &Path) -> MediaType {
     match path
         .extension()
@@ -227,6 +289,9 @@ struct MediaEditor {
     export_ticks: u32,
     export_intent: Option<ExportIntent>,
     export_out: PathBuf,
+    export_cancel: Option<Cancel>,
+    /// Bumped on each export start/cancel; stale `ExportFinished` results are ignored.
+    export_gen: u64,
     ffmpeg_available: bool,
     ffmpeg_version: Option<String>,
     gifski_available: bool,
@@ -266,7 +331,8 @@ enum Message {
     SetWebmQuality(usize),
     // Async export
     ExportTick,
-    ExportFinished(Result<u64, String>),
+    ExportFinished(u64, Result<u64, String>),
+    CancelExport,
     SetOutputScale(usize),
     SetOutputFps(usize),
     SetUseFfmpeg(bool),
@@ -452,6 +518,7 @@ fn save_as_gif_ffmpeg(
     scale: u32,
     fps: Option<u32>,
     gifski: bool,
+    cancel: &Cancel,
     out: &Path,
 ) -> anyhow::Result<u64> {
     let fps = fps.unwrap_or(15);
@@ -472,7 +539,7 @@ fn save_as_gif_ffmpeg(
             let part = temp_dir.path().join(format!("part{}.mp4", i));
             // Force re-encode so every part has uniform codec params and a leading
             // keyframe before they are concatenated with `-c copy`.
-            ffmpeg_export_segment(source, start, end - start, speed, &part, true)?;
+            ffmpeg_export_segment(source, start, end - start, speed, &part, true, cancel)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -483,12 +550,13 @@ fn save_as_gif_ffmpeg(
         std::fs::write(&list_file, &list_content)?;
 
         let merged = temp_dir.path().join("merged.mp4");
-        let o = std::process::Command::new("ffmpeg")
-            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
-            .arg(&list_file)
-            .args(["-c", "copy"])
-            .arg(&merged)
-            .output()?;
+        let o = cancel.run(
+            std::process::Command::new("ffmpeg")
+                .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+                .arg(&list_file)
+                .args(["-c", "copy"])
+                .arg(&merged),
+        )?;
         if !o.status.success() {
             return Err(anyhow::anyhow!(
                 "ffmpeg concat failed: {}",
@@ -549,12 +617,7 @@ fn save_as_gif_ffmpeg(
         if let Some(t) = t_arg {
             cmd.args(["-t", &format!("{:.3}", t)]);
         }
-        let o = cmd
-            .args(["-i"])
-            .arg(actual_source)
-            .args(["-vf", &vf])
-            .arg(out)
-            .output()?;
+        let o = cancel.run(cmd.args(["-i"]).arg(actual_source).args(["-vf", &vf]).arg(out))?;
         if !o.status.success() {
             return Err(anyhow::anyhow!(
                 "ffmpeg GIF export failed: {}",
@@ -592,6 +655,7 @@ fn ffmpeg_export_segment(
     speed: f64,
     out: &Path,
     force_reencode: bool,
+    cancel: &Cancel,
 ) -> anyhow::Result<()> {
     let speed_changed = (speed - 1.0).abs() >= 0.001;
     // start > ~0 means the slice may begin on a non-keyframe; copying would
@@ -626,7 +690,7 @@ fn ffmpeg_export_segment(
         ]);
     }
 
-    let o = cmd.arg(out).output()?;
+    let o = cancel.run(cmd.arg(out))?;
     if !o.status.success() {
         return Err(anyhow::anyhow!(
             "ffmpeg failed: {}",
@@ -639,13 +703,14 @@ fn ffmpeg_export_segment(
 fn save_video_segments(
     source: &Path,
     segments: &[(f64, f64, f64)],
+    cancel: &Cancel,
     out: &Path,
 ) -> anyhow::Result<u64> {
     let tmp = out.with_extension("tmp.mp4");
 
     if segments.len() == 1 {
         let (start, end, speed) = segments[0];
-        ffmpeg_export_segment(source, start, end - start, speed, &tmp, false)?;
+        ffmpeg_export_segment(source, start, end - start, speed, &tmp, false, cancel)?;
     } else {
         let temp_dir = tempfile::TempDir::new()?;
         let mut part_paths = Vec::new();
@@ -653,7 +718,7 @@ fn save_video_segments(
             let part = temp_dir.path().join(format!("part{}.mp4", i));
             // Force re-encode so every part has uniform codec params and a leading
             // keyframe, which keeps the `-c copy` concat below valid.
-            ffmpeg_export_segment(source, start, end - start, speed, &part, true)?;
+            ffmpeg_export_segment(source, start, end - start, speed, &part, true, cancel)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -663,12 +728,13 @@ fn save_video_segments(
             .collect();
         std::fs::write(&list_file, &list_content)?;
 
-        let o = std::process::Command::new("ffmpeg")
-            .args(["-y", "-f", "concat", "-safe", "0", "-i"])
-            .arg(&list_file)
-            .args(["-c", "copy"])
-            .arg(&tmp)
-            .output()?;
+        let o = cancel.run(
+            std::process::Command::new("ffmpeg")
+                .args(["-y", "-f", "concat", "-safe", "0", "-i"])
+                .arg(&list_file)
+                .args(["-c", "copy"])
+                .arg(&tmp),
+        )?;
         if !o.status.success() {
             let _ = std::fs::remove_file(&tmp);
             return Err(anyhow::anyhow!(
@@ -696,6 +762,7 @@ fn save_video_webm(
     quality: WebmQuality,
     scale: u32,
     progress: Option<&Path>,
+    cancel: &Cancel,
     out: &Path,
 ) -> anyhow::Result<u64> {
     let crf = quality.crf();
@@ -745,7 +812,7 @@ fn save_video_webm(
     if let Some(progress) = progress {
         cmd.arg("-progress").arg(progress).arg("-nostats");
     }
-    let o = cmd.arg(&tmp).output()?;
+    let o = cancel.run(cmd.arg(&tmp))?;
     if !o.status.success() {
         let _ = std::fs::remove_file(&tmp);
         return Err(anyhow::anyhow!(
@@ -777,6 +844,8 @@ struct ExportRequest {
     out: PathBuf,
     /// File ffmpeg writes `-progress` to (polled by the UI for the progress bar).
     progress_path: PathBuf,
+    /// Cancellation handle, shared with the UI thread.
+    cancel: Cancel,
 }
 
 /// Run an export to completion. Intended to be called on a blocking thread.
@@ -790,6 +859,7 @@ fn run_export(req: ExportRequest) -> Result<u64, String> {
                     req.output_scale,
                     req.output_fps,
                     req.gifski_available,
+                    &req.cancel,
                     &req.out,
                 )
             } else if let Some((frames, delay_ms)) = &req.gif_frames {
@@ -809,7 +879,7 @@ fn run_export(req: ExportRequest) -> Result<u64, String> {
         }
         ExportFormat::Video => {
             if req.ffmpeg_available {
-                save_video_segments(&req.media_path, &req.segments, &req.out)
+                save_video_segments(&req.media_path, &req.segments, &req.cancel, &req.out)
             } else {
                 Err(anyhow::anyhow!("ffmpeg required for video export"))
             }
@@ -822,6 +892,7 @@ fn run_export(req: ExportRequest) -> Result<u64, String> {
                     req.webm_quality,
                     req.output_scale,
                     Some(&req.progress_path),
+                    &req.cancel,
                     &req.out,
                 )
             } else {
@@ -1013,7 +1084,12 @@ impl MediaEditor {
     }
 
     /// Build an owned export request for the current state, to run on a worker thread.
-    fn export_request(&self, out: PathBuf, progress_path: PathBuf) -> ExportRequest {
+    fn export_request(
+        &self,
+        out: PathBuf,
+        progress_path: PathBuf,
+        cancel: Cancel,
+    ) -> ExportRequest {
         // Only the GIF-from-GIF path needs the decoded frames; capturing them
         // otherwise would clone a large buffer for nothing.
         let gif_frames = if self.export_format == ExportFormat::Gif {
@@ -1044,6 +1120,7 @@ impl MediaEditor {
             gif_frames,
             out,
             progress_path,
+            cancel,
         }
     }
 
@@ -1060,6 +1137,7 @@ impl MediaEditor {
         if self.exporting {
             return Task::none();
         }
+        let cancel = Cancel::new();
         let progress_path =
             std::env::temp_dir().join(format!("snappea-export-{}.progress", std::process::id()));
         let _ = std::fs::remove_file(&progress_path);
@@ -1071,16 +1149,18 @@ impl MediaEditor {
         self.export_ticks = 0;
         self.export_intent = Some(intent);
         self.export_out = out.clone();
-        self.status = fl!("edit-converting");
+        self.export_cancel = Some(cancel.clone());
+        self.export_gen = self.export_gen.wrapping_add(1);
+        let generation = self.export_gen;
 
-        let req = self.export_request(out, progress_path);
+        let req = self.export_request(out, progress_path, cancel);
         Task::perform(
             async move {
                 tokio::task::spawn_blocking(move || run_export(req))
                     .await
                     .unwrap_or_else(|e| Err(e.to_string()))
             },
-            |res| cosmic::Action::App(Message::ExportFinished(res)),
+            move |res| cosmic::Action::App(Message::ExportFinished(generation, res)),
         )
     }
 
@@ -1300,6 +1380,8 @@ impl Application for MediaEditor {
                 export_ticks: 0,
                 export_intent: None,
                 export_out: PathBuf::new(),
+                export_cancel: None,
+                export_gen: 0,
                 output_scale: 100,
                 output_fps: None,
                 ffmpeg_available,
@@ -1717,9 +1799,27 @@ impl Application for MediaEditor {
                 };
                 self.export_progress = creep.max(real) as f32;
             }
-            Message::ExportFinished(result) => {
+            Message::CancelExport => {
+                if let Some(cancel) = self.export_cancel.take() {
+                    cancel.request();
+                }
+                // Invalidate the in-flight result so its ExportFinished is ignored.
+                self.export_gen = self.export_gen.wrapping_add(1);
+                self.exporting = false;
+                self.export_intent = None;
+                let _ = std::fs::remove_file(&self.export_progress_path);
+                // The partially-written output (if any) is left for ffmpeg's own `-y`
+                // overwrite next time; the temp file is removed by the save functions.
+                self.status = fl!("edit-export-cancelled");
+            }
+            Message::ExportFinished(generation, result) => {
+                // Ignore results from a cancelled or superseded export.
+                if generation != self.export_gen {
+                    return Task::none();
+                }
                 self.exporting = false;
                 self.export_progress = 1.0;
+                self.export_cancel = None;
                 let _ = std::fs::remove_file(&self.export_progress_path);
                 let intent = self.export_intent.take();
                 let out = self.export_out.clone();
@@ -1810,6 +1910,30 @@ impl Application for MediaEditor {
         } else {
             cosmic::iced::Subscription::none()
         }
+    }
+
+    fn dialog(&self) -> Option<cosmic::Element<'_, Self::Message>> {
+        if !self.exporting {
+            return None;
+        }
+        // A modal dialog blocks the rest of the UI, so settings and the
+        // Save/Copy buttons can't be touched until the export finishes or is
+        // cancelled.
+        let pct = (self.export_progress * 100.0).round() as u32;
+        let progress = cosmic::iced::widget::progress_bar(0.0..=1.0, self.export_progress)
+            .girth(Length::Fixed(8.0))
+            .length(Length::Fill);
+        Some(
+            widget::dialog()
+                .title(fl!("edit-converting"))
+                .body(format!("{}%", pct))
+                .control(progress)
+                .primary_action(
+                    widget::button::standard(fl!("edit-cancel"))
+                        .on_press(Message::CancelExport),
+                )
+                .into(),
+        )
     }
 
     fn header_end(&self) -> Vec<cosmic::Element<'_, Self::Message>> {
@@ -2253,24 +2377,7 @@ impl Application for MediaEditor {
             .align_items(Alignment::Center)
             .width(Length::Fill);
 
-        // ── Conversion progress ───────────────────────────────────
-        let progress_row: cosmic::Element<'_, Message> = if self.exporting {
-            let pct = (self.export_progress * 100.0).round() as u32;
-            widget::row::with_children(vec![
-                widget::text::caption(fl!("edit-converting")).into(),
-                cosmic::iced::widget::progress_bar(0.0..=1.0, self.export_progress)
-                    .girth(Length::Fixed(6.0))
-                    .length(Length::Fill)
-                    .into(),
-                widget::text::caption(format!("{}%", pct)).into(),
-            ])
-            .spacing(8)
-            .align_y(Alignment::Center)
-            .width(Length::Fill)
-            .into()
-        } else {
-            cosmic::iced::widget::space().height(Length::Fixed(0.0)).into()
-        };
+        // Conversion progress is shown as a blocking modal via `dialog()`.
 
         // ── About panel (collapsible) ─────────────────────────────
         widget::column::with_children(vec![
@@ -2281,7 +2388,6 @@ impl Application for MediaEditor {
             output_settings.into(),
             cosmic::widget::divider::horizontal::light().into(),
             action_row.into(),
-            progress_row,
             status_bar.into(),
         ])
         .spacing(8)
