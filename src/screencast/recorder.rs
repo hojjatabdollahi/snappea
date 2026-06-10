@@ -45,6 +45,66 @@ fn compatible_software_encoder(
     }
 }
 
+/// Returns true if `container`'s muxer can accept a stream encoded with `codec`.
+///
+/// This matters because the encoder is chosen independently of the container
+/// (from config or `best_encoder()`), so an incompatible pairing is possible —
+/// e.g. an H.264 encoder with a WebM container. `webmmux` only accepts VP8/VP9/AV1,
+/// so feeding it H.264 fails to link the pipeline and silently produces no file.
+fn container_supports_codec(container: Container, codec: Codec) -> bool {
+    match container {
+        Container::Mp4 => matches!(codec, Codec::H264 | Codec::H265),
+        Container::Webm => matches!(codec, Codec::VP9 | Codec::AV1),
+        // matroskamux accepts all of the codecs we support
+        Container::Mkv => true,
+    }
+}
+
+/// Pick the best available encoder whose codec is compatible with `container`,
+/// preferring hardware encoders. `encoders` is assumed sorted by priority.
+fn compatible_encoder(encoders: &[EncoderInfo], container: Container) -> Option<EncoderInfo> {
+    encoders
+        .iter()
+        .find(|e| e.hardware && container_supports_codec(container, e.codec))
+        .or_else(|| {
+            encoders
+                .iter()
+                .find(|e| container_supports_codec(container, e.codec))
+        })
+        .cloned()
+}
+
+/// Ensure the requested encoder can actually be muxed into the chosen container,
+/// substituting a compatible encoder when it cannot.
+fn ensure_container_compatible(
+    requested: EncoderInfo,
+    encoders: &[EncoderInfo],
+    container: Container,
+) -> Result<EncoderInfo> {
+    if container_supports_codec(container, requested.codec) {
+        return Ok(requested);
+    }
+
+    let fallback = compatible_encoder(encoders, container).with_context(|| {
+        format!(
+            "Encoder '{}' ({:?}) cannot be muxed into a {:?} container, and no compatible \
+             encoder is installed. Install a suitable GStreamer encoder (e.g. vp9enc for WebM).",
+            requested.gst_element, requested.codec, container
+        )
+    })?;
+
+    log::warn!(
+        "Encoder '{}' ({:?}) is not compatible with the {:?} container; using '{}' ({:?}) instead",
+        requested.gst_element,
+        requested.codec,
+        container,
+        fallback.gst_element,
+        fallback.codec
+    );
+
+    Ok(fallback)
+}
+
 fn select_effective_encoder(
     requested: EncoderInfo,
     encoders: &[EncoderInfo],
@@ -234,6 +294,11 @@ pub fn start_recording(
                 encoder
             )
         })?;
+
+    // Make sure the encoder's codec can actually be muxed into the chosen container
+    // (e.g. an H.264 encoder cannot go into WebM); otherwise swap to a compatible one.
+    let requested_encoder_info =
+        ensure_container_compatible(requested_encoder_info, &encoders, container)?;
 
     // Create GStreamer pipeline
     log::info!("Creating GStreamer pipeline...");
@@ -710,7 +775,12 @@ pub fn start_recording(
 
         while !STOP_REQUESTED.load(Ordering::Relaxed) {
             let frame_start = Instant::now();
-            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+            // Use real wall-clock time so the recording's duration matches how long
+            // it actually ran. Frame-count-based timestamps assume the target fps was
+            // sustained; when capture lags (e.g. large/4K regions) fewer frames are
+            // produced but spaced at the ideal interval, yielding a too-short video
+            // that plays sped up and "doesn't show the whole recording".
+            let timestamp = start_time.elapsed().as_nanos() as u64;
 
             // Try to get a new frame (non-blocking)
             let frame_data = match frame_rx.try_recv() {
@@ -777,7 +847,12 @@ pub fn start_recording(
         // DMA-buf mode: use synchronous capture (TODO: async DMA-buf capture)
         while !STOP_REQUESTED.load(Ordering::Relaxed) {
             let frame_start = Instant::now();
-            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+            // Use real wall-clock time so the recording's duration matches how long
+            // it actually ran. Frame-count-based timestamps assume the target fps was
+            // sustained; when capture lags (e.g. large/4K regions) fewer frames are
+            // produced but spaced at the ideal interval, yielding a too-short video
+            // that plays sped up and "doesn't show the whole recording".
+            let timestamp = start_time.elapsed().as_nanos() as u64;
 
             let pool = buffer_pool.as_mut().unwrap();
             match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
@@ -1127,6 +1202,11 @@ pub fn start_recording_thread(
         .find(|e| e.gst_element == encoder)
         .cloned()
         .with_context(|| format!("Encoder '{}' not available.", encoder))?;
+
+    // Make sure the encoder's codec can actually be muxed into the chosen container
+    // (e.g. an H.264 encoder cannot go into WebM); otherwise swap to a compatible one.
+    let requested_encoder_info =
+        ensure_container_compatible(requested_encoder_info, &encoders, container)?;
 
     // Calculate crop region if needed
     let (region_x, region_y, record_width, record_height) = region;
@@ -1522,7 +1602,12 @@ pub fn start_recording_thread(
     } else {
         while !stop_flag.load(Ordering::Relaxed) {
             let frame_start = Instant::now();
-            let timestamp = frame_count * 1_000_000_000 / framerate as u64;
+            // Use real wall-clock time so the recording's duration matches how long
+            // it actually ran. Frame-count-based timestamps assume the target fps was
+            // sustained; when capture lags (e.g. large/4K regions) fewer frames are
+            // produced but spaced at the ideal interval, yielding a too-short video
+            // that plays sped up and "doesn't show the whole recording".
+            let timestamp = start_time.elapsed().as_nanos() as u64;
 
             let pool = buffer_pool.as_mut().unwrap();
             match capture_frame_dmabuf_triple(&wayland_helper, &session, pool, &pipeline, timestamp)
@@ -1553,4 +1638,77 @@ pub fn start_recording_thread(
     log::info!("Recording finished: {}", output_file.display());
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn enc(gst_element: &str, codec: Codec, hardware: bool, priority: u8) -> EncoderInfo {
+        EncoderInfo {
+            name: gst_element.to_string(),
+            gst_element: gst_element.to_string(),
+            codec,
+            hardware,
+            supports_dmabuf_zero_copy: false,
+            priority,
+        }
+    }
+
+    #[test]
+    fn container_codec_compatibility() {
+        assert!(container_supports_codec(Container::Mp4, Codec::H264));
+        assert!(container_supports_codec(Container::Mp4, Codec::H265));
+        assert!(!container_supports_codec(Container::Mp4, Codec::VP9));
+
+        assert!(container_supports_codec(Container::Webm, Codec::VP9));
+        assert!(!container_supports_codec(Container::Webm, Codec::H264));
+
+        // Matroska accepts everything we support
+        assert!(container_supports_codec(Container::Mkv, Codec::H264));
+        assert!(container_supports_codec(Container::Mkv, Codec::VP9));
+    }
+
+    #[test]
+    fn webm_with_h264_encoder_falls_back_to_vp9() {
+        let encoders = vec![
+            enc("vaapih264enc", Codec::H264, true, 10),
+            enc("x264enc", Codec::H264, false, 100),
+            enc("vp9enc", Codec::VP9, false, 101),
+        ];
+        let requested = encoders[0].clone();
+
+        let chosen = ensure_container_compatible(requested, &encoders, Container::Webm).unwrap();
+        assert_eq!(chosen.gst_element, "vp9enc");
+    }
+
+    #[test]
+    fn compatible_encoder_unchanged_for_mp4_h264() {
+        let encoders = vec![enc("vaapih264enc", Codec::H264, true, 10)];
+        let requested = encoders[0].clone();
+
+        let chosen = ensure_container_compatible(requested, &encoders, Container::Mp4).unwrap();
+        assert_eq!(chosen.gst_element, "vaapih264enc");
+    }
+
+    #[test]
+    fn webm_prefers_hardware_vp9_when_available() {
+        let encoders = vec![
+            enc("vaapih264enc", Codec::H264, true, 10),
+            enc("vaapivp9enc", Codec::VP9, true, 12),
+            enc("vp9enc", Codec::VP9, false, 101),
+        ];
+        let requested = encoders[0].clone();
+
+        let chosen = ensure_container_compatible(requested, &encoders, Container::Webm).unwrap();
+        assert_eq!(chosen.gst_element, "vaapivp9enc");
+    }
+
+    #[test]
+    fn webm_with_no_compatible_encoder_errors() {
+        let encoders = vec![enc("vaapih264enc", Codec::H264, true, 10)];
+        let requested = encoders[0].clone();
+
+        assert!(ensure_container_compatible(requested, &encoders, Container::Webm).is_err());
+    }
 }

@@ -1095,7 +1095,12 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
             // Generate timestamped output filename
             let timestamp = chrono::Local::now().format("%Y-%m-%d_%H-%M-%S");
             let config = crate::config::SnapPeaConfig::load();
-            let container = config.video_container;
+            // WebM is no longer a recording format (realtime software VP9 is slow and
+            // blocky — it's an editor export instead). Coerce any stale saved value.
+            let container = match config.video_container {
+                crate::config::Container::Webm => crate::config::Container::Mp4,
+                other => other,
+            };
             let output_dir = dirs::video_dir()
                 .or_else(|| dirs::home_dir())
                 .unwrap_or_else(|| std::path::PathBuf::from("."));

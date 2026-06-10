@@ -14,8 +14,12 @@ use crate::session::state::SettingsTab;
 /// Available framerate options
 const FRAMERATE_OPTIONS: &[u32] = &[24, 30, 60];
 
-/// All container format options
-const CONTAINER_OPTIONS: &[Container] = &[Container::Mp4, Container::Webm, Container::Mkv];
+/// All container format options.
+///
+/// WebM is intentionally not a recording format: live software-VP9 encoding is
+/// far slower than realtime and looks blocky. WebM is offered as a quality-tunable
+/// export in the editor instead.
+const CONTAINER_OPTIONS: &[Container] = &[Container::Mp4, Container::Mkv];
 
 /// Build the settings drawer element
 #[allow(clippy::too_many_arguments)]
@@ -223,7 +227,7 @@ where
     let container_label = text::body(fl!("format"));
 
     // Use static array for container names (these are technical names, not translated)
-    static CONTAINER_NAMES: &[&str] = &["MP4", "WebM", "MKV"];
+    static CONTAINER_NAMES: &[&str] = &["MP4", "MKV"];
 
     let selected_container_idx = CONTAINER_OPTIONS.iter().position(|c| *c == video_container);
 

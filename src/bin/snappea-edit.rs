@@ -49,6 +49,27 @@ enum MediaType {
 enum ExportFormat {
     Gif,
     Video,
+    Webm,
+}
+
+/// Quality preset for WebM (VP9) export, mapped to a libvpx-vp9 CRF value.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum WebmQuality {
+    Low,
+    #[default]
+    Medium,
+    High,
+}
+
+impl WebmQuality {
+    /// VP9 constant-quality level (lower = higher quality / larger file).
+    fn crf(self) -> u32 {
+        match self {
+            WebmQuality::Low => 40,
+            WebmQuality::Medium => 31,
+            WebmQuality::High => 20,
+        }
+    }
 }
 
 fn detect_media_type(path: &Path) -> MediaType {
@@ -183,6 +204,7 @@ struct MediaEditor {
 
     // Output settings
     export_format: ExportFormat,
+    webm_quality: WebmQuality,
     output_scale: u32,
     output_fps: Option<u32>,
     ffmpeg_available: bool,
@@ -221,6 +243,7 @@ enum Message {
     VideoReady,
     // Output settings
     SetExportFormat(usize),
+    SetWebmQuality(usize),
     SetOutputScale(usize),
     SetOutputFps(usize),
     SetUseFfmpeg(bool),
@@ -424,7 +447,9 @@ fn save_as_gif_ffmpeg(
         let mut part_paths = Vec::new();
         for (i, &(start, end, speed)) in segments.iter().enumerate() {
             let part = temp_dir.path().join(format!("part{}.mp4", i));
-            ffmpeg_export_segment(source, start, end - start, speed, &part)?;
+            // Force re-encode so every part has uniform codec params and a leading
+            // keyframe before they are concatenated with `-c copy`.
+            ffmpeg_export_segment(source, start, end - start, speed, &part, true)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -525,13 +550,31 @@ fn save_as_gif_ffmpeg(
     Ok(std::fs::metadata(out)?.len())
 }
 
+/// Export a single `[start, start + dur]` slice of `source` to `out`.
+///
+/// Stream copy (`-c copy`) is fast but can only cut on keyframe boundaries: when
+/// `start` lands between keyframes the copied output begins on a P-frame with no
+/// preceding keyframe, which decodes to garbage and many players reject as broken.
+/// (Deleting the *first* section is exactly this case — the kept piece starts
+/// mid-stream.) So we only stream-copy when the cut starts at the very beginning
+/// of the file (always a keyframe) and the speed is unchanged; otherwise we
+/// re-encode, which guarantees a leading keyframe and a frame-accurate cut.
+///
+/// `force_reencode` makes every part uniform for concatenation: mixing copied and
+/// re-encoded parts in a `-c copy` concat produces mismatched codec parameters.
 fn ffmpeg_export_segment(
     source: &Path,
     start: f64,
     dur: f64,
     speed: f64,
     out: &Path,
+    force_reencode: bool,
 ) -> anyhow::Result<()> {
+    let speed_changed = (speed - 1.0).abs() >= 0.001;
+    // start > ~0 means the slice may begin on a non-keyframe; copying would
+    // leave the output without a leading keyframe.
+    let needs_reencode = force_reencode || speed_changed || start > 0.001;
+
     let mut cmd = std::process::Command::new("ffmpeg");
     cmd.args(["-y", "-ss"])
         .arg(format!("{:.3}", start))
@@ -540,11 +583,24 @@ fn ffmpeg_export_segment(
         .args(["-i"])
         .arg(source);
 
-    if (speed - 1.0).abs() < 0.001 {
+    if !needs_reencode {
         cmd.args(["-c", "copy"]);
     } else {
-        let setpts = format!("setpts={}*PTS", 1.0 / speed);
-        cmd.args(["-filter:v", &setpts, "-an"]);
+        if speed_changed {
+            let setpts = format!("setpts={}*PTS", 1.0 / speed);
+            cmd.args(["-filter:v", &setpts]);
+        }
+        cmd.args([
+            "-c:v",
+            "libx264",
+            "-preset",
+            "veryfast",
+            "-crf",
+            "18",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+        ]);
     }
 
     let o = cmd.arg(out).output()?;
@@ -566,13 +622,15 @@ fn save_video_segments(
 
     if segments.len() == 1 {
         let (start, end, speed) = segments[0];
-        ffmpeg_export_segment(source, start, end - start, speed, &tmp)?;
+        ffmpeg_export_segment(source, start, end - start, speed, &tmp, false)?;
     } else {
         let temp_dir = tempfile::TempDir::new()?;
         let mut part_paths = Vec::new();
         for (i, &(start, end, speed)) in segments.iter().enumerate() {
             let part = temp_dir.path().join(format!("part{}.mp4", i));
-            ffmpeg_export_segment(source, start, end - start, speed, &part)?;
+            // Force re-encode so every part has uniform codec params and a leading
+            // keyframe, which keeps the `-c copy` concat below valid.
+            ffmpeg_export_segment(source, start, end - start, speed, &part, true)?;
             part_paths.push(part);
         }
         let list_file = temp_dir.path().join("concat.txt");
@@ -595,6 +653,79 @@ fn save_video_segments(
                 String::from_utf8_lossy(&o.stderr)
             ));
         }
+    }
+
+    std::fs::rename(&tmp, out)?;
+    Ok(std::fs::metadata(out)?.len())
+}
+
+/// Transcode the kept segments to a WebM (VP9) file at the requested quality.
+///
+/// Unlike recording, an export is not realtime-constrained, so this uses libvpx
+/// in good-quality mode with constant-quality (CRF) rate control — which gives
+/// far cleaner output than the realtime VP9 encoder. The whole thing is a single
+/// ffmpeg pass: each kept segment is trimmed and speed-adjusted, the pieces are
+/// concatenated, optionally downscaled, then encoded once. Re-encoding from
+/// decoded frames makes the cuts frame-accurate and guarantees a leading keyframe.
+fn save_video_webm(
+    source: &Path,
+    segments: &[(f64, f64, f64)],
+    quality: WebmQuality,
+    scale: u32,
+    out: &Path,
+) -> anyhow::Result<u64> {
+    let crf = quality.crf();
+    let tmp = out.with_extension("tmp.webm");
+
+    let mut fc = String::new();
+    for (i, &(start, end, speed)) in segments.iter().enumerate() {
+        fc.push_str(&format!(
+            "[0:v]trim=start={:.3}:end={:.3},setpts=(PTS-STARTPTS)/{:.4}[v{}];",
+            start, end, speed, i
+        ));
+    }
+    for i in 0..segments.len() {
+        fc.push_str(&format!("[v{}]", i));
+    }
+    fc.push_str(&format!("concat=n={}:v=1:a=0", segments.len()));
+    if scale < 100 {
+        // Keep dimensions even for yuv420p.
+        fc.push_str(&format!(
+            ",scale=trunc(iw*{0}/200)*2:trunc(ih*{0}/200)*2",
+            scale
+        ));
+    }
+    fc.push_str("[out]");
+
+    let o = std::process::Command::new("ffmpeg")
+        .args(["-y", "-i"])
+        .arg(source)
+        .args(["-filter_complex", &fc, "-map", "[out]"])
+        .args([
+            "-c:v",
+            "libvpx-vp9",
+            "-crf",
+            &crf.to_string(),
+            "-b:v",
+            "0",
+            "-deadline",
+            "good",
+            "-cpu-used",
+            "2",
+            "-row-mt",
+            "1",
+            "-pix_fmt",
+            "yuv420p",
+            "-an",
+        ])
+        .arg(&tmp)
+        .output()?;
+    if !o.status.success() {
+        let _ = std::fs::remove_file(&tmp);
+        return Err(anyhow::anyhow!(
+            "ffmpeg WebM export failed: {}",
+            String::from_utf8_lossy(&o.stderr)
+        ));
     }
 
     std::fs::rename(&tmp, out)?;
@@ -633,7 +764,11 @@ fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[
     }
     let fps = num_samples as f64 / duration;
     let output = std::process::Command::new("ffmpeg")
-        .args(["-i"])
+        // Decode only keyframes. The timeline color strip is a coarse overview, so
+        // sampling keyframes (≈1/sec) instead of every frame avoids a full decode of
+        // the whole file — the main reason opening a long recording felt slow. The
+        // fps filter still resamples to `num_samples` colours.
+        .args(["-skip_frame", "nokey", "-i"])
         .arg(path)
         .args([
             "-vf",
@@ -805,6 +940,33 @@ impl MediaEditor {
                     Err(anyhow::anyhow!("ffmpeg required for video export"))
                 }
             }
+            ExportFormat::Webm => {
+                if self.ffmpeg_available {
+                    save_video_webm(
+                        &self.media_path,
+                        &segments,
+                        self.webm_quality,
+                        self.output_scale,
+                        output_path,
+                    )
+                } else {
+                    Err(anyhow::anyhow!("ffmpeg required for WebM export"))
+                }
+            }
+        }
+    }
+
+    /// File extension for the current export format.
+    fn export_extension(&self) -> String {
+        match self.export_format {
+            ExportFormat::Gif => "gif".to_string(),
+            ExportFormat::Webm => "webm".to_string(),
+            ExportFormat::Video => self
+                .media_path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("mp4")
+                .to_string(),
         }
     }
 }
@@ -1002,6 +1164,7 @@ impl Application for MediaEditor {
                     MediaType::Gif => ExportFormat::Gif,
                     MediaType::Video => ExportFormat::Video,
                 },
+                webm_quality: WebmQuality::default(),
                 output_scale: 100,
                 output_fps: None,
                 ffmpeg_available,
@@ -1337,7 +1500,15 @@ impl Application for MediaEditor {
             Message::SetExportFormat(i) => {
                 self.export_format = match i {
                     0 => ExportFormat::Gif,
-                    _ => ExportFormat::Video,
+                    1 => ExportFormat::Video,
+                    _ => ExportFormat::Webm,
+                };
+            }
+            Message::SetWebmQuality(i) => {
+                self.webm_quality = match i {
+                    0 => WebmQuality::Low,
+                    1 => WebmQuality::Medium,
+                    _ => WebmQuality::High,
                 };
             }
             Message::SetOutputScale(i) => {
@@ -1360,7 +1531,9 @@ impl Application for MediaEditor {
 
             // ── Actions ───────────────────────────────────────────────
             Message::Save => {
-                let path = self.media_path.clone();
+                // Write next to the source using the export format's extension, so a
+                // WebM/GIF export never overwrites the original MP4 with mismatched data.
+                let path = self.media_path.with_extension(self.export_extension());
                 match self.export_to(&path) {
                     Ok(size) => {
                         self.status = fl!(
@@ -1378,14 +1551,7 @@ impl Application for MediaEditor {
                     .unwrap_or_default()
                     .to_string_lossy()
                     .to_string();
-                let ext = match self.export_format {
-                    ExportFormat::Gif => "gif",
-                    ExportFormat::Video => self
-                        .media_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("mp4"),
-                };
+                let ext = self.export_extension();
                 let default_name = fl!("edit-trimmed-filename", stem = stem, ext = ext);
                 let start_dir = self.media_path.parent().map(|p| p.to_path_buf());
                 return Task::perform(
@@ -1411,14 +1577,7 @@ impl Application for MediaEditor {
             },
             Message::SaveAsChosen(None) => {}
             Message::CopyToClipboard => {
-                let ext = match self.export_format {
-                    ExportFormat::Gif => "gif",
-                    ExportFormat::Video => self
-                        .media_path
-                        .extension()
-                        .and_then(|e| e.to_str())
-                        .unwrap_or("mp4"),
-                };
+                let ext = self.export_extension();
                 let tmp_path = PathBuf::from(format!("/tmp/snappea-clipboard.{}", ext));
 
                 match self.export_to(&tmp_path) {
@@ -1817,13 +1976,37 @@ impl Application for MediaEditor {
         let format_section: cosmic::Element<'_, Message> = widget::row::with_children(vec![
             widget::text::caption(fl!("edit-format")).into(),
             Toggle::with_labels(
-                &[&format_gif_label, &format_video_label],
+                &[&format_gif_label, &format_video_label, "WebM"],
                 match self.export_format {
                     ExportFormat::Gif => 0,
-                    _ => 1,
+                    ExportFormat::Video => 1,
+                    ExportFormat::Webm => 2,
                 },
             )
             .on_select(Message::SetExportFormat)
+            .pill_thickness(26.0)
+            .circle_size(22.0)
+            .into(),
+        ])
+        .spacing(8)
+        .align_y(Alignment::Center)
+        .into();
+
+        let quality_section: cosmic::Element<'_, Message> = widget::row::with_children(vec![
+            widget::text::caption(fl!("edit-quality")).into(),
+            Toggle::with_labels(
+                &[
+                    &fl!("edit-quality-low"),
+                    &fl!("edit-quality-medium"),
+                    &fl!("edit-quality-high"),
+                ],
+                match self.webm_quality {
+                    WebmQuality::Low => 0,
+                    WebmQuality::Medium => 1,
+                    WebmQuality::High => 2,
+                },
+            )
+            .on_select(Message::SetWebmQuality)
             .pill_thickness(26.0)
             .circle_size(22.0)
             .into(),
@@ -1890,6 +2073,9 @@ impl Application for MediaEditor {
                         .into(),
                 );
             }
+        } else if self.export_format == ExportFormat::Webm {
+            output_items.push(quality_section);
+            output_items.push(scale_section);
         }
         let output_settings = cosmic::widget::flex_row::flex_row(output_items)
             .row_spacing(8)
