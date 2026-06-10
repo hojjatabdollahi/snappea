@@ -916,27 +916,37 @@ fn read_progress_seconds(path: &Path) -> Option<f64> {
 // ── Color extraction ─────────────────────────────────────────────────────
 
 fn extract_gif_colors(frames: &[RgbaImage]) -> Vec<[u8; 3]> {
-    frames
-        .iter()
-        .map(|img| {
-            let pixels = img.as_raw();
-            let count = (pixels.len() / 4) as u64;
+    let bands = video_scrubber::COLOR_BANDS;
+    let mut out = Vec::with_capacity(frames.len() * bands);
+    for img in frames {
+        let (w, h) = (img.width(), img.height());
+        // Average each of `bands` horizontal slices of the frame (top→bottom),
+        // matching the sample-major band layout the video path produces.
+        for band in 0..bands {
+            let y0 = (band as u32 * h) / bands as u32;
+            let y1 = (((band + 1) as u32 * h) / bands as u32).max(y0 + 1).min(h);
+            let (mut r_sum, mut g_sum, mut b_sum, mut count) = (0u64, 0u64, 0u64, 0u64);
+            for y in y0..y1 {
+                for x in 0..w {
+                    let p = img.get_pixel(x, y).0;
+                    r_sum += p[0] as u64;
+                    g_sum += p[1] as u64;
+                    b_sum += p[2] as u64;
+                    count += 1;
+                }
+            }
             if count == 0 {
-                return [0, 0, 0];
+                out.push([0, 0, 0]);
+            } else {
+                out.push([
+                    (r_sum / count) as u8,
+                    (g_sum / count) as u8,
+                    (b_sum / count) as u8,
+                ]);
             }
-            let (mut r_sum, mut g_sum, mut b_sum) = (0u64, 0u64, 0u64);
-            for chunk in pixels.chunks_exact(4) {
-                r_sum += chunk[0] as u64;
-                g_sum += chunk[1] as u64;
-                b_sum += chunk[2] as u64;
-            }
-            [
-                (r_sum / count) as u8,
-                (g_sum / count) as u8,
-                (b_sum / count) as u8,
-            ]
-        })
-        .collect()
+        }
+    }
+    out
 }
 
 fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[u8; 3]> {
@@ -953,7 +963,15 @@ fn extract_video_colors(path: &Path, duration: f64, num_samples: usize) -> Vec<[
         .arg(path)
         .args([
             "-vf",
-            &format!("fps={:.4},scale=1:1", fps),
+            // Collapse width to 1 and average the frame into COLOR_BANDS horizontal
+            // bands (area filter = box average), so each output pixel is the mean
+            // colour of one row-slice of the frame. Output is sample-major: all
+            // bands of one frame (top→bottom), then the next frame.
+            &format!(
+                "fps={:.4},scale=1:{}:flags=area",
+                fps,
+                video_scrubber::COLOR_BANDS
+            ),
             "-f",
             "rawvideo",
             "-pix_fmt",
