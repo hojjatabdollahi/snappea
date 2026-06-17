@@ -1780,7 +1780,7 @@ impl Application for MediaEditor {
                     .to_string_lossy()
                     .to_string();
                 let ext = self.export_extension();
-                let default_name = fl!("edit-trimmed-filename", stem = stem, ext = ext);
+                let default_name = format!("{stem}-trimmed.{ext}");
                 let start_dir = self.media_path.parent().map(|p| p.to_path_buf());
                 return Task::perform(
                     async move {

@@ -194,7 +194,6 @@ edit-cancel = Cancel
 edit-export-cancelled = Export cancelled
 edit-scale = Scale
 edit-trim = Trim
-edit-trimmed-filename = { $stem }-trimmed.{ $ext }
 edit-optimize-ffmpeg = Optimize (ffmpeg)
 edit-saved-size = Saved ({ $size } KB)
 edit-saved-path-size = Saved { $path } ({ $size } KB)
