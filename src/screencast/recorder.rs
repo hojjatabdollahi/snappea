@@ -105,6 +105,46 @@ fn ensure_container_compatible(
     Ok(fallback)
 }
 
+/// Work around a GStreamer VA-API H.265 encoder bug: for output widths that are
+/// not a multiple of 64 (the HEVC coding-tree-unit size), `vah265enc` /
+/// `vaapih265enc` round the coded width up to the next multiple of 64 and fail to
+/// emit a conformance/cropping window, so the saved video is too wide with a
+/// strip of garbage on the right edge (e.g. a 2256px screen becomes 2304px). The
+/// H.264 encoders handle every width correctly, including via the zero-copy path,
+/// so substitute a hardware H.264 encoder in that case. (ffmpeg's HEVC VA-API
+/// encoder is unaffected; this is specific to the GStreamer elements.)
+fn substitute_h265_for_unaligned_width(
+    requested: EncoderInfo,
+    encoders: &[EncoderInfo],
+    width: u32,
+) -> EncoderInfo {
+    if requested.codec != Codec::H265 || width % 64 == 0 {
+        return requested;
+    }
+
+    let Some(h264) = encoders
+        .iter()
+        .find(|e| e.hardware && e.codec == Codec::H264)
+        .or_else(|| encoders.iter().find(|e| e.codec == Codec::H264))
+    else {
+        log::warn!(
+            "H.265 width {}px is not a multiple of 64 (GStreamer VA encoder mis-sizes it), \
+             but no H.264 encoder is available to substitute; output may be too wide",
+            width
+        );
+        return requested;
+    };
+
+    log::info!(
+        "Substituting '{}' for '{}': H.265 width {}px is not 64-aligned, which the GStreamer \
+         VA H.265 encoder encodes at the wrong (rounded-up) width",
+        h264.gst_element,
+        requested.gst_element,
+        width
+    );
+    h264.clone()
+}
+
 fn select_effective_encoder(
     requested: EncoderInfo,
     encoders: &[EncoderInfo],
@@ -401,6 +441,7 @@ pub fn start_recording(
         copied_path_reason,
         output_size,
     );
+    let encoder_info = substitute_h265_for_unaligned_width(encoder_info, &encoders, output_size.0);
     let zero_copy_allowed = copied_path_reason.is_none();
 
     log::info!(
@@ -1273,6 +1314,7 @@ pub fn start_recording_thread(
         copied_path_reason,
         output_size,
     );
+    let encoder_info = substitute_h265_for_unaligned_width(encoder_info, &encoders, output_size.0);
     let zero_copy_allowed = copied_path_reason.is_none();
 
     log::info!(
