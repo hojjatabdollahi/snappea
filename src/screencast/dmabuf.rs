@@ -73,20 +73,25 @@ impl DmabufContext {
     ) -> Result<DmabufBuffer> {
         let usage = gbm::BufferObjectFlags::RENDERING | gbm::BufferObjectFlags::LINEAR;
 
-        let bo = if modifier == DrmModifier::Linear || modifier == DrmModifier::Invalid {
-            // Use simple allocation for linear/implicit modifier
+        let bo = if modifier == DrmModifier::Invalid {
+            // Implicit modifier: plain allocation, layout is the driver's business
             self.gbm_device
                 .create_buffer_object::<()>(width, height, format, usage)
                 .map_err(|e| anyhow::anyhow!("Failed to create GBM buffer object: {:?}", e))?
         } else {
-            // Use modifier-aware allocation
+            // Explicit modifier (incl. Linear): must go through the modifier-aware API so the
+            // exported dmabuf carries the modifier. A plain allocation reports Invalid even
+            // when the layout is linear, and Vulkan compositors cannot import
+            // implicit-modifier buffers (EGL/GLES ones can, which masked this).
+            // The LINEAR usage flag must NOT be combined with an explicit modifier list
+            // (Mesa rejects it); the modifier already pins the layout.
             self.gbm_device
                 .create_buffer_object_with_modifiers2::<()>(
                     width,
                     height,
                     format,
                     [modifier].into_iter(),
-                    usage,
+                    usage - gbm::BufferObjectFlags::LINEAR,
                 )
                 .map_err(|e| {
                     anyhow::anyhow!("Failed to create GBM buffer object with modifier: {:?}", e)
@@ -129,7 +134,7 @@ impl DmabufContext {
         // Try to create a small test buffer
         let usage = gbm::BufferObjectFlags::RENDERING | gbm::BufferObjectFlags::LINEAR;
 
-        if modifier == DrmModifier::Linear || modifier == DrmModifier::Invalid {
+        if modifier == DrmModifier::Invalid {
             self.gbm_device
                 .create_buffer_object::<()>(64, 64, format, usage)
                 .is_ok()
@@ -140,7 +145,7 @@ impl DmabufContext {
                     64,
                     format,
                     [modifier].into_iter(),
-                    usage,
+                    usage - gbm::BufferObjectFlags::LINEAR,
                 )
                 .is_ok()
         }
