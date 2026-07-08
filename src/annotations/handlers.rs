@@ -3,8 +3,8 @@
 //! Handles DrawMsg for all annotation drawing operations.
 
 use crate::domain::{
-    Annotation, ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation,
-    RectOutlineAnnotation, RedactAnnotation,
+    Annotation, ArrowAnnotation, CircleOutlineAnnotation, MAGNIFIER_MAX_ZOOM, MAGNIFIER_MIN_ZOOM,
+    MagnifierAnnotation, PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
 };
 use crate::screenshot::Args;
 use crate::session::messages::{DrawAction, DrawMsg};
@@ -18,6 +18,30 @@ pub fn handle_draw_msg(args: &mut Args, msg: DrawMsg) {
         DrawMsg::Arrow(action) => handle_arrow(args, action),
         DrawMsg::Circle(action) => handle_circle(args, action),
         DrawMsg::Rectangle(action) => handle_rectangle(args, action),
+        DrawMsg::Magnifier(action) => handle_magnifier(args, action),
+        DrawMsg::MagnifierSelect(index) => {
+            args.annotations.selected_magnifier = index;
+        }
+        DrawMsg::MagnifierMove(index, x, y) => {
+            args.annotations.selected_magnifier = Some(index);
+            args.annotations.edit_selected_magnifier(|m| {
+                let r = m.radius();
+                m.set_geometry(x, y, r);
+            });
+        }
+        DrawMsg::MagnifierResize(index, radius) => {
+            args.annotations.selected_magnifier = Some(index);
+            args.annotations.edit_selected_magnifier(|m| {
+                let (cx, cy) = m.center();
+                m.set_geometry(cx, cy, radius);
+            });
+        }
+        DrawMsg::MagnifierSetZoom(index, zoom) => {
+            args.annotations.selected_magnifier = Some(index);
+            let zoom = zoom.clamp(MAGNIFIER_MIN_ZOOM, MAGNIFIER_MAX_ZOOM);
+            args.annotations
+                .edit_selected_magnifier(|m| m.magnification = zoom);
+        }
         DrawMsg::Redact(action) => handle_redact(args, action),
         DrawMsg::Pixelate(action) => handle_pixelate(args, action),
         DrawMsg::ClearShapes => args.annotations.clear_shapes(),
@@ -139,6 +163,48 @@ fn handle_rectangle(args: &mut Args, action: DrawAction) {
 }
 
 // ============================================================================
+// Magnifier handlers
+// ============================================================================
+
+fn handle_magnifier(args: &mut Args, action: DrawAction) {
+    match action {
+        DrawAction::ModeToggle => {
+            args.annotations.magnifier_mode = !args.annotations.magnifier_mode;
+            if !args.annotations.magnifier_mode {
+                args.annotations.magnifier_drawing = None;
+                args.annotations.selected_magnifier = None;
+            } else {
+                disable_other_modes(args, Mode::Magnifier);
+                args.detection.clear();
+            }
+        }
+        DrawAction::Start(x, y) => {
+            if args.annotations.magnifier_mode {
+                args.annotations.magnifier_drawing = Some((x, y));
+            }
+        }
+        DrawAction::End(x, y) => {
+            if let Some((start_x, start_y)) = args.annotations.magnifier_drawing.take() {
+                let magnifier = MagnifierAnnotation {
+                    start_x,
+                    start_y,
+                    end_x: x,
+                    end_y: y,
+                    magnification: args.ui.magnifier_magnification,
+                    color: args.ui.shape_color,
+                    shadow: args.ui.shape_shadow,
+                };
+                args.annotations.magnifiers.push(magnifier.clone());
+                args.annotations.add(Annotation::Magnifier(magnifier));
+                // Select the newly created magnifier so it can be tweaked
+                args.annotations.selected_magnifier =
+                    Some(args.annotations.magnifiers.len() - 1);
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Redact handlers
 // ============================================================================
 
@@ -218,6 +284,7 @@ enum Mode {
     Arrow,
     Circle,
     Rectangle,
+    Magnifier,
     Redact,
     Pixelate,
 }
@@ -234,6 +301,11 @@ fn disable_other_modes(args: &mut Args, keep: Mode) {
     if keep != Mode::Rectangle {
         args.annotations.rect_outline_mode = false;
         args.annotations.rect_outline_drawing = None;
+    }
+    if keep != Mode::Magnifier {
+        args.annotations.magnifier_mode = false;
+        args.annotations.magnifier_drawing = None;
+        args.annotations.selected_magnifier = None;
     }
     if keep != Mode::Redact {
         args.annotations.redact_mode = false;

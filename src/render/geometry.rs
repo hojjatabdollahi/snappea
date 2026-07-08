@@ -91,3 +91,15 @@ pub fn ellipse_from_bounds(min_x: f32, min_y: f32, max_x: f32, max_y: f32) -> (f
     let ry = ((max_y - min_y) * 0.5).max(1.0);
     (cx, cy, rx, ry)
 }
+
+/// Calculate circle center and radius from two arbitrary drag points.
+///
+/// The magnifier is always a true circle; the radius grows with the drag in
+/// both dimensions (average of the half-width and half-height).
+#[inline]
+pub fn circle_from_points(x1: f32, y1: f32, x2: f32, y2: f32) -> (f32, f32, f32) {
+    let cx = (x1 + x2) * 0.5;
+    let cy = (y1 + y2) * 0.5;
+    let radius = (((x2 - x1).abs() + (y2 - y1).abs()) * 0.25).max(1.0);
+    (cx, cy, radius)
+}

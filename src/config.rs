@@ -201,6 +201,12 @@ pub struct SnapPeaConfig {
     pub primary_redact_tool: RedactTool,
     /// Pixelation block size (larger = more pixelated, range 4-64)
     pub pixelation_block_size: u32,
+    /// Magnifier zoom level (range 1.5-10.0)
+    #[serde(default = "default_magnifier_magnification")]
+    pub magnifier_magnification: f32,
+    /// Delay in seconds for the "delayed screenshot" toolbar button
+    #[serde(default = "default_capture_delay_secs")]
+    pub capture_delay_secs: u32,
     /// Toolbar position on screen
     pub toolbar_position: ToolbarPosition,
     /// Toolbar opacity when not hovered (0.0-1.0)
@@ -226,6 +232,14 @@ pub struct SnapPeaConfig {
     /// Whether to hide toolbar to system tray when recording
     #[serde(default)]
     pub hide_toolbar_to_tray: bool,
+}
+
+fn default_magnifier_magnification() -> f32 {
+    2.5
+}
+
+fn default_capture_delay_secs() -> u32 {
+    3
 }
 
 fn default_pencil_color() -> ShapeColor {
@@ -321,6 +335,10 @@ impl Default for SnapPeaConfig {
             primary_redact_tool: RedactTool::Redact,
             // Default pixelation block size (16 is a good balance)
             pixelation_block_size: 16,
+            // Default magnifier zoom level
+            magnifier_magnification: default_magnifier_magnification(),
+            // Default delayed-screenshot delay
+            capture_delay_secs: default_capture_delay_secs(),
             // Default toolbar position at the bottom
             toolbar_position: ToolbarPosition::Bottom,
             // Default toolbar opacity when idle

@@ -58,6 +58,26 @@ pub fn handle_tool_msg(args: &mut Args, msg: ToolMsg) -> bool {
         ToolMsg::SavePixelationBlockSize => {
             true // needs config save
         }
+        ToolMsg::MagnifierModeToggle => {
+            handle_magnifier_mode_toggle(args);
+            false
+        }
+        ToolMsg::MagnifierPopup(action) => {
+            handle_magnifier_popup(args, action);
+            false
+        }
+        ToolMsg::SetMagnification(value) => {
+            args.ui.magnifier_magnification = value;
+            // If a magnifier is selected, apply the zoom to it live too
+            if args.annotations.selected_magnifier.is_some() {
+                args.annotations
+                    .edit_selected_magnifier(|m| m.magnification = value);
+            }
+            false // saved on release, not during drag
+        }
+        ToolMsg::SaveMagnification => {
+            true // needs config save
+        }
         ToolMsg::PencilPopup(action) => {
             handle_pencil_popup(args, action);
             false
@@ -95,6 +115,7 @@ pub fn save_tool_config(args: &Args) {
     config.shape_shadow = args.ui.shape_shadow;
     config.primary_redact_tool = args.ui.primary_redact_tool;
     config.pixelation_block_size = args.ui.pixelation_block_size;
+    config.magnifier_magnification = args.ui.magnifier_magnification;
     config.pencil_color = args.ui.pencil_color;
     config.pencil_fade_duration = args.ui.pencil_fade_duration;
     config.pencil_thickness = args.ui.pencil_thickness;
@@ -265,6 +286,60 @@ fn handle_redact_mode_toggle(args: &mut Args) {
 }
 
 // ============================================================================
+// Magnifier tool handlers
+// ============================================================================
+
+fn handle_magnifier_mode_toggle(args: &mut Args) {
+    args.annotations.magnifier_mode = !args.annotations.magnifier_mode;
+    if args.annotations.magnifier_mode {
+        disable_other_modes_except(args, Mode::Magnifier);
+    } else {
+        args.annotations.magnifier_drawing = None;
+        args.annotations.selected_magnifier = None;
+    }
+    // Close popups
+    args.close_all_popups();
+}
+
+fn handle_magnifier_popup(args: &mut Args, action: ToolPopupAction) {
+    match action {
+        ToolPopupAction::Toggle => {
+            args.ui.magnifier_popup_open = !args.ui.magnifier_popup_open;
+            if args.ui.magnifier_popup_open {
+                args.ui.shape_popup_open = false;
+                args.ui.redact_popup_open = false;
+                args.ui.settings_drawer_open = false;
+                // Show the selected magnifier's zoom in the slider, if any
+                if let Some(zoom) = args.annotations.selected_magnifier_zoom() {
+                    args.ui.magnifier_magnification = zoom;
+                }
+                args.disable_all_modes();
+            } else {
+                // Re-enable the magnifier tool when closing
+                args.annotations.magnifier_mode = true;
+                disable_other_modes_except(args, Mode::Magnifier);
+            }
+        }
+        ToolPopupAction::Open => {
+            args.ui.magnifier_popup_open = true;
+            args.ui.shape_popup_open = false;
+            args.ui.redact_popup_open = false;
+            args.ui.settings_drawer_open = false;
+            if let Some(zoom) = args.annotations.selected_magnifier_zoom() {
+                args.ui.magnifier_magnification = zoom;
+            }
+            args.disable_all_modes();
+        }
+        ToolPopupAction::Close => {
+            args.ui.magnifier_popup_open = false;
+            // Re-enable the magnifier tool when closing
+            args.annotations.magnifier_mode = true;
+            disable_other_modes_except(args, Mode::Magnifier);
+        }
+    }
+}
+
+// ============================================================================
 // Pencil tool handlers (for recording annotations)
 // ============================================================================
 
@@ -299,6 +374,7 @@ enum Mode {
     Arrow,
     Circle,
     Rectangle,
+    Magnifier,
     Redact,
     Pixelate,
 }
@@ -315,6 +391,11 @@ fn disable_other_modes_except(args: &mut Args, keep: Mode) {
     if keep != Mode::Rectangle {
         args.annotations.rect_outline_mode = false;
         args.annotations.rect_outline_drawing = None;
+    }
+    if keep != Mode::Magnifier {
+        args.annotations.magnifier_mode = false;
+        args.annotations.magnifier_drawing = None;
+        args.annotations.selected_magnifier = None;
     }
     if keep != Mode::Redact {
         args.annotations.redact_mode = false;

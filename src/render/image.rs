@@ -7,8 +7,8 @@ use tiny_skia::{Color, LineCap, LineJoin, Paint, PathBuilder, Pixmap, Stroke, Tr
 
 use super::geometry::{self, arrow, shape};
 use crate::domain::{
-    Annotation, ArrowAnnotation, CircleOutlineAnnotation, PixelateAnnotation, Rect,
-    RectOutlineAnnotation, RedactAnnotation,
+    Annotation, ArrowAnnotation, CircleOutlineAnnotation, MagnifierAnnotation, PixelateAnnotation,
+    Rect, RectOutlineAnnotation, RedactAnnotation,
 };
 
 /// Convert RgbaImage to Pixmap, apply drawing function, and copy back
@@ -374,6 +374,224 @@ pub fn draw_circle_outlines_on_image(
     });
 }
 
+/// Bilinearly sample an image at floating-point coordinates.
+///
+/// Coordinates are clamped to the image bounds. Produces the smooth,
+/// interpolated look of a real magnifier rather than blocky nearest-neighbor.
+fn bilinear_sample(img: &RgbaImage, x: f32, y: f32) -> image::Rgba<u8> {
+    let w = img.width();
+    let h = img.height();
+    if w == 0 || h == 0 {
+        return image::Rgba([0, 0, 0, 255]);
+    }
+
+    let x = x.clamp(0.0, (w - 1) as f32);
+    let y = y.clamp(0.0, (h - 1) as f32);
+
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(w - 1);
+    let y1 = (y0 + 1).min(h - 1);
+
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+
+    let p00 = img.get_pixel(x0, y0).0;
+    let p10 = img.get_pixel(x1, y0).0;
+    let p01 = img.get_pixel(x0, y1).0;
+    let p11 = img.get_pixel(x1, y1).0;
+
+    let mut out = [0u8; 4];
+    for c in 0..4 {
+        let top = p00[c] as f32 * (1.0 - fx) + p10[c] as f32 * fx;
+        let bot = p01[c] as f32 * (1.0 - fx) + p11[c] as f32 * fx;
+        out[c] = (top * (1.0 - fy) + bot * fy).round().clamp(0.0, 255.0) as u8;
+    }
+    image::Rgba(out)
+}
+
+/// Draw magnifier annotations onto an image.
+///
+/// Each magnifier zooms into the image content beneath it (sampled from a
+/// snapshot taken before drawing so magnifiers don't sample each other), clipped
+/// to a circle/ellipse, then draws a ring outline on top.
+pub fn draw_magnifiers_on_image(
+    img: &mut RgbaImage,
+    magnifiers: &[MagnifierAnnotation],
+    selection_rect: &Rect,
+    scale: f32,
+) {
+    if magnifiers.is_empty() {
+        return;
+    }
+
+    let img_w = img.width();
+    let img_h = img.height();
+
+    for m in magnifiers {
+        let x1 = (m.start_x - selection_rect.left as f32) * scale;
+        let y1 = (m.start_y - selection_rect.top as f32) * scale;
+        let x2 = (m.end_x - selection_rect.left as f32) * scale;
+        let y2 = (m.end_y - selection_rect.top as f32) * scale;
+
+        let (cx, cy, radius) = geometry::circle_from_points(x1, y1, x2, y2);
+
+        if radius < 1.0 {
+            continue;
+        }
+
+        let magnification = m.magnification.max(1.0);
+
+        // The zoom only samples the region within `radius / magnification` of the
+        // center, so snapshot just that (small) sub-region instead of the whole
+        // image. Read from the snapshot, write to `img` (they overlap).
+        let src_r = radius / magnification + 2.0;
+        let sub_x0 = (cx - src_r).floor().clamp(0.0, img_w as f32) as u32;
+        let sub_y0 = (cy - src_r).floor().clamp(0.0, img_h as f32) as u32;
+        let sub_x1 = (cx + src_r).ceil().clamp(0.0, img_w as f32) as u32;
+        let sub_y1 = (cy + src_r).ceil().clamp(0.0, img_h as f32) as u32;
+        if sub_x1 <= sub_x0 || sub_y1 <= sub_y0 {
+            continue;
+        }
+        let src = image::imageops::crop_imm(&*img, sub_x0, sub_y0, sub_x1 - sub_x0, sub_y1 - sub_y0)
+            .to_image();
+
+        let px_start = (cx - radius).floor().max(0.0) as u32;
+        let py_start = (cy - radius).floor().max(0.0) as u32;
+        let px_end = ((cx + radius).ceil() as i64).clamp(0, img_w as i64) as u32;
+        let py_end = ((cy + radius).ceil() as i64).clamp(0, img_h as i64) as u32;
+
+        for py in py_start..py_end {
+            for px in px_start..px_end {
+                let dx = px as f32 + 0.5 - cx;
+                let dy = py as f32 + 0.5 - cy;
+
+                // Inside the circle?
+                if dx * dx + dy * dy > radius * radius {
+                    continue;
+                }
+
+                // Source sample point (zoomed toward the center), relative to the
+                // snapshot's origin
+                let sx = cx + dx / magnification - sub_x0 as f32;
+                let sy = cy + dy / magnification - sub_y0 as f32;
+
+                let pixel = bilinear_sample(&src, sx, sy);
+                img.put_pixel(px, py, pixel);
+            }
+        }
+
+        // Draw the ring outline on top
+        with_pixmap(img, |pixmap| {
+            let thickness = (shape::THICKNESS * scale).max(1.0);
+            let border_thickness = (shape::BORDER_THICKNESS * scale).max(2.0);
+            let [r, g, b, a] = m.color.to_rgba_u8();
+
+            let Some(path) = build_ellipse_path(cx, cy, radius, radius) else {
+                return;
+            };
+
+            if m.shadow {
+                let mut paint = Paint::default();
+                paint.set_color_rgba8(0, 0, 0, 220);
+                paint.anti_alias = true;
+                let stroke = Stroke {
+                    width: border_thickness,
+                    line_cap: LineCap::Round,
+                    line_join: LineJoin::Round,
+                    ..Default::default()
+                };
+                pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+            }
+
+            let mut paint = Paint::default();
+            paint.set_color_rgba8(r, g, b, a);
+            paint.anti_alias = true;
+            let stroke = Stroke {
+                width: thickness,
+                line_cap: LineCap::Round,
+                line_join: LineJoin::Round,
+                ..Default::default()
+            };
+            pixmap.stroke_path(&path, &paint, &stroke, Transform::identity(), None);
+        });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::ShapeColor;
+
+    /// Build a test image where each pixel's red channel encodes its x coordinate.
+    fn coord_image(w: u32, h: u32) -> RgbaImage {
+        RgbaImage::from_fn(w, h, |x, _y| image::Rgba([x as u8, 0, 0, 255]))
+    }
+
+    #[test]
+    fn magnifier_zooms_content_toward_center() {
+        let mut img = coord_image(21, 21);
+        let selection = Rect {
+            left: 0,
+            top: 0,
+            right: 21,
+            bottom: 21,
+        };
+        // Circle: center (10,10), radius = (20 + 20) / 4 = 10
+        let m = MagnifierAnnotation {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 20.0,
+            end_y: 20.0,
+            magnification: 2.0,
+            color: ShapeColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            shadow: false,
+        };
+
+        draw_magnifiers_on_image(&mut img, std::slice::from_ref(&m), &selection, 1.0);
+
+        // A destination pixel offset +4.5 from center (14,10) should sample the
+        // source at cx + 4.5/2 = 12.25 -> x=12, so its red channel encodes 12.
+        assert_eq!(img.get_pixel(14, 10)[0], 12);
+        // The center pixel samples very close to itself (10.25 -> 10).
+        assert_eq!(img.get_pixel(10, 10)[0], 10);
+    }
+
+    #[test]
+    fn magnifier_leaves_outside_circle_untouched() {
+        let mut img = coord_image(21, 21);
+        let selection = Rect {
+            left: 0,
+            top: 0,
+            right: 21,
+            bottom: 21,
+        };
+        let m = MagnifierAnnotation {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 20.0,
+            end_y: 20.0,
+            magnification: 2.0,
+            color: ShapeColor {
+                r: 1.0,
+                g: 0.0,
+                b: 0.0,
+            },
+            shadow: false,
+        };
+
+        draw_magnifiers_on_image(&mut img, std::slice::from_ref(&m), &selection, 1.0);
+
+        // Corner (0,0) is outside the inscribed circle (radius 10 at center 10,10),
+        // so it keeps its original encoded coordinate (red = 0).
+        assert_eq!(img.get_pixel(0, 0)[0], 0);
+    }
+}
+
 /// Draw all annotations in order (for proper layering and undo/redo support)
 ///
 /// Redactions and pixelations are ALWAYS drawn first (in their relative order),
@@ -419,6 +637,14 @@ pub fn draw_annotations_in_order(
             }
             Annotation::Rectangle(rect) => {
                 draw_rect_outlines_on_image(img, std::slice::from_ref(rect), selection_rect, scale);
+            }
+            Annotation::Magnifier(magnifier) => {
+                draw_magnifiers_on_image(
+                    img,
+                    std::slice::from_ref(magnifier),
+                    selection_rect,
+                    scale,
+                );
             }
             _ => {}
         }

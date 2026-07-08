@@ -37,6 +37,9 @@ use crate::widget::{
     output_selection::OutputSelection,
     overlays::{
         ShapesOverlay,
+        magnifier_overlays::{
+            draw_magnifier_handles, draw_magnifier_preview, draw_magnifiers,
+        },
         redact_overlays::{
             PixelationSource, draw_pixelation_preview, draw_redaction_preview,
             draw_redactions_and_pixelations,
@@ -48,9 +51,32 @@ use crate::widget::{
     },
     rectangle_selection::RectangleSelection,
     settings_drawer::build_settings_drawer,
-    tool_button::{build_pencil_popup, build_redact_popup, build_shape_popup},
+    tool_button::{
+        build_magnifier_popup, build_pencil_popup, build_redact_popup, build_shape_popup,
+    },
     toolbar::build_toolbar,
 };
+
+/// Distance (logical px) from a magnifier's ring within which a drag resizes it
+const MAGNIFIER_RING_GRAB: f32 = 12.0;
+/// Zoom change per mouse wheel notch when scrolling over a selected magnifier
+const MAGNIFIER_SCROLL_STEP: f32 = 0.5;
+
+/// Transient (per-frame-persistent) drag state for editing a magnifier.
+///
+/// Lives in the widget's `Tree` state so it survives view rebuilds without
+/// round-tripping through the application message loop.
+#[derive(Default)]
+struct MagnifierDragState {
+    drag: Option<MagnifierDrag>,
+}
+
+enum MagnifierDrag {
+    /// Moving the loupe; grab offset is (cursor - center) in global logical coords
+    Move { index: usize, grab_dx: f32, grab_dy: f32 },
+    /// Resizing the loupe (radius follows the cursor)
+    Resize { index: usize },
+}
 
 /// Output context for multi-monitor support
 #[derive(Clone, Debug)]
@@ -124,6 +150,7 @@ where
     shape_popup_element: Option<Element<'a, Msg>>,
     redact_popup_element: Option<Element<'a, Msg>>,
     pencil_popup_element: Option<Element<'a, Msg>>,
+    magnifier_popup_element: Option<Element<'a, Msg>>,
 }
 
 impl<'a, E> ScreenshotSelectionWidget<'a, E>
@@ -200,7 +227,11 @@ where
                 annotations.pixelate_mode,
                 annotations.circle_mode,
                 annotations.rect_outline_mode,
-                ui.shape_popup_open || ui.redact_popup_open || ui.settings_drawer_open,
+                annotations.magnifier_mode,
+                ui.shape_popup_open
+                    || ui.redact_popup_open
+                    || ui.magnifier_popup_open
+                    || ui.settings_drawer_open,
                 ui.magnifier_enabled,
                 ui.is_recording,
                 move_offset,
@@ -248,6 +279,8 @@ where
             crate::config::RedactTool::Pixelate => annotations.pixelate_mode,
         };
 
+        let magnifier_mode_active = annotations.magnifier_mode;
+
         let on_event_clone2 = on_event.clone();
         let menu_element = build_toolbar(
             choice.clone(),
@@ -262,6 +295,8 @@ where
             ui.primary_redact_tool,
             redact_mode_active,
             ui.redact_popup_open,
+            magnifier_mode_active,
+            ui.magnifier_popup_open,
             space_s,
             space_xs,
             space_xxs,
@@ -271,6 +306,9 @@ where
             )),
             on_event(ScreenshotEvent::copy_to_clipboard()),
             on_event(ScreenshotEvent::save_to_pictures()),
+            on_event(ScreenshotEvent::delayed_capture()),
+            on_event(ScreenshotEvent::cycle_capture_delay()),
+            ui.capture_delay_secs,
             on_event(ScreenshotEvent::record_region()),
             on_event(ScreenshotEvent::stop_recording()),
             on_event(ScreenshotEvent::toggle_recording_annotation()),
@@ -279,6 +317,8 @@ where
             on_event(ScreenshotEvent::shape_popup_toggle()),
             on_event(ScreenshotEvent::redact_tool_mode_toggle()),
             on_event(ScreenshotEvent::redact_popup_toggle()),
+            on_event(ScreenshotEvent::magnifier_tool_mode_toggle()),
+            on_event(ScreenshotEvent::magnifier_popup_toggle()),
             on_event(ScreenshotEvent::ocr_requested()),
             on_event(ScreenshotEvent::ocr_copy_and_close()),
             on_event(ScreenshotEvent::qr_requested()),
@@ -377,6 +417,11 @@ where
                 on_event(ScreenshotEvent::browse_video_save_location()),
                 ui.copy_to_clipboard_on_save,
                 on_event(ScreenshotEvent::copy_on_save_toggle()),
+                ui.capture_delay_secs,
+                {
+                    let on_event = on_event.clone();
+                    move |secs| on_event(ScreenshotEvent::capture_delay_select(secs))
+                },
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
                 ui.settings_tab,
                 settings_tab_model,
@@ -454,6 +499,22 @@ where
             None
         };
 
+        // Build magnifier_popup_element
+        let on_event_magnification = on_event.clone();
+        let magnifier_popup_element = if ui.magnifier_popup_open {
+            Some(build_magnifier_popup(
+                ui.magnifier_magnification,
+                has_any_annotations,
+                move |v| on_event_magnification(ScreenshotEvent::magnification_set(v)),
+                on_event(ScreenshotEvent::magnification_save()),
+                on_event(ScreenshotEvent::clear_shapes()),
+                space_s,
+                space_xs,
+            ))
+        } else {
+            None
+        };
+
         // Build pencil_popup_element (only shown during recording)
         let on_event_pencil_color = on_event.clone();
         let on_event_pencil_duration = on_event.clone();
@@ -512,6 +573,7 @@ where
             shape_popup_element,
             redact_popup_element,
             pencil_popup_element,
+            magnifier_popup_element,
         }
     }
 
@@ -541,12 +603,17 @@ where
         self.annotations.pixelate_mode
     }
 
+    fn is_magnifier_mode(&self) -> bool {
+        self.annotations.magnifier_mode
+    }
+
     fn is_any_drawing_mode(&self) -> bool {
         self.is_arrow_mode()
             || self.is_circle_mode()
             || self.is_rectangle_mode()
             || self.is_redact_mode()
             || self.is_pixelate_mode()
+            || self.is_magnifier_mode()
     }
 }
 
@@ -578,6 +645,9 @@ where
         if let Some(ref popup) = self.pencil_popup_element {
             children.push(Tree::new(popup));
         }
+        if let Some(ref popup) = self.magnifier_popup_element {
+            children.push(Tree::new(popup));
+        }
         children
     }
 
@@ -598,6 +668,9 @@ where
             elements.push(popup);
         }
         if let Some(ref mut popup) = self.pencil_popup_element {
+            elements.push(popup);
+        }
+        if let Some(ref mut popup) = self.magnifier_popup_element {
             elements.push(popup);
         }
         tree.diff_children(&mut elements);
@@ -887,6 +960,71 @@ where
             nodes.push(popup_node);
         }
 
+        // Layout magnifier popup if present
+        if let Some(ref mut popup) = self.magnifier_popup_element {
+            let mut child_idx = 4;
+            if self.settings_drawer_element.is_some() {
+                child_idx += 1;
+            }
+            if self.shape_popup_element.is_some() {
+                child_idx += 1;
+            }
+            if self.redact_popup_element.is_some() {
+                child_idx += 1;
+            }
+            if self.pencil_popup_element.is_some() {
+                child_idx += 1;
+            }
+            let mut popup_node =
+                popup
+                    .as_widget_mut()
+                    .layout(&mut children[child_idx], renderer, limits);
+            let popup_bounds = popup_node.bounds();
+            let popup_margin = 4.0_f32;
+            let magnifier_btn_fraction = 0.60_f32;
+
+            let popup_pos = match self.ui.toolbar_position {
+                ToolbarPosition::Bottom => {
+                    let btn_x = menu_pos.x + menu_bounds.width * magnifier_btn_fraction;
+                    Point {
+                        x: (btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y - popup_bounds.height - popup_margin,
+                    }
+                }
+                ToolbarPosition::Top => {
+                    let btn_x = menu_pos.x + menu_bounds.width * magnifier_btn_fraction;
+                    Point {
+                        x: (btn_x - popup_bounds.width / 2.0)
+                            .max(margin)
+                            .min(limits.max().width - popup_bounds.width - margin),
+                        y: menu_pos.y + menu_bounds.height + popup_margin,
+                    }
+                }
+                ToolbarPosition::Left => {
+                    let btn_y = menu_pos.y + menu_bounds.height * magnifier_btn_fraction;
+                    Point {
+                        x: menu_pos.x + menu_bounds.width + popup_margin,
+                        y: (btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+                ToolbarPosition::Right => {
+                    let btn_y = menu_pos.y + menu_bounds.height * magnifier_btn_fraction;
+                    Point {
+                        x: menu_pos.x - popup_bounds.width - popup_margin,
+                        y: (btn_y - popup_bounds.height / 2.0)
+                            .max(margin)
+                            .min(limits.max().height - popup_bounds.height - margin),
+                    }
+                }
+            };
+            popup_node = popup_node.move_to(popup_pos);
+            nodes.push(popup_node);
+        }
+
         layout::Node::with_children(
             limits.resolve(Length::Fill, Length::Fill, Size::ZERO),
             nodes,
@@ -1014,6 +1152,59 @@ where
                 local_end,
                 shape_color,
                 self.ui.shape_shadow,
+            );
+        }
+
+        // Draw completed magnifier annotations (zoomed loupes).
+        // The background screenshot is drawn to fill the bg child's layout bounds;
+        // anchor the zoom to that exact rect so the loupe center stays aligned
+        // with the content beneath it (including under fractional scaling).
+        let magnifier_base_rect = layout
+            .children()
+            .next()
+            .map(|l| l.bounds())
+            .unwrap_or(*viewport);
+        draw_magnifiers(
+            renderer,
+            viewport,
+            &self.annotations.annotations[..self.annotations.annotation_index],
+            output_offset,
+            &self.screenshot_image.handle,
+            magnifier_base_rect,
+        );
+
+        // Draw magnifier preview
+        if let Some((start_x, start_y)) = self.annotations.magnifier_drawing
+            && let Some(cursor_pos) = cursor.position()
+        {
+            draw_magnifier_preview(
+                renderer,
+                viewport,
+                (start_x, start_y),
+                (cursor_pos.x, cursor_pos.y),
+                output_offset,
+                self.ui.magnifier_magnification,
+                self.ui.shape_color,
+                self.ui.shape_shadow,
+                &self.screenshot_image.handle,
+                magnifier_base_rect,
+            );
+        }
+
+        // Draw selection handles on the selected magnifier (when the tool is active)
+        if self.is_magnifier_mode()
+            && let Some(sel) = self.annotations.selected_magnifier
+            && let Some(m) = self.annotations.magnifiers.get(sel)
+        {
+            let accent: cosmic::iced::Color = theme.cosmic().accent_color().into();
+            let (cx, cy) = m.center();
+            draw_magnifier_handles(
+                renderer,
+                viewport,
+                cx - self.output_rect.left as f32,
+                cy - self.output_rect.top as f32,
+                m.radius(),
+                accent,
             );
         }
 
@@ -1191,6 +1382,39 @@ where
                 });
             }
         }
+
+        // Draw magnifier popup
+        if let Some(ref popup) = self.magnifier_popup_element {
+            let layout_children: Vec<_> = layout.children().collect();
+            let mut popup_idx = 4;
+            if self.settings_drawer_element.is_some() {
+                popup_idx += 1;
+            }
+            if self.shape_popup_element.is_some() {
+                popup_idx += 1;
+            }
+            if self.redact_popup_element.is_some() {
+                popup_idx += 1;
+            }
+            if self.pencil_popup_element.is_some() {
+                popup_idx += 1;
+            }
+            if layout_children.len() > popup_idx {
+                let popup_layout = layout_children[popup_idx];
+                renderer.with_layer(popup_layout.bounds(), |renderer| {
+                    let popup_tree = &tree.children[popup_idx];
+                    popup.as_widget().draw(
+                        popup_tree,
+                        renderer,
+                        theme,
+                        style,
+                        popup_layout,
+                        cursor,
+                        viewport,
+                    );
+                });
+            }
+        }
     }
 
     fn update(
@@ -1343,6 +1567,39 @@ where
                 }
             }
 
+            // Handle magnifier popup click-outside
+            if self.ui.magnifier_popup_open {
+                let mut popup_idx = 4;
+                if self.settings_drawer_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.shape_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.redact_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                if self.pencil_popup_element.is_some() {
+                    popup_idx += 1;
+                }
+                let inside_popup = if layout_children.len() > popup_idx {
+                    layout_children[popup_idx].bounds().contains(pos)
+                } else {
+                    false
+                };
+                let inside_toolbar = if layout_children.len() > 3 {
+                    layout_children[3].bounds().contains(pos)
+                } else {
+                    false
+                };
+
+                if !inside_popup && !inside_toolbar {
+                    shell.publish(self.emit(ScreenshotEvent::magnifier_popup_close()));
+                    shell.capture_event();
+                    return;
+                }
+            }
+
             // Handle settings drawer click-outside
             if self.ui.settings_drawer_open {
                 let inside_drawer = if layout_children.len() > 4 {
@@ -1453,6 +1710,9 @@ where
         if let Some(ref mut popup) = self.pencil_popup_element {
             children.push(popup);
         }
+        if let Some(ref mut popup) = self.magnifier_popup_element {
+            children.push(popup);
+        }
 
         for (i, (child_layout, child)) in layout_children
             .into_iter()
@@ -1540,6 +1800,29 @@ where
                         popup_idx += 1;
                     }
                     if self.redact_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if layout_children.len() > popup_idx
+                        && layout_children[popup_idx].bounds().contains(pos)
+                    {
+                        shell.capture_event();
+                        return;
+                    }
+                }
+
+                // Check magnifier popup
+                if self.ui.magnifier_popup_open {
+                    let mut popup_idx = 4;
+                    if self.settings_drawer_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.shape_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.redact_popup_element.is_some() {
+                        popup_idx += 1;
+                    }
+                    if self.pencil_popup_element.is_some() {
                         popup_idx += 1;
                     }
                     if layout_children.len() > popup_idx
@@ -1706,6 +1989,147 @@ where
                     _ => {}
                 }
             }
+
+            // Handle magnifier tool: create new, or select / move / resize existing
+            if self.is_magnifier_mode() {
+                let drag_state = tree.state.downcast_mut::<MagnifierDragState>();
+
+                let off_x = self.output_rect.left as f32;
+                let off_y = self.output_rect.top as f32;
+                let cursor_gx = pos.x + off_x;
+                let cursor_gy = pos.y + off_y;
+                let dist_to = |cx: f32, cy: f32| -> f32 {
+                    ((cursor_gx - cx).powi(2) + (cursor_gy - cy).powi(2)).sqrt()
+                };
+
+                let inside_selection =
+                    if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                        inside_inner_selection(sel_x, sel_y, sel_w, sel_h)
+                    } else {
+                        false
+                    };
+
+                match mouse_event {
+                    MouseEvent::ButtonPressed(Button::Left) => {
+                        // 1. Grabbing the ring of the selected magnifier -> resize
+                        if let Some(sel) = self.annotations.selected_magnifier
+                            && let Some(m) = self.annotations.magnifiers.get(sel)
+                        {
+                            let (cx, cy) = m.center();
+                            if (dist_to(cx, cy) - m.radius()).abs() <= MAGNIFIER_RING_GRAB {
+                                drag_state.drag = Some(MagnifierDrag::Resize { index: sel });
+                                shell.capture_event();
+                                return;
+                            }
+                        }
+
+                        // 2. Clicking inside an existing loupe -> select + move (topmost first)
+                        let mut hit = None;
+                        for (i, m) in self.annotations.magnifiers.iter().enumerate().rev() {
+                            let (cx, cy) = m.center();
+                            if dist_to(cx, cy) <= m.radius() {
+                                hit = Some((i, cx, cy));
+                                break;
+                            }
+                        }
+                        if let Some((i, cx, cy)) = hit {
+                            drag_state.drag = Some(MagnifierDrag::Move {
+                                index: i,
+                                grab_dx: cursor_gx - cx,
+                                grab_dy: cursor_gy - cy,
+                            });
+                            shell.publish(self.emit(ScreenshotEvent::magnifier_select(Some(i))));
+                            shell.capture_event();
+                            return;
+                        }
+
+                        // 3. Empty space inside the selection -> deselect + start a new loupe
+                        if inside_selection {
+                            if self.annotations.selected_magnifier.is_some() {
+                                shell.publish(self.emit(ScreenshotEvent::magnifier_select(None)));
+                            }
+                            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                                let (clamped_x, clamped_y) =
+                                    clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                                shell.publish(self.emit(ScreenshotEvent::magnifier_start(
+                                    clamped_x + off_x,
+                                    clamped_y + off_y,
+                                )));
+                            }
+                            shell.capture_event();
+                            return;
+                        }
+                    }
+                    MouseEvent::CursorMoved { .. } => match &drag_state.drag {
+                        Some(MagnifierDrag::Move {
+                            index,
+                            grab_dx,
+                            grab_dy,
+                        }) => {
+                            let (index, nx, ny) = (*index, cursor_gx - grab_dx, cursor_gy - grab_dy);
+                            shell.publish(self.emit(ScreenshotEvent::magnifier_move(index, nx, ny)));
+                            shell.capture_event();
+                            return;
+                        }
+                        Some(MagnifierDrag::Resize { index }) => {
+                            let index = *index;
+                            if let Some(m) = self.annotations.magnifiers.get(index) {
+                                let (cx, cy) = m.center();
+                                let r = dist_to(cx, cy);
+                                shell.publish(
+                                    self.emit(ScreenshotEvent::magnifier_resize(index, r)),
+                                );
+                                shell.capture_event();
+                                return;
+                            }
+                        }
+                        None => {}
+                    },
+                    MouseEvent::ButtonReleased(Button::Left) => {
+                        if drag_state.drag.take().is_some() {
+                            shell.capture_event();
+                            return;
+                        }
+                        if self.annotations.magnifier_drawing.is_some() {
+                            if let Some((sel_x, sel_y, sel_w, sel_h)) = self.selection_rect {
+                                let (clamped_x, clamped_y) =
+                                    clamp_to_selection(pos.x, pos.y, sel_x, sel_y, sel_w, sel_h);
+                                shell.publish(self.emit(ScreenshotEvent::magnifier_end(
+                                    clamped_x + off_x,
+                                    clamped_y + off_y,
+                                )));
+                            }
+                            shell.capture_event();
+                            return;
+                        }
+                    }
+                    MouseEvent::WheelScrolled { delta } => {
+                        if let Some(sel) = self.annotations.selected_magnifier
+                            && let Some(m) = self.annotations.magnifiers.get(sel)
+                        {
+                            let (cx, cy) = m.center();
+                            if dist_to(cx, cy) <= m.radius() {
+                                let step = match delta {
+                                    cosmic::iced::core::mouse::ScrollDelta::Lines { y, .. } => *y,
+                                    cosmic::iced::core::mouse::ScrollDelta::Pixels { y, .. } => {
+                                        *y / 40.0
+                                    }
+                                };
+                                if step != 0.0 {
+                                    let new_zoom =
+                                        m.magnification + step.signum() * MAGNIFIER_SCROLL_STEP;
+                                    shell.publish(
+                                        self.emit(ScreenshotEvent::magnifier_set_zoom(sel, new_zoom)),
+                                    );
+                                    shell.capture_event();
+                                    return;
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
         }
     }
 
@@ -1753,6 +2177,9 @@ where
             children.push(popup);
         }
         if let Some(ref popup) = self.pencil_popup_element {
+            children.push(popup);
+        }
+        if let Some(ref popup) = self.magnifier_popup_element {
             children.push(popup);
         }
 
@@ -1865,6 +2292,9 @@ where
         if let Some(ref mut popup) = self.pencil_popup_element {
             elements.push(popup);
         }
+        if let Some(ref mut popup) = self.magnifier_popup_element {
+            elements.push(popup);
+        }
 
         let children = elements
             .into_iter()
@@ -1906,6 +2336,9 @@ where
         if let Some(ref mut popup) = self.pencil_popup_element {
             children.push(popup);
         }
+        if let Some(ref mut popup) = self.magnifier_popup_element {
+            children.push(popup);
+        }
         for (i, (layout, child)) in layout
             .into_iter()
             .zip(children.into_iter())
@@ -1920,11 +2353,11 @@ where
     }
 
     fn tag(&self) -> cosmic::iced::core::widget::tree::Tag {
-        cosmic::iced::core::widget::tree::Tag::of::<()>()
+        cosmic::iced::core::widget::tree::Tag::of::<MagnifierDragState>()
     }
 
     fn state(&self) -> cosmic::iced::core::widget::tree::State {
-        cosmic::iced::core::widget::tree::State::None
+        cosmic::iced::core::widget::tree::State::new(MagnifierDragState::default())
     }
 
     fn id(&self) -> Option<cosmic::widget::Id> {
@@ -1954,6 +2387,9 @@ where
             children.push(popup);
         }
         if let Some(ref popup) = self.pencil_popup_element {
+            children.push(popup);
+        }
+        if let Some(ref popup) = self.magnifier_popup_element {
             children.push(popup);
         }
         for (i, (layout, child)) in layout.children().zip(children).enumerate() {

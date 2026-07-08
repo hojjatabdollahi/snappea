@@ -88,6 +88,14 @@ draw-rectangle = Draw Rectangle (A, Ctrl for square, right-click for settings)
 redact-tool = Redact (D, right-click for settings)
 pixelate-tool = Pixelate (D, right-click for settings)
 
+# Magnifier tool
+magnifier-tool = Magnifier (right-click for settings)
+magnification = Magnification: { $value }x
+
+# Delayed screenshot
+delayed-screenshot = Screenshot in { $secs }s (right-click to change delay)
+screenshot-delay-label = Screenshot delay
+
 # Settings drawer tabs
 general = General
 picture = Picture

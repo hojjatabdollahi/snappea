@@ -14,6 +14,9 @@ use crate::session::state::SettingsTab;
 /// Available framerate options
 const FRAMERATE_OPTIONS: &[u32] = &[24, 30, 60];
 
+/// Available screenshot-delay options (seconds)
+const DELAY_OPTIONS: &[u32] = &[1, 2, 3, 5, 10, 15];
+
 /// All container format options.
 ///
 /// WebM is intentionally not a recording format: live software-VP9 encoding is
@@ -23,7 +26,7 @@ const CONTAINER_OPTIONS: &[Container] = &[Container::Mp4, Container::Mkv];
 
 /// Build the settings drawer element
 #[allow(clippy::too_many_arguments)]
-pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
+pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H, I>(
     _toolbar_position: ToolbarPosition,
     magnifier_enabled: bool,
     on_magnifier_toggle: Msg,
@@ -41,6 +44,8 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H>(
     on_browse_video_save_location: Msg,
     copy_to_clipboard_on_save: bool,
     on_copy_on_save_toggle: Msg,
+    capture_delay_secs: u32,
+    on_capture_delay_select: I,
     on_github_click: Msg,
     settings_tab: SettingsTab,
     settings_tab_model: &'a segmented_button::SingleSelectModel,
@@ -68,6 +73,7 @@ where
     F: Fn(String) -> Msg + Clone + Send + Sync + 'static,
     G: Fn(Container) -> Msg + Clone + Send + Sync + 'static,
     H: Fn(u32) -> Msg + Clone + Send + Sync + 'static,
+    I: Fn(u32) -> Msg + Clone + Send + Sync + 'static,
 {
     // Build tab row using tab_bar style (looks like tabs instead of segmented control)
     // The callback receives the Entity, and the handler will look up the SettingsTab data
@@ -141,6 +147,25 @@ where
         toggler(copy_to_clipboard_on_save)
             .on_toggle(move |_| on_copy_on_save_toggle.clone())
             .size(24.0),
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced::core::Alignment::Center)
+    .width(Length::Fill);
+
+    // Screenshot delay dropdown (for the delayed-capture toolbar button)
+    static DELAY_NAMES: &[&str] = &["1s", "2s", "3s", "5s", "10s", "15s"];
+    let selected_delay_idx = DELAY_OPTIONS
+        .iter()
+        .position(|s| *s == capture_delay_secs);
+    let capture_delay_dropdown = dropdown(DELAY_NAMES, selected_delay_idx, move |idx| {
+        let secs = DELAY_OPTIONS.get(idx).copied().unwrap_or(3);
+        on_capture_delay_select(secs)
+    })
+    .width(Length::Fixed(120.0));
+    let capture_delay_row = row![
+        text::body(fl!("screenshot-delay-label")),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
+        capture_delay_dropdown,
     ]
     .spacing(space_s)
     .align_y(cosmic::iced::core::Alignment::Center)
@@ -326,6 +351,8 @@ where
         custom_path_row,
         cosmic::widget::divider::horizontal::light(),
         copy_on_save_row,
+        cosmic::widget::divider::horizontal::light(),
+        capture_delay_row,
     ]
     .spacing(space_xs)
     .into();

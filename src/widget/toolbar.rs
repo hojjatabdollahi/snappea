@@ -1189,6 +1189,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     primary_redact_tool: RedactTool,
     redact_mode_active: bool,
     redact_popup_open: bool,
+    magnifier_mode_active: bool,
+    magnifier_popup_open: bool,
     space_s: u16,
     space_xs: u16,
     space_xxs: u16,
@@ -1196,6 +1198,9 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_screen_mode: Msg,
     on_copy_to_clipboard: Msg,
     on_save_to_pictures: Msg,
+    on_delayed_capture: Msg,
+    on_cycle_capture_delay: Msg,
+    capture_delay_secs: u32,
     on_record_region: Msg,
     on_stop_recording: Msg,
     on_toggle_recording_annotation: Msg,
@@ -1204,6 +1209,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_shape_right_click: Msg,
     on_redact_press: Msg,
     on_redact_right_click: Msg,
+    on_magnifier_press: Msg,
+    on_magnifier_right_click: Msg,
     on_ocr: Msg,
     on_ocr_copy: Msg,
     on_qr: Msg,
@@ -1353,6 +1360,25 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         text::body(save_tooltip),
         tooltip::Position::Bottom,
     );
+
+    // Delayed screenshot button - left-click captures after a delay, right-click
+    // cycles the delay. Shown in screenshot mode regardless of selection.
+    let btn_delay: Element<'_, Msg> = {
+        let delay_btn = tooltip(
+            button::custom(lucide::icon_with_opacity(
+                AppIcon::Timer,
+                34.0,
+                content_opacity,
+                false,
+            ))
+            .class(cosmic::theme::Button::Icon)
+            .on_press(on_delayed_capture)
+            .padding(space_xs),
+            text::body(fl!("delayed-screenshot", secs = capture_delay_secs)),
+            tooltip::Position::Bottom,
+        );
+        super::tool_button::RightClickWrapper::new(delay_btn, Some(on_cycle_capture_delay)).into()
+    };
 
     // Record button - enabled only when region is selected
     // Custom red circular button with themed border
@@ -1513,6 +1539,26 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         content_opacity,
     );
 
+    // Magnifier tool button
+    let btn_magnifier = build_tool_button_with_icon(
+        lucide::icon_with_opacity(
+            AppIcon::Magnifier,
+            34.0,
+            content_opacity,
+            magnifier_mode_active || magnifier_popup_open,
+        ),
+        fl!("magnifier-tool"),
+        0, // single tool: no option-indicator dots
+        0,
+        magnifier_mode_active,
+        magnifier_popup_open,
+        has_selection,
+        has_selection.then_some(on_magnifier_press.clone()),
+        has_selection.then_some(on_magnifier_right_click.clone()),
+        space_xs,
+        content_opacity,
+    );
+
     // OCR button
     let btn_ocr = if has_ocr_text {
         tooltip(
@@ -1663,7 +1709,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .padding([space_s, space_xxs, space_s, space_xxs])
             .into()
         } else if has_selection {
-            let tool_buttons = column![btn_shapes, btn_redact, btn_ocr, btn_qr]
+            let tool_buttons = column![btn_shapes, btn_redact, btn_magnifier, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_x(cosmic::iced::core::Alignment::Center);
 
@@ -1676,7 +1722,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 horizontal::light().width(Length::Fixed(64.0)),
                 tool_buttons,
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save]
+                column![btn_delay, btn_copy, btn_save]
                     .spacing(space_s)
                     .align_x(cosmic::iced::core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -1696,7 +1742,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_x(cosmic::iced::core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
-                column![btn_copy, btn_save]
+                column![btn_delay, btn_copy, btn_save]
                     .spacing(space_s)
                     .align_x(cosmic::iced::core::Alignment::Center),
                 horizontal::light().width(Length::Fixed(64.0)),
@@ -1749,7 +1795,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             .padding([space_xxs, space_s, space_xxs, space_s])
             .into()
         } else if has_selection {
-            let tool_buttons = row![btn_shapes, btn_redact, btn_ocr, btn_qr]
+            let tool_buttons = row![btn_shapes, btn_redact, btn_magnifier, btn_ocr, btn_qr]
                 .spacing(space_s)
                 .align_y(cosmic::iced::core::Alignment::Center);
 
@@ -1762,7 +1808,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                 vertical::light().height(Length::Fixed(64.0)),
                 tool_buttons,
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save]
+                row![btn_delay, btn_copy, btn_save]
                     .spacing(space_s)
                     .align_y(cosmic::iced::core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
@@ -1782,7 +1828,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
                     .spacing(space_s)
                     .align_y(cosmic::iced::core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),
-                row![btn_copy, btn_save]
+                row![btn_delay, btn_copy, btn_save]
                     .spacing(space_s)
                     .align_y(cosmic::iced::core::Alignment::Center),
                 vertical::light().height(Length::Fixed(64.0)),

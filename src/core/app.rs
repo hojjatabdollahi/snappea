@@ -190,6 +190,9 @@ pub enum Msg {
     /// created (e.g. OutputEvent::Created never came because the compositor already
     /// advertised outputs before our subscription was active).
     RetryPendingWindows,
+    /// A delayed screenshot's wait elapsed and fresh screen pixels were captured;
+    /// swap them into the existing session and reopen the overlay.
+    DelayedCaptureReady(std::collections::HashMap<String, crate::capture::image::ScreenshotImage>),
 }
 
 impl cosmic::Application for App {
@@ -758,6 +761,59 @@ impl cosmic::Application for App {
                 }
                 cosmic::iced::Task::none()
             }
+            Msg::DelayedCaptureReady(output_images) => {
+                // The delayed screenshot's wait elapsed and we captured fresh pixels
+                // while the overlay was hidden. Swap them into the existing session
+                // (preserving the portal response channel + UI settings), reset the
+                // annotations/selection, then recreate the overlay windows.
+                let Some(args) = self.screenshot_args.as_mut() else {
+                    log::warn!("DelayedCaptureReady with no active screenshot session");
+                    return cosmic::iced::Task::none();
+                };
+                if output_images.is_empty() {
+                    log::error!("Delayed capture produced no images; aborting recapture");
+                    return cosmic::iced::Task::none();
+                }
+                args.capture.output_images = output_images;
+                args.annotations = crate::session::state::AnnotationState::default();
+                args.detection = crate::session::state::DetectionState::default();
+                args.session.choice = crate::domain::Choice::Rectangle(
+                    crate::domain::Rect::default(),
+                    crate::domain::DragState::default(),
+                );
+                args.session.has_mouse_entered = false;
+                args.ui.now = Instant::now();
+
+                if self.outputs.is_empty() {
+                    log::warn!("Delayed capture ready but no outputs known; deferring windows");
+                    self.screenshot_windows_pending = true;
+                    return cosmic::iced::Task::none();
+                }
+                // Fresh window IDs for the reopened overlay
+                for output in &mut self.outputs {
+                    output.id = window::Id::unique();
+                }
+                let cmds: Vec<_> = self
+                    .outputs
+                    .iter()
+                    .map(|crate::core::app::OutputState { output, id, .. }| {
+                        get_layer_surface(SctkLayerSurfaceSettings {
+                            id: *id,
+                            layer: wlr_layer::Layer::Overlay,
+                            keyboard_interactivity: wlr_layer::KeyboardInteractivity::Exclusive,
+                            input_zone: None,
+                            anchor: wlr_layer::Anchor::all(),
+                            output: IcedOutput::Output(output.clone()),
+                            namespace: "snappea".to_string(),
+                            size: Some((None, None)),
+                            exclusive_zone: -1,
+                            size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
+                            ..Default::default()
+                        })
+                    })
+                    .collect();
+                cosmic::Task::batch(cmds)
+            }
             Msg::Output(o_event, wl_output) => {
                 match o_event {
                     OutputEvent::Created(Some(info))
@@ -1213,6 +1269,9 @@ pub(crate) fn direct_screenshot_subscription(
                         primary_redact_tool: config.primary_redact_tool,
                         redact_popup_open: false,
                         pixelation_block_size: config.pixelation_block_size,
+                        magnifier_popup_open: false,
+                        magnifier_magnification: config.magnifier_magnification,
+                        capture_delay_secs: config.capture_delay_secs,
                         magnifier_enabled: config.magnifier_enabled,
                         save_location_setting: config.save_location,
                         custom_save_path: config.custom_save_path.clone(),
@@ -1895,6 +1954,44 @@ pub(crate) fn control_subscription() -> Subscription<Msg> {
     })
 }
 
+/// Capture the current pixels of every output into a name-keyed image map.
+///
+/// Shared by the delayed-screenshot re-capture path.
+pub(crate) async fn capture_all_outputs(
+    helper: crate::wayland::WaylandHelper,
+) -> std::collections::HashMap<String, crate::capture::image::ScreenshotImage> {
+    use crate::capture::image::ScreenshotImage;
+    use crate::wayland::CaptureSource;
+    use std::collections::HashMap;
+
+    let outputs: Vec<_> = helper
+        .outputs()
+        .into_iter()
+        .filter_map(|wl_output| {
+            let info = helper.output_info(&wl_output)?;
+            Some((wl_output, info.name.clone()?))
+        })
+        .collect();
+
+    let mut output_images = HashMap::new();
+    for (wl_output, name) in &outputs {
+        if let Some(frame) = helper
+            .capture_source_shm(CaptureSource::Output(wl_output.clone()), false)
+            .await
+        {
+            match ScreenshotImage::new(frame) {
+                Ok(img) => {
+                    output_images.insert(name.clone(), img);
+                }
+                Err(e) => log::error!("Failed to create screenshot image for {}: {}", name, e),
+            }
+        } else {
+            log::error!("Failed to capture output {}", name);
+        }
+    }
+    output_images
+}
+
 /// Trigger a screenshot capture (called from D-Bus control command)
 async fn trigger_screenshot(
     helper: crate::wayland::WaylandHelper,
@@ -1992,6 +2089,9 @@ async fn trigger_screenshot(
             primary_redact_tool: config.primary_redact_tool,
             redact_popup_open: false,
             pixelation_block_size: config.pixelation_block_size,
+            magnifier_popup_open: false,
+            magnifier_magnification: config.magnifier_magnification,
+            capture_delay_secs: config.capture_delay_secs,
             magnifier_enabled: config.magnifier_enabled,
             save_location_setting: config.save_location,
             custom_save_path: config.custom_save_path.clone(),

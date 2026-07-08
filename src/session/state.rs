@@ -8,7 +8,7 @@ use crate::config::{
 use crate::core::portal::PortalResponse;
 use crate::domain::{
     Action, Annotation, ArrowAnnotation, Choice, CircleOutlineAnnotation, ImageSaveLocation,
-    PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
+    MagnifierAnnotation, PixelateAnnotation, RectOutlineAnnotation, RedactAnnotation,
 };
 use crate::screencast::encoder::EncoderInfo;
 use crate::screenshot::portal::{ScreenshotOptions, ScreenshotResult};
@@ -71,6 +71,11 @@ pub struct AnnotationState {
     pub rect_outlines: Vec<RectOutlineAnnotation>,
     pub rect_outline_mode: bool,
     pub rect_outline_drawing: Option<(f32, f32)>,
+    pub magnifiers: Vec<MagnifierAnnotation>,
+    pub magnifier_mode: bool,
+    pub magnifier_drawing: Option<(f32, f32)>,
+    /// Index (into `magnifiers`) of the currently selected magnifier, if any
+    pub selected_magnifier: Option<usize>,
 }
 
 impl AnnotationState {
@@ -92,6 +97,10 @@ impl AnnotationState {
         self.rect_outlines.clear();
         self.rect_outline_mode = false;
         self.rect_outline_drawing = None;
+        self.magnifiers.clear();
+        self.magnifier_mode = false;
+        self.magnifier_drawing = None;
+        self.selected_magnifier = None;
     }
 
     pub fn clear_shapes(&mut self) {
@@ -104,6 +113,10 @@ impl AnnotationState {
         self.rect_outlines.clear();
         self.rect_outline_drawing = None;
         self.rect_outline_mode = false;
+        self.magnifiers.clear();
+        self.magnifier_drawing = None;
+        self.magnifier_mode = false;
+        self.selected_magnifier = None;
         // Also filter unified annotations array
         self.annotations
             .retain(|a| matches!(a, Annotation::Redact(_) | Annotation::Pixelate(_)));
@@ -115,7 +128,10 @@ impl AnnotationState {
         self.annotations.retain(|a| {
             matches!(
                 a,
-                Annotation::Arrow(_) | Annotation::Circle(_) | Annotation::Rectangle(_)
+                Annotation::Arrow(_)
+                    | Annotation::Circle(_)
+                    | Annotation::Rectangle(_)
+                    | Annotation::Magnifier(_)
             )
         });
         self.annotation_index = self.annotations.len();
@@ -156,6 +172,7 @@ impl AnnotationState {
         self.arrows.clear();
         self.circles.clear();
         self.rect_outlines.clear();
+        self.magnifiers.clear();
         self.redactions.clear();
         self.pixelations.clear();
 
@@ -164,10 +181,53 @@ impl AnnotationState {
                 Annotation::Arrow(a) => self.arrows.push(a.clone()),
                 Annotation::Circle(c) => self.circles.push(c.clone()),
                 Annotation::Rectangle(r) => self.rect_outlines.push(r.clone()),
+                Annotation::Magnifier(m) => self.magnifiers.push(m.clone()),
                 Annotation::Redact(r) => self.redactions.push(r.clone()),
                 Annotation::Pixelate(p) => self.pixelations.push(p.clone()),
             }
         }
+
+        // Keep the selection valid after the arrays change (e.g. undo/redo)
+        if let Some(idx) = self.selected_magnifier
+            && idx >= self.magnifiers.len()
+        {
+            self.selected_magnifier = None;
+        }
+    }
+
+    /// Map the selected magnifier (index into `magnifiers`) to its position in
+    /// the unified `annotations` array (respecting the current undo index).
+    fn selected_magnifier_unified_index(&self) -> Option<usize> {
+        let target = self.selected_magnifier?;
+        let mut count = 0;
+        for (i, a) in self.annotations.iter().take(self.annotation_index).enumerate() {
+            if matches!(a, Annotation::Magnifier(_)) {
+                if count == target {
+                    return Some(i);
+                }
+                count += 1;
+            }
+        }
+        None
+    }
+
+    /// The magnification of the currently selected magnifier, if any.
+    pub fn selected_magnifier_zoom(&self) -> Option<f32> {
+        self.selected_magnifier
+            .and_then(|i| self.magnifiers.get(i))
+            .map(|m| m.magnification)
+    }
+
+    /// Apply an in-place edit to the currently selected magnifier, updating both
+    /// the unified annotation array (source of truth) and the flat `magnifiers`.
+    pub fn edit_selected_magnifier(&mut self, f: impl Fn(&mut MagnifierAnnotation)) {
+        let Some(unified_idx) = self.selected_magnifier_unified_index() else {
+            return;
+        };
+        if let Some(Annotation::Magnifier(m)) = self.annotations.get_mut(unified_idx) {
+            f(m);
+        }
+        self.rebuild_arrays();
     }
 
     pub fn disable_all_modes(&mut self) {
@@ -181,6 +241,11 @@ impl AnnotationState {
         self.circle_drawing = None;
         self.rect_outline_mode = false;
         self.rect_outline_drawing = None;
+        self.magnifier_mode = false;
+        self.magnifier_drawing = None;
+        // Note: `selected_magnifier` is intentionally preserved here so the
+        // right-click config popup (which disables modes) can still edit the
+        // selected magnifier. It is cleared when switching to another tool.
     }
 }
 
@@ -215,6 +280,12 @@ pub struct UiState {
     pub primary_redact_tool: RedactTool,
     pub redact_popup_open: bool,
     pub pixelation_block_size: u32,
+    /// Magnifier annotation tool: whether its config popup is open
+    pub magnifier_popup_open: bool,
+    /// Magnifier annotation tool: zoom level (1.5-10.0)
+    pub magnifier_magnification: f32,
+    /// Delay (seconds) for the delayed-screenshot toolbar button
+    pub capture_delay_secs: u32,
     pub magnifier_enabled: bool,
     pub save_location_setting: SaveLocationChoice,
     pub custom_save_path: String,
@@ -269,7 +340,83 @@ impl UiState {
     pub fn close_all_popups(&mut self) {
         self.shape_popup_open = false;
         self.redact_popup_open = false;
+        self.magnifier_popup_open = false;
         self.settings_drawer_open = false;
         self.pencil_popup_open = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{ArrowAnnotation, MagnifierAnnotation};
+
+    fn magnifier(cx: f32, cy: f32, r: f32, zoom: f32) -> MagnifierAnnotation {
+        MagnifierAnnotation {
+            start_x: cx - r,
+            start_y: cy - r,
+            end_x: cx + r,
+            end_y: cy + r,
+            magnification: zoom,
+            color: ShapeColor::default(),
+            shadow: true,
+        }
+    }
+
+    fn arrow() -> ArrowAnnotation {
+        ArrowAnnotation {
+            start_x: 0.0,
+            start_y: 0.0,
+            end_x: 10.0,
+            end_y: 10.0,
+            color: ShapeColor::default(),
+            shadow: true,
+        }
+    }
+
+    #[test]
+    fn edit_selected_magnifier_targets_correct_unified_entry() {
+        let mut st = AnnotationState::default();
+        // Interleave an arrow between two magnifiers to exercise index mapping
+        st.add(Annotation::Magnifier(magnifier(100.0, 100.0, 50.0, 2.0)));
+        st.add(Annotation::Arrow(arrow()));
+        st.add(Annotation::Magnifier(magnifier(300.0, 300.0, 40.0, 3.0)));
+        st.rebuild_arrays();
+
+        assert_eq!(st.magnifiers.len(), 2);
+
+        // Select the SECOND magnifier and change its zoom
+        st.selected_magnifier = Some(1);
+        st.edit_selected_magnifier(|m| m.magnification = 7.5);
+
+        // Flat array updated
+        assert_eq!(st.magnifiers[1].magnification, 7.5);
+        assert_eq!(st.magnifiers[0].magnification, 2.0);
+        // Unified (source of truth) updated at the right index (annotations[2])
+        match &st.annotations[2] {
+            Annotation::Magnifier(m) => assert_eq!(m.magnification, 7.5),
+            other => panic!("expected magnifier, got {other:?}"),
+        }
+        // The arrow in between is untouched
+        assert!(matches!(st.annotations[1], Annotation::Arrow(_)));
+    }
+
+    #[test]
+    fn set_geometry_moves_and_resizes_as_circle() {
+        let mut m = magnifier(100.0, 100.0, 50.0, 2.0);
+        m.set_geometry(200.0, 250.0, 30.0);
+        assert_eq!(m.center(), (200.0, 250.0));
+        assert_eq!(m.radius(), 30.0);
+    }
+
+    #[test]
+    fn selection_cleared_when_index_becomes_invalid() {
+        let mut st = AnnotationState::default();
+        st.add(Annotation::Magnifier(magnifier(10.0, 10.0, 5.0, 2.0)));
+        st.rebuild_arrays();
+        st.selected_magnifier = Some(0);
+        // Undo removes the magnifier; selection must not dangle
+        st.undo();
+        assert_eq!(st.selected_magnifier, None);
     }
 }

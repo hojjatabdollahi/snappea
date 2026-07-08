@@ -29,6 +29,7 @@ pub enum AnnotationType {
     Arrow,
     Circle,
     Rectangle,
+    Magnifier,
     Redact,
     Pixelate,
 }
@@ -42,6 +43,14 @@ pub enum AnnotationEvent {
     Ended(AnnotationType, Point),
     /// Mode toggled for an annotation type
     ModeToggle(AnnotationType),
+    /// Select a magnifier for editing (index into magnifiers, or None to deselect)
+    MagnifierSelect(Option<usize>),
+    /// Move the magnifier at `index` so its center is at the given global point
+    MagnifierMove(usize, Point),
+    /// Resize the magnifier at `index` to the given radius (global logical units)
+    MagnifierResize(usize, f32),
+    /// Set the zoom of the magnifier at `index`
+    MagnifierSetZoom(usize, f32),
     /// Clear all shape annotations (arrows, circles, rectangles)
     ClearShapes,
     /// Clear all redaction annotations (redact, pixelate)
@@ -109,6 +118,18 @@ pub enum ToolPopupEvent {
     PixelationSizeSet(u32),
     /// Pixelation size saved
     PixelationSizeSave,
+    /// Magnifier mode toggled
+    MagnifierModeToggle,
+    /// Magnifier popup toggled
+    MagnifierPopupToggle,
+    /// Magnifier popup opened
+    MagnifierPopupOpen,
+    /// Magnifier popup closed
+    MagnifierPopupClose,
+    /// Magnification level changed (during drag)
+    MagnificationSet(f32),
+    /// Magnification level saved (on release)
+    MagnificationSave,
     /// Pencil popup toggled
     PencilPopupToggle,
     /// Pencil popup closed
@@ -152,6 +173,8 @@ pub enum SettingsEvent {
     BrowseVideoSaveLocation,
     /// Copy on save toggled
     CopyOnSaveToggle,
+    /// Delayed-screenshot delay selected (seconds)
+    CaptureDelaySelect(u32),
     /// Settings tab activated (by entity from segmented button)
     TabActivated(segmented_button::Entity),
     /// Toolbar opacity updated
@@ -181,6 +204,10 @@ pub enum CaptureEvent {
     CopyToClipboard,
     /// Save to pictures folder
     SaveToPictures,
+    /// Hide the overlay, wait the configured delay, then re-capture the screen
+    DelayedCapture,
+    /// Cycle the delayed-screenshot delay
+    CycleCaptureDelay,
     /// Record selected region
     RecordRegion,
     /// Stop recording
@@ -258,6 +285,36 @@ impl ScreenshotEvent {
             AnnotationType::Rectangle,
             Point::new(x, y),
         ))
+    }
+
+    pub fn magnifier_start(x: f32, y: f32) -> Self {
+        Self::Annotation(AnnotationEvent::Started(
+            AnnotationType::Magnifier,
+            Point::new(x, y),
+        ))
+    }
+
+    pub fn magnifier_end(x: f32, y: f32) -> Self {
+        Self::Annotation(AnnotationEvent::Ended(
+            AnnotationType::Magnifier,
+            Point::new(x, y),
+        ))
+    }
+
+    pub fn magnifier_select(index: Option<usize>) -> Self {
+        Self::Annotation(AnnotationEvent::MagnifierSelect(index))
+    }
+
+    pub fn magnifier_move(index: usize, x: f32, y: f32) -> Self {
+        Self::Annotation(AnnotationEvent::MagnifierMove(index, Point::new(x, y)))
+    }
+
+    pub fn magnifier_resize(index: usize, radius: f32) -> Self {
+        Self::Annotation(AnnotationEvent::MagnifierResize(index, radius))
+    }
+
+    pub fn magnifier_set_zoom(index: usize, zoom: f32) -> Self {
+        Self::Annotation(AnnotationEvent::MagnifierSetZoom(index, zoom))
     }
 
     pub fn redact_start(x: f32, y: f32) -> Self {
@@ -415,6 +472,30 @@ impl ScreenshotEvent {
         Self::ToolPopup(ToolPopupEvent::PixelationSizeSave)
     }
 
+    pub fn magnifier_tool_mode_toggle() -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnifierModeToggle)
+    }
+
+    pub fn magnifier_popup_toggle() -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnifierPopupToggle)
+    }
+
+    pub fn magnifier_popup_open() -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnifierPopupOpen)
+    }
+
+    pub fn magnifier_popup_close() -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnifierPopupClose)
+    }
+
+    pub fn magnification_set(value: f32) -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnificationSet(value))
+    }
+
+    pub fn magnification_save() -> Self {
+        Self::ToolPopup(ToolPopupEvent::MagnificationSave)
+    }
+
     // Settings events
     pub fn settings_drawer_toggle() -> Self {
         Self::Settings(SettingsEvent::DrawerToggle)
@@ -458,6 +539,10 @@ impl ScreenshotEvent {
 
     pub fn copy_on_save_toggle() -> Self {
         Self::Settings(SettingsEvent::CopyOnSaveToggle)
+    }
+
+    pub fn capture_delay_select(secs: u32) -> Self {
+        Self::Settings(SettingsEvent::CaptureDelaySelect(secs))
     }
 
     pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
@@ -507,6 +592,14 @@ impl ScreenshotEvent {
 
     pub fn save_to_pictures() -> Self {
         Self::Capture(CaptureEvent::SaveToPictures)
+    }
+
+    pub fn delayed_capture() -> Self {
+        Self::Capture(CaptureEvent::DelayedCapture)
+    }
+
+    pub fn cycle_capture_delay() -> Self {
+        Self::Capture(CaptureEvent::CycleCaptureDelay)
     }
 
     pub fn record_region() -> Self {
@@ -595,6 +688,12 @@ impl ScreenshotEvent {
             Self::Annotation(AnnotationEvent::Ended(AnnotationType::Rectangle, p)) => {
                 Msg::rectangle_end(p.x, p.y)
             }
+            Self::Annotation(AnnotationEvent::Started(AnnotationType::Magnifier, p)) => {
+                Msg::magnifier_start(p.x, p.y)
+            }
+            Self::Annotation(AnnotationEvent::Ended(AnnotationType::Magnifier, p)) => {
+                Msg::magnifier_end(p.x, p.y)
+            }
             Self::Annotation(AnnotationEvent::Started(AnnotationType::Redact, p)) => {
                 Msg::redact_start(p.x, p.y)
             }
@@ -615,6 +714,21 @@ impl ScreenshotEvent {
             }
             Self::Annotation(AnnotationEvent::ModeToggle(AnnotationType::Rectangle)) => {
                 Msg::rectangle_mode_toggle()
+            }
+            Self::Annotation(AnnotationEvent::ModeToggle(AnnotationType::Magnifier)) => {
+                Msg::magnifier_mode_toggle()
+            }
+            Self::Annotation(AnnotationEvent::MagnifierSelect(index)) => {
+                Msg::magnifier_select(index)
+            }
+            Self::Annotation(AnnotationEvent::MagnifierMove(index, p)) => {
+                Msg::magnifier_move(index, p.x, p.y)
+            }
+            Self::Annotation(AnnotationEvent::MagnifierResize(index, r)) => {
+                Msg::magnifier_resize(index, r)
+            }
+            Self::Annotation(AnnotationEvent::MagnifierSetZoom(index, z)) => {
+                Msg::magnifier_set_zoom(index, z)
             }
             Self::Annotation(AnnotationEvent::ModeToggle(AnnotationType::Redact)) => {
                 Msg::redact_mode_toggle()
@@ -658,6 +772,14 @@ impl ScreenshotEvent {
             Self::ToolPopup(ToolPopupEvent::PixelationSizeSave) => {
                 Msg::save_pixelation_block_size()
             }
+            Self::ToolPopup(ToolPopupEvent::MagnifierModeToggle) => {
+                Msg::magnifier_tool_mode_toggle()
+            }
+            Self::ToolPopup(ToolPopupEvent::MagnifierPopupToggle) => Msg::toggle_magnifier_popup(),
+            Self::ToolPopup(ToolPopupEvent::MagnifierPopupOpen) => Msg::open_magnifier_popup(),
+            Self::ToolPopup(ToolPopupEvent::MagnifierPopupClose) => Msg::close_magnifier_popup(),
+            Self::ToolPopup(ToolPopupEvent::MagnificationSet(value)) => Msg::set_magnification(value),
+            Self::ToolPopup(ToolPopupEvent::MagnificationSave) => Msg::save_magnification(),
             Self::ToolPopup(ToolPopupEvent::PencilPopupToggle) => Msg::toggle_pencil_popup(),
             Self::ToolPopup(ToolPopupEvent::PencilPopupClose) => Msg::close_pencil_popup(),
             Self::ToolPopup(ToolPopupEvent::PencilColorSet(color)) => Msg::set_pencil_color(color),
@@ -695,6 +817,7 @@ impl ScreenshotEvent {
                 Msg::browse_video_save_location()
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
+            Self::Settings(SettingsEvent::CaptureDelaySelect(secs)) => Msg::set_capture_delay(secs),
             Self::Settings(SettingsEvent::TabActivated(entity)) => {
                 Msg::settings_tab_activated(entity)
             }
@@ -721,6 +844,8 @@ impl ScreenshotEvent {
             // Capture events
             Self::Capture(CaptureEvent::CopyToClipboard) => Msg::copy_to_clipboard(),
             Self::Capture(CaptureEvent::SaveToPictures) => Msg::save_to_pictures(),
+            Self::Capture(CaptureEvent::DelayedCapture) => Msg::delayed_capture(),
+            Self::Capture(CaptureEvent::CycleCaptureDelay) => Msg::cycle_capture_delay(),
             Self::Capture(CaptureEvent::RecordRegion) => Msg::record_region(),
             Self::Capture(CaptureEvent::StopRecording) => Msg::stop_recording(),
             Self::Capture(CaptureEvent::ToggleRecordingAnnotation) => {

@@ -73,6 +73,8 @@ pub struct RectangleSelection<'a, Msg> {
     circle_mode: bool,
     /// Whether rectangle-outline drawing mode is active (skip rectangle capturing)
     rect_outline_mode: bool,
+    /// Whether magnifier drawing mode is active (skip rectangle capturing)
+    magnifier_mode: bool,
     /// Whether any popup or drawer is open (skip rectangle capturing)
     popup_open: bool,
     /// Whether magnifier is enabled
@@ -101,6 +103,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         pixelate_mode: bool,
         circle_mode: bool,
         rect_outline_mode: bool,
+        magnifier_mode: bool,
         popup_open: bool,
         magnifier_enabled: bool,
         is_recording: bool,
@@ -122,6 +125,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
             pixelate_mode,
             circle_mode,
             rect_outline_mode,
+            magnifier_mode,
             popup_open,
             magnifier_enabled,
             is_recording,
@@ -438,6 +442,7 @@ impl<'a, Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     || self.pixelate_mode
                     || self.circle_mode
                     || self.rect_outline_mode
+                    || self.magnifier_mode
                     || self.popup_open
                 {
                     return;

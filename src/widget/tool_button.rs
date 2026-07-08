@@ -797,6 +797,79 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
         .into()
 }
 
+/// Build the magnifier tool popup (magnification slider + clear)
+#[allow(clippy::too_many_arguments)]
+pub fn build_magnifier_popup<'a, Msg: Clone + 'static>(
+    magnification: f32,
+    has_magnifiers: bool,
+    on_set_magnification: impl Fn(f32) -> Msg + 'a,
+    on_save_magnification: Msg,
+    on_clear: Msg,
+    space_s: u16,
+    space_xs: u16,
+) -> Element<'a, Msg> {
+    // Magnification slider (1.5x - 10x) - updates during drag, saves on release
+    let magnification_label = text::body(fl!("magnification", value = format!("{magnification:.1}")));
+    let magnification_slider =
+        cosmic::widget::slider(1.5..=10.0, magnification, move |v| on_set_magnification(v))
+            .step(0.5)
+            .on_release(on_save_magnification)
+            .width(Length::Fill);
+
+    let magnification_section = column![magnification_label, magnification_slider,]
+        .spacing(space_xs)
+        .width(Length::Fill);
+
+    // Clear button (full width)
+    let clear_button = button::custom(
+        container(
+            row![
+                icon::Icon::from(icon::from_name("edit-delete-symbolic").size(16))
+                    .width(Length::Fixed(16.0))
+                    .height(Length::Fixed(16.0)),
+                text::body(fl!("clear-annotations")),
+            ]
+            .spacing(space_xs)
+            .align_y(cosmic::iced::core::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .align_x(cosmic::iced::core::alignment::Horizontal::Center),
+    )
+    .class(cosmic::theme::Button::Destructive)
+    .on_press_maybe(has_magnifiers.then_some(on_clear))
+    .padding([space_xs, space_s])
+    .width(Length::Fill);
+
+    let clear_row = container(clear_button).width(Length::Fill);
+
+    let popup_content = column![
+        magnification_section,
+        cosmic::widget::divider::horizontal::light(),
+        clear_row,
+    ]
+    .spacing(space_s)
+    .padding(space_s)
+    .width(Length::Fixed(230.0));
+
+    container(popup_content)
+        .class(cosmic::theme::Container::Custom(Box::new(|theme| {
+            let cosmic_theme = theme.cosmic();
+            cosmic::iced::widget::container::Style {
+                background: Some(Background::Color(
+                    cosmic_theme.background.component.base.into(),
+                )),
+                text_color: Some(cosmic_theme.background.component.on.into()),
+                border: Border {
+                    radius: cosmic_theme.corner_radii.radius_s.into(),
+                    width: 1.0,
+                    color: cosmic::iced::Color::from_rgba(0.5, 0.5, 0.5, 0.3),
+                },
+                ..Default::default()
+            }
+        })))
+        .into()
+}
+
 /// Build the pencil settings popup element for recording annotations
 #[allow(clippy::too_many_arguments)]
 pub fn build_pencil_popup<'a, Msg: Clone + 'static>(

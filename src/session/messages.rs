@@ -39,6 +39,16 @@ pub enum DrawMsg {
     Circle(DrawAction),
     /// Rectangle outline annotation actions
     Rectangle(DrawAction),
+    /// Magnifier annotation actions
+    Magnifier(DrawAction),
+    /// Select a magnifier for editing (index into magnifiers, or None to deselect)
+    MagnifierSelect(Option<usize>),
+    /// Move the given magnifier so its center is at (global x, y)
+    MagnifierMove(usize, f32, f32),
+    /// Resize the given magnifier to the given radius (global logical units)
+    MagnifierResize(usize, f32),
+    /// Set the magnification (zoom) of the given magnifier
+    MagnifierSetZoom(usize, f32),
     /// Redaction (black box) actions
     Redact(DrawAction),
     /// Pixelation actions
@@ -97,6 +107,15 @@ pub enum ToolMsg {
     /// Save current pixelation block size to config
     SavePixelationBlockSize,
 
+    /// Magnifier tool mode toggle
+    MagnifierModeToggle,
+    /// Magnifier popup actions
+    MagnifierPopup(ToolPopupAction),
+    /// Set magnifier magnification (UI only, no save)
+    SetMagnification(f32),
+    /// Save current magnifier magnification to config
+    SaveMagnification,
+
     /// Pencil popup actions
     PencilPopup(ToolPopupAction),
     /// Set pencil color for recording annotations
@@ -154,6 +173,10 @@ pub enum CaptureMsg {
     CopyToClipboard,
     /// Save to Pictures folder
     SaveToPictures,
+    /// Hide the overlay, wait the configured delay, then re-capture the screen
+    DelayedCapture,
+    /// Cycle the delayed-screenshot delay (3 -> 5 -> 10 -> 3 seconds)
+    CycleCaptureDelay,
     /// Record selected region
     RecordRegion,
     /// Stop recording
@@ -248,6 +271,8 @@ pub enum SettingsMsg {
     BrowseVideoSaveLocationResult(Option<String>),
     /// Toggle copy to clipboard on save
     ToggleCopyOnSave,
+    /// Set the delayed-screenshot delay (seconds)
+    SetCaptureDelay(u32),
     /// Settings tab activated (by segmented button entity)
     SettingsTabActivated(segmented_button::Entity),
     /// Set toolbar opacity when not hovered
@@ -331,6 +356,27 @@ impl Msg {
     }
     pub fn rectangle_end(x: f32, y: f32) -> Self {
         Self::Draw(DrawMsg::Rectangle(DrawAction::End(x, y)))
+    }
+    pub fn magnifier_mode_toggle() -> Self {
+        Self::Draw(DrawMsg::Magnifier(DrawAction::ModeToggle))
+    }
+    pub fn magnifier_start(x: f32, y: f32) -> Self {
+        Self::Draw(DrawMsg::Magnifier(DrawAction::Start(x, y)))
+    }
+    pub fn magnifier_end(x: f32, y: f32) -> Self {
+        Self::Draw(DrawMsg::Magnifier(DrawAction::End(x, y)))
+    }
+    pub fn magnifier_select(index: Option<usize>) -> Self {
+        Self::Draw(DrawMsg::MagnifierSelect(index))
+    }
+    pub fn magnifier_move(index: usize, x: f32, y: f32) -> Self {
+        Self::Draw(DrawMsg::MagnifierMove(index, x, y))
+    }
+    pub fn magnifier_resize(index: usize, radius: f32) -> Self {
+        Self::Draw(DrawMsg::MagnifierResize(index, radius))
+    }
+    pub fn magnifier_set_zoom(index: usize, zoom: f32) -> Self {
+        Self::Draw(DrawMsg::MagnifierSetZoom(index, zoom))
     }
 
     pub fn redact_mode_toggle() -> Self {
@@ -416,6 +462,26 @@ impl Msg {
         Self::Tool(ToolMsg::SavePixelationBlockSize)
     }
 
+    // Magnifier tool shortcuts
+    pub fn magnifier_tool_mode_toggle() -> Self {
+        Self::Tool(ToolMsg::MagnifierModeToggle)
+    }
+    pub fn toggle_magnifier_popup() -> Self {
+        Self::Tool(ToolMsg::MagnifierPopup(ToolPopupAction::Toggle))
+    }
+    pub fn open_magnifier_popup() -> Self {
+        Self::Tool(ToolMsg::MagnifierPopup(ToolPopupAction::Open))
+    }
+    pub fn close_magnifier_popup() -> Self {
+        Self::Tool(ToolMsg::MagnifierPopup(ToolPopupAction::Close))
+    }
+    pub fn set_magnification(value: f32) -> Self {
+        Self::Tool(ToolMsg::SetMagnification(value))
+    }
+    pub fn save_magnification() -> Self {
+        Self::Tool(ToolMsg::SaveMagnification)
+    }
+
     // Pencil tool shortcuts (for recording annotations)
     pub fn toggle_pencil_popup() -> Self {
         Self::Tool(ToolMsg::PencilPopup(ToolPopupAction::Toggle))
@@ -474,6 +540,12 @@ impl Msg {
     }
     pub fn save_to_pictures() -> Self {
         Self::Capture(CaptureMsg::SaveToPictures)
+    }
+    pub fn delayed_capture() -> Self {
+        Self::Capture(CaptureMsg::DelayedCapture)
+    }
+    pub fn cycle_capture_delay() -> Self {
+        Self::Capture(CaptureMsg::CycleCaptureDelay)
     }
     pub fn record_region() -> Self {
         Self::Capture(CaptureMsg::RecordRegion)
@@ -563,6 +635,9 @@ impl Msg {
     }
     pub fn toggle_copy_on_save() -> Self {
         Self::Settings(SettingsMsg::ToggleCopyOnSave)
+    }
+    pub fn set_capture_delay(secs: u32) -> Self {
+        Self::Settings(SettingsMsg::SetCaptureDelay(secs))
     }
     pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
         Self::Settings(SettingsMsg::SettingsTabActivated(entity))

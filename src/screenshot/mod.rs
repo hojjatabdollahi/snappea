@@ -190,6 +190,10 @@ fn write_png<W: io::Write>(w: W, image: &RgbaImage) -> Result<(), png::EncodingE
     let mut encoder = png::Encoder::new(w, image.width(), image.height());
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
+    // Prioritize speed over file size: screenshots are large and the default
+    // (zlib level ~6) compression dominates copy/save latency. Fast compression
+    // is dramatically quicker for only a modest increase in size.
+    encoder.set_compression(png::Compression::Fast);
     let mut writer = encoder.write_header()?;
     writer.write_image_data(image.as_raw())
 }
@@ -383,6 +387,9 @@ impl Screenshot {
                         primary_redact_tool: config.primary_redact_tool,
                         redact_popup_open: false,
                         pixelation_block_size: config.pixelation_block_size,
+                        magnifier_popup_open: false,
+                        magnifier_magnification: config.magnifier_magnification,
+                        capture_delay_secs: config.capture_delay_secs,
                         magnifier_enabled: config.magnifier_enabled,
                         save_location_setting: config.save_location,
                         custom_save_path: config.custom_save_path.clone(),
@@ -461,7 +468,8 @@ pub(crate) fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
     // Calculate derived state
     let has_any_annotations = !args.annotations.arrows.is_empty()
         || !args.annotations.circles.is_empty()
-        || !args.annotations.rect_outlines.is_empty();
+        || !args.annotations.rect_outlines.is_empty()
+        || !args.annotations.magnifiers.is_empty();
     let has_any_redactions =
         !args.annotations.redactions.is_empty() || !args.annotations.pixelations.is_empty();
     let has_ocr_text = args.detection.ocr_text.is_some();
@@ -851,6 +859,13 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 cosmic::Task::none()
             }
             SettingsMsg::ToggleCopyOnSave => settings_handlers::handle_toggle_copy_on_save(args),
+            SettingsMsg::SetCaptureDelay(secs) => {
+                args.ui.capture_delay_secs = secs;
+                let mut config = crate::config::SnapPeaConfig::load();
+                config.capture_delay_secs = secs;
+                config.save();
+                cosmic::Task::none()
+            }
             SettingsMsg::SettingsTabActivated(_) => {
                 // Already handled above
                 cosmic::Task::none()
@@ -973,6 +988,47 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 }
             }
             handle_capture_inner(app)
+        }
+        CaptureMsg::CycleCaptureDelay => {
+            if let Some(args) = app.screenshot_args.as_mut() {
+                let next = match args.ui.capture_delay_secs {
+                    0..=3 => 5,
+                    4..=5 => 10,
+                    _ => 3,
+                };
+                args.ui.capture_delay_secs = next;
+                let mut config = crate::config::SnapPeaConfig::load();
+                config.capture_delay_secs = next;
+                config.save();
+            }
+            cosmic::Task::none()
+        }
+        CaptureMsg::DelayedCapture => {
+            let Some(args) = app.screenshot_args.as_ref() else {
+                return cosmic::Task::none();
+            };
+            let delay = args.ui.capture_delay_secs.max(1) as u64;
+            let helper = app.wayland_helper.clone();
+
+            // Hide the overlay so it isn't part of the re-captured screen. The dummy
+            // clipboard surface keeps the app alive during the wait.
+            let destroy: Vec<_> = app
+                .outputs
+                .iter()
+                .map(|o| destroy_layer_surface(o.id))
+                .collect();
+
+            // After the delay, capture fresh pixels and hand them back to the app,
+            // which reopens the overlay with the new screenshot.
+            let recapture = cosmic::Task::perform(
+                async move {
+                    tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    crate::core::app::capture_all_outputs(helper).await
+                },
+                crate::core::app::Msg::DelayedCaptureReady,
+            );
+
+            cosmic::Task::batch(destroy.into_iter().chain(std::iter::once(recapture)))
         }
         CaptureMsg::RecordRegion => {
             // Get region from selection state
