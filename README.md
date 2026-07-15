@@ -25,6 +25,7 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 - Video editor
   - Trim recorded video
   - Save as gif
+  - Save as WebM
 - Annotation tools: arrows, circles, squares, freehand drawing
 - Text recognition (OCR)
 - QR code detection
