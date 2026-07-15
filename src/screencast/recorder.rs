@@ -823,31 +823,29 @@ pub fn start_recording(
             // that plays sped up and "doesn't show the whole recording".
             let timestamp = start_time.elapsed().as_nanos() as u64;
 
-            // Try to get a new frame (non-blocking)
-            let frame_data = match frame_rx.try_recv() {
+            // Try to get a new frame (non-blocking). Avoid cloning the full
+            // frame buffer: on a new frame we move it into `last_frame`; on a
+            // repeat we reuse the stored buffer. push_frame only needs a slice,
+            // so no per-frame allocation/copy is required.
+            match frame_rx.try_recv() {
                 Ok(data) => {
-                    last_frame = Some(data.clone());
+                    last_frame = Some(data);
                     new_frames += 1;
-                    data
                 }
                 Err(_) => {
                     // No new frame available, repeat last frame
-                    match &last_frame {
-                        Some(data) => {
-                            repeated_frames += 1;
-                            data.clone()
-                        }
-                        None => {
-                            // No frame yet, wait a bit
-                            std::thread::sleep(Duration::from_millis(1));
-                            continue;
-                        }
+                    if last_frame.is_none() {
+                        // No frame yet, wait a bit
+                        std::thread::sleep(Duration::from_millis(1));
+                        continue;
                     }
+                    repeated_frames += 1;
                 }
             };
+            let frame_data = last_frame.as_deref().unwrap();
 
             // Push frame to pipeline
-            match pipeline.push_frame(&frame_data, timestamp) {
+            match pipeline.push_frame(frame_data, timestamp) {
                 Ok(()) => {
                     consecutive_errors = 0;
                     frame_count += 1;
@@ -1588,25 +1586,25 @@ pub fn start_recording_thread(
             // (frame_count-based timestamps cause slow motion when capture is faster than target fps)
             let timestamp = start_time.elapsed().as_nanos() as u64;
 
-            let frame_data = match frame_rx.try_recv() {
+            // Avoid cloning the full frame buffer each iteration: move new
+            // frames into `last_frame`, reuse the stored buffer on repeats, and
+            // push by slice (push_frame borrows, it does not take ownership).
+            match frame_rx.try_recv() {
                 Ok(data) => {
-                    last_frame = Some(data.clone());
+                    last_frame = Some(data);
                     new_frames += 1;
-                    data
                 }
-                Err(_) => match &last_frame {
-                    Some(data) => {
-                        repeated_frames += 1;
-                        data.clone()
-                    }
-                    None => {
+                Err(_) => {
+                    if last_frame.is_none() {
                         std::thread::sleep(Duration::from_millis(1));
                         continue;
                     }
-                },
+                    repeated_frames += 1;
+                }
             };
+            let frame_data = last_frame.as_deref().unwrap();
 
-            match pipeline.push_frame(&frame_data, timestamp) {
+            match pipeline.push_frame(frame_data, timestamp) {
                 Ok(()) => {
                     consecutive_errors = 0;
                     frame_count += 1;
