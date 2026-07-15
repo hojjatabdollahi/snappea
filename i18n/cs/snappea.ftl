@@ -100,6 +100,7 @@ set-as-default-portal-description = Použít SnapPea jako výchozí portál pro 
 toolbar-opacity = Průhlednost panelu nástrojů (neaktivního): { $percent } %
 app-name = SnapPea
 app-author = od Hojjata Abdollahiho
+app-version = v{ $version } ({ $hash })
 
 # Settings drawer - Picture
 save-location = Uložit do:
@@ -127,7 +128,7 @@ show-cursor = Zobrazit kurzor
 hide-to-tray = Skrýt do oznamovací oblasti při nahrávání
 
 # System tray
-tray-title = Snappea nahrávání
+tray-title = Nahrávání Snappea
 tray-tooltip-title = Snappea - Nahrávání
 tray-tooltip-desc = Klikněte pro zastavení nahrávání
 hide-toolbar = Skrýt panel nástrojů
@@ -139,6 +140,72 @@ invalid-ocr-scale = Neplatné měřítko OCR mapování
 tesseract-image-error = Nepodařilo se vytvořit obrázek pro tesseract: { $error }
 tesseract-ocr-error = OCR Tesseract selhalo: { $error }
 
+# Screen selection hints
+select-screen-hint = Klikněte nebo stiskněte Enter pro výběr této obrazovky
+select-screen-navigate = Klikněte pro výběr • Pro navigaci použijte šipky
+change-selection-hint = Stiskněte „S“ nebo tlačítko Obrazovka pro změnu výběru
+
+# File dialogs
+browse-screenshots-title = Vyberte umístění pro ukládání snímků obrazovky
+browse-videos-title = Vyberte umístění pro ukládání videí
+
+# Status overlays
+scanning-qr = Vyhledávání QR kódů...
+downloading-ocr-models = Stahování OCR modelů...
+running-ocr = Probíhá OCR...
+ocr-error = Chyba OCR: { $error }
+
+# Notifications
+recording-saved = Nahrávka uložena
+saved-to = Uloženo do { $path }
+
+# Default screenshot filename prefix
+screenshot-filename-prefix = Snímek obrazovky
+
 # Command line usage
 cli-usage = Použití: snappea --record --output SOUBOR --output-name NÁZEV --region X,Y,W,H --logical-size W,H --encoder ENC [--container FMT] [--framerate FPS] [--toplevel-index IDX]
 cli-missing-args = Chybí povinné argumenty pro --record
+
+# Media editor
+edit-title = Úpravy SnapPea
+edit-about = O aplikaci
+edit-system-tools = Systémové nástroje
+edit-ffmpeg-version = ffmpeg: { $version }
+edit-ffmpeg-not-installed = ffmpeg: není nainstalován (potřebný pro ořez videa a převod do GIF)
+edit-gifski-version = gifski: { $version }
+edit-gifski-not-installed = gifski: není nainstalován (cargo install gifski pro kvalitnější GIFy)
+edit-loading = Načítání
+edit-loading-video = Načítání videa...
+edit-encoding-gif = Enkódování GIFu...
+edit-loaded = Načteno
+edit-no-media = Žádná média
+edit-save = Uložit
+edit-save-as = Uložit jako...
+edit-discard = Zahodit
+edit-format = Formát
+edit-format-gif = GIF
+edit-format-video = Video
+edit-quality = Kvalita
+edit-quality-low = Nízká
+edit-quality-medium = Střední
+edit-quality-high = Vysoká
+edit-converting = Konvertování…
+edit-cancel = Zrušit
+edit-export-cancelled = Export zrušen
+edit-scale = Měřítko
+edit-trim = Ořez
+edit-optimize-ffmpeg = Optimalizovat (ffmpeg)
+edit-saved-size = Uloženo ({ $size } KB)
+edit-saved-path-size = Uloženo { $path } ({ $size } KB)
+edit-save-failed = Uložení se nezdařilo: { $error }
+edit-copied-to-clipboard = Zkopírováno do schránky
+edit-copied-file-path = Cesta k souboru zkopírována do schránky
+edit-copy-failed = Kopírování se nezdařilo: { $error }
+edit-copied = Zkopírováno
+edit-cut = Vystřihnout
+edit-delete-chunk = Smazat
+edit-undelete-chunk = Obnovit
+edit-cuts = Vystřižené části:
+edit-chunk = Část
+edit-deleted = smazáno
+edit-speed = Rychlost
