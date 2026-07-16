@@ -646,9 +646,9 @@ pub fn build_shape_popup<'a, Msg: Clone + 'static>(
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: Some(Background::Color(
-                    cosmic_theme.background.component.base.into(),
+                    cosmic_theme.background(false).component.base.into(),
                 )),
-                text_color: Some(cosmic_theme.background.component.on.into()),
+                text_color: Some(cosmic_theme.background(false).component.on.into()),
                 border: Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),
                     width: 1.0,
@@ -783,9 +783,9 @@ pub fn build_redact_popup<'a, Msg: Clone + 'static>(
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: Some(Background::Color(
-                    cosmic_theme.background.component.base.into(),
+                    cosmic_theme.background(false).component.base.into(),
                 )),
-                text_color: Some(cosmic_theme.background.component.on.into()),
+                text_color: Some(cosmic_theme.background(false).component.on.into()),
                 border: Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),
                     width: 1.0,
@@ -856,9 +856,9 @@ pub fn build_magnifier_popup<'a, Msg: Clone + 'static>(
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: Some(Background::Color(
-                    cosmic_theme.background.component.base.into(),
+                    cosmic_theme.background(false).component.base.into(),
                 )),
-                text_color: Some(cosmic_theme.background.component.on.into()),
+                text_color: Some(cosmic_theme.background(false).component.on.into()),
                 border: Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),
                     width: 1.0,
@@ -1025,9 +1025,9 @@ pub fn build_pencil_popup<'a, Msg: Clone + 'static>(
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: Some(Background::Color(
-                    cosmic_theme.background.component.base.into(),
+                    cosmic_theme.background(false).component.base.into(),
                 )),
-                text_color: Some(cosmic_theme.background.component.on.into()),
+                text_color: Some(cosmic_theme.background(false).component.on.into()),
                 border: Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),
                     width: 1.0,
