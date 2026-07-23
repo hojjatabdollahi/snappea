@@ -1157,9 +1157,23 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 crate::config::Container::Webm => crate::config::Container::Mp4,
                 other => other,
             };
-            let output_dir = dirs::video_dir()
-                .or_else(|| dirs::home_dir())
-                .unwrap_or_else(|| std::path::PathBuf::from("."));
+            // Honor the configured save location. Fall back to ~/Videos (never
+            // the bare home directory) when no XDG Videos dir is configured, so
+            // recordings don't get dropped into the home root on systems without
+            // xdg-user-dirs set up.
+            let videos_default = || {
+                dirs::video_dir().or_else(|| dirs::home_dir().map(|h| h.join("Videos")))
+            };
+            let output_dir = match config.video_save_location {
+                crate::config::VideoSaveLocationChoice::Custom
+                    if !config.video_custom_save_path.is_empty() =>
+                {
+                    Some(std::path::PathBuf::from(&config.video_custom_save_path))
+                }
+                _ => videos_default(),
+            }
+            .or_else(videos_default)
+            .unwrap_or_else(|| std::path::PathBuf::from("."));
 
             // Ensure output directory exists
             if !output_dir.exists() {
