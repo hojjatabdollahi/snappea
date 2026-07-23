@@ -62,86 +62,93 @@ impl EncoderInfo {
     }
 }
 
+/// A candidate encoder: an element name to probe plus the metadata to publish
+/// if it resolves. `detect_encoders` walks each codec's candidate list in order
+/// and keeps the first element that GStreamer can actually create.
+struct Candidate {
+    name: &'static str,
+    gst_element: &'static str,
+    codec: Codec,
+    hardware: bool,
+    supports_dmabuf_zero_copy: bool,
+    priority: u8,
+}
+
 /// Detect available video encoders
+///
+/// For each codec/backend we probe a list of candidate GStreamer element names
+/// in preference order and keep the first that resolves. This matters because
+/// the element names differ across GStreamer generations:
+///   - Legacy `gstreamer-vaapi` exposes `vaapih264enc`, `vaapih265enc`, ...
+///   - The modern stateless `va` plugin (gst-plugins-bad, GStreamer 1.22+, and
+///     the default on recent Arch) exposes `vah264enc`, `vah265enc`, ... instead,
+///     with `gstreamer-vaapi` deprecated/removed.
+/// Probing only the legacy names made snappea miss hardware encoders entirely on
+/// modern systems, leaving software VP9 as the only option (see issue #17).
+///
+/// The legacy `vaapi*` elements are listed first so systems that still have them
+/// keep the existing DMA-BUF zero-copy path (which relies on `vaapipostproc` /
+/// `memory:VASurface`); the modern `va*` elements are wired through the generic
+/// copied-memory pipeline for now (`supports_dmabuf_zero_copy: false`).
 pub fn detect_encoders() -> Result<Vec<EncoderInfo>> {
     gst::init().context("Failed to initialize GStreamer")?;
 
+    // Each inner slice is a preference-ordered list of interchangeable encoders
+    // for one codec/backend; only the first available element in each slice is
+    // added, so we never show two entries for the same underlying encoder.
+    let candidate_groups: &[&[Candidate]] = &[
+        // VA-API H.264 (Intel/AMD) - priority 10
+        &[
+            Candidate { name: "VA-API H.264", gst_element: "vaapih264enc", codec: Codec::H264, hardware: true, supports_dmabuf_zero_copy: true, priority: 10 },
+            Candidate { name: "VA-API H.264", gst_element: "vah264enc", codec: Codec::H264, hardware: true, supports_dmabuf_zero_copy: false, priority: 10 },
+            Candidate { name: "VA-API H.264 (low-power)", gst_element: "vah264lpenc", codec: Codec::H264, hardware: true, supports_dmabuf_zero_copy: false, priority: 10 },
+        ],
+        // VA-API H.265 - priority 11
+        &[
+            Candidate { name: "VA-API H.265", gst_element: "vaapih265enc", codec: Codec::H265, hardware: true, supports_dmabuf_zero_copy: true, priority: 11 },
+            Candidate { name: "VA-API H.265", gst_element: "vah265enc", codec: Codec::H265, hardware: true, supports_dmabuf_zero_copy: false, priority: 11 },
+            Candidate { name: "VA-API H.265 (low-power)", gst_element: "vah265lpenc", codec: Codec::H265, hardware: true, supports_dmabuf_zero_copy: false, priority: 11 },
+        ],
+        // VA-API VP9 - priority 12
+        &[
+            Candidate { name: "VA-API VP9", gst_element: "vaapivp9enc", codec: Codec::VP9, hardware: true, supports_dmabuf_zero_copy: true, priority: 12 },
+            Candidate { name: "VA-API VP9", gst_element: "vavp9enc", codec: Codec::VP9, hardware: true, supports_dmabuf_zero_copy: false, priority: 12 },
+        ],
+        // NVENC H.264 (NVIDIA) - priority 20
+        &[
+            Candidate { name: "NVENC H.264", gst_element: "nvh264enc", codec: Codec::H264, hardware: true, supports_dmabuf_zero_copy: false, priority: 20 },
+            Candidate { name: "NVENC H.264", gst_element: "nvcudah264enc", codec: Codec::H264, hardware: true, supports_dmabuf_zero_copy: false, priority: 20 },
+        ],
+        // NVENC H.265 - priority 21
+        &[
+            Candidate { name: "NVENC H.265", gst_element: "nvh265enc", codec: Codec::H265, hardware: true, supports_dmabuf_zero_copy: false, priority: 21 },
+            Candidate { name: "NVENC H.265", gst_element: "nvcudah265enc", codec: Codec::H265, hardware: true, supports_dmabuf_zero_copy: false, priority: 21 },
+        ],
+        // Software H.264 - priority 100. x264 (gst-plugins-ugly) preferred,
+        // openh264 (gst-plugins-bad) as a fallback so MP4 still works without
+        // gst-plugins-ugly installed.
+        &[
+            Candidate { name: "x264 H.264", gst_element: "x264enc", codec: Codec::H264, hardware: false, supports_dmabuf_zero_copy: false, priority: 100 },
+            Candidate { name: "OpenH264", gst_element: "openh264enc", codec: Codec::H264, hardware: false, supports_dmabuf_zero_copy: false, priority: 100 },
+        ],
+        // Software VP9 - priority 101
+        &[
+            Candidate { name: "VP9", gst_element: "vp9enc", codec: Codec::VP9, hardware: false, supports_dmabuf_zero_copy: false, priority: 101 },
+        ],
+    ];
+
     let mut encoders = Vec::new();
-
-    // VA-API encoders (Intel/AMD) - priority 10
-    if encoder_available("vaapih264enc") {
-        encoders.push(EncoderInfo {
-            name: "VA-API H.264".to_string(),
-            gst_element: "vaapih264enc".to_string(),
-            codec: Codec::H264,
-            hardware: true,
-            supports_dmabuf_zero_copy: true,
-            priority: 10,
-        });
-    }
-    if encoder_available("vaapih265enc") {
-        encoders.push(EncoderInfo {
-            name: "VA-API H.265".to_string(),
-            gst_element: "vaapih265enc".to_string(),
-            codec: Codec::H265,
-            hardware: true,
-            supports_dmabuf_zero_copy: true,
-            priority: 11,
-        });
-    }
-    if encoder_available("vaapivp9enc") {
-        encoders.push(EncoderInfo {
-            name: "VA-API VP9".to_string(),
-            gst_element: "vaapivp9enc".to_string(),
-            codec: Codec::VP9,
-            hardware: true,
-            supports_dmabuf_zero_copy: true,
-            priority: 12,
-        });
-    }
-
-    // NVENC encoders (NVIDIA) - priority 20
-    if encoder_available("nvh264enc") {
-        encoders.push(EncoderInfo {
-            name: "NVENC H.264".to_string(),
-            gst_element: "nvh264enc".to_string(),
-            codec: Codec::H264,
-            hardware: true,
-            supports_dmabuf_zero_copy: false,
-            priority: 20,
-        });
-    }
-    if encoder_available("nvh265enc") {
-        encoders.push(EncoderInfo {
-            name: "NVENC H.265".to_string(),
-            gst_element: "nvh265enc".to_string(),
-            codec: Codec::H265,
-            hardware: true,
-            supports_dmabuf_zero_copy: false,
-            priority: 21,
-        });
-    }
-
-    // Software fallbacks - priority 100+
-    if encoder_available("x264enc") {
-        encoders.push(EncoderInfo {
-            name: "x264 H.264".to_string(),
-            gst_element: "x264enc".to_string(),
-            codec: Codec::H264,
-            hardware: false,
-            supports_dmabuf_zero_copy: false,
-            priority: 100,
-        });
-    }
-    if encoder_available("vp9enc") {
-        encoders.push(EncoderInfo {
-            name: "VP9".to_string(),
-            gst_element: "vp9enc".to_string(),
-            codec: Codec::VP9,
-            hardware: false,
-            supports_dmabuf_zero_copy: false,
-            priority: 101,
-        });
+    for group in candidate_groups {
+        if let Some(candidate) = group.iter().find(|c| encoder_available(c.gst_element)) {
+            encoders.push(EncoderInfo {
+                name: candidate.name.to_string(),
+                gst_element: candidate.gst_element.to_string(),
+                codec: candidate.codec,
+                hardware: candidate.hardware,
+                supports_dmabuf_zero_copy: candidate.supports_dmabuf_zero_copy,
+                priority: candidate.priority,
+            });
+        }
     }
 
     // Sort by priority (lower first)
@@ -224,6 +231,23 @@ mod tests {
             assert!(!encoder.gst_element.is_empty());
         }
         // If no encoders available, that's also a valid outcome for this test
+    }
+
+    #[test]
+    fn test_detect_encoders_have_unique_elements() {
+        // Each codec/backend must resolve to at most one element, even on systems
+        // that have both the legacy (vaapi*) and modern (va*) plugins installed.
+        let Ok(encoders) = detect_encoders() else {
+            return;
+        };
+        let mut seen = std::collections::HashSet::new();
+        for e in &encoders {
+            assert!(
+                seen.insert(e.gst_element.clone()),
+                "duplicate encoder element: {}",
+                e.gst_element
+            );
+        }
     }
 
     #[test]
