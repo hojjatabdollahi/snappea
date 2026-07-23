@@ -450,7 +450,7 @@ where
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: None, // HoverOpacity handles the background
-                text_color: Some(cosmic_theme.background(false).component.on.into()),
+                text_color: Some(cosmic_theme.background.component.on.into()),
                 border: Border::default(),
                 ..Default::default()
             }

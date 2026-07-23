@@ -1793,7 +1793,7 @@ fn render_recording_indicator(
             let cosmic_theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: Some(Background::Color(
-                    cosmic_theme.background(false).component.base.into(),
+                    cosmic_theme.background.component.base.into(),
                 )),
                 border: cosmic::iced::core::Border {
                     radius: cosmic_theme.corner_radii.radius_s.into(),

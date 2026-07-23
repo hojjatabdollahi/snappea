@@ -665,7 +665,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
         let radius = cosmic_theme.corner_radii.radius_s;
 
         // Draw the background with appropriate opacity
-        let mut bg_color: cosmic::iced::Color = cosmic_theme.background(false).component.base.into();
+        let mut bg_color: cosmic::iced::Color = cosmic_theme.background.component.base.into();
         bg_color.a *= opacity;
 
         renderer.fill_quad(
@@ -894,7 +894,7 @@ impl<'a, Msg: Clone + 'static> cosmic::widget::Widget<Msg, cosmic::Theme, cosmic
             self.unhovered_opacity
         };
 
-        let mut bg_color: cosmic::iced::Color = cosmic_theme.background(false).component.base.into();
+        let mut bg_color: cosmic::iced::Color = cosmic_theme.background.component.base.into();
         bg_color.a *= opacity;
 
         let mut draw_style = *style;
@@ -1392,7 +1392,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         cosmic::theme::Container::Custom(Box::new(move |theme| {
             let cosmic_theme = theme.cosmic();
             // Check if dark theme by examining background luminance
-            let bg = cosmic_theme.background(false).base;
+            let bg = cosmic_theme.background.base;
             let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
             let border_color = if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, opacity)
@@ -1451,7 +1451,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         let opacity = content_opacity;
         cosmic::theme::Container::Custom(Box::new(move |theme| {
             let cosmic_theme = theme.cosmic();
-            let bg = cosmic_theme.background(false).base;
+            let bg = cosmic_theme.background.base;
             let is_dark = (bg.red * 0.299 + bg.green * 0.587 + bg.blue * 0.114) < 0.5;
             let border_color = if is_dark {
                 Color::from_rgba(1.0, 1.0, 1.0, opacity)
@@ -1848,7 +1848,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: None, // HatContainer draws the background with opacity
-                text_color: Some(theme.background(false).component.on.into()),
+                text_color: Some(theme.background.component.on.into()),
                 border: Border::default(),
                 ..Default::default()
             }
@@ -1871,7 +1871,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
             let theme = theme.cosmic();
             cosmic::iced::widget::container::Style {
                 background: None, // HatContainer draws the background with opacity
-                text_color: Some(theme.background(false).component.on.into()),
+                text_color: Some(theme.background.component.on.into()),
                 border: Border::default(),
                 ..Default::default()
             }
