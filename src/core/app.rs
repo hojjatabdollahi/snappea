@@ -102,6 +102,8 @@ pub struct AnnotationStroke {
 pub struct RecordingIndicator {
     /// Window ID for the layer surface
     pub window_id: window::Id,
+    /// Whether a layer surface currently exists for `window_id`
+    pub surface_alive: bool,
     /// Output name where recording is happening
     pub output_name: String,
     /// Output for recreating the surface
@@ -496,7 +498,20 @@ impl cosmic::Application for App {
                         }
                     };
 
-                    let destroy_task = destroy_layer_surface(old_window_id);
+                    let destroy_task = if indicator.surface_alive {
+                        destroy_layer_surface(old_window_id)
+                    } else {
+                        cosmic::iced::Task::none()
+                    };
+
+                    // Nothing left to show: stay off the screen entirely instead of repainting a
+                    // screen-sized surface for an invisible canvas.
+                    if !indicator_needs_surface(indicator, self.toolbar_visible) {
+                        indicator.surface_alive = false;
+                        return destroy_task;
+                    }
+                    indicator.surface_alive = true;
+
                     let create_task = get_layer_surface(SctkLayerSurfaceSettings {
                         id: new_window_id,
                         layer: Layer::Overlay,
@@ -601,7 +616,20 @@ impl cosmic::Application for App {
                         }])
                     };
 
-                    let destroy_task = destroy_layer_surface(old_window_id);
+                    let destroy_task = if indicator.surface_alive {
+                        destroy_layer_surface(old_window_id)
+                    } else {
+                        cosmic::iced::Task::none()
+                    };
+
+                    // Nothing left to show: stay off the screen entirely instead of repainting a
+                    // screen-sized surface for an invisible canvas.
+                    if !indicator_needs_surface(indicator, self.toolbar_visible) {
+                        indicator.surface_alive = false;
+                        return destroy_task;
+                    }
+                    indicator.surface_alive = true;
+
                     let create_task = get_layer_surface(SctkLayerSurfaceSettings {
                         id: new_window_id,
                         layer: Layer::Overlay,
@@ -963,11 +991,16 @@ impl cosmic::Application for App {
                 }),
             );
 
-            // Annotation fade timer (50ms for smooth fading)
-            subscriptions.push(
-                cosmic::iced::time::every(std::time::Duration::from_millis(50))
-                    .map(|_| Msg::AnnotationFade),
-            );
+            // Annotation fade timer (50ms for smooth fading), only while there is something to
+            // fade - otherwise it repaints the full-output overlay 20 times a second for nothing
+            if self.recording_indicator.as_ref().is_some_and(|indicator| {
+                !indicator.annotations.is_empty() || indicator.current_stroke.is_some()
+            }) {
+                subscriptions.push(
+                    cosmic::iced::time::every(std::time::Duration::from_millis(50))
+                        .map(|_| Msg::AnnotationFade),
+                );
+            }
         }
 
         if let Some(args) = &self.screenshot_args
@@ -1367,6 +1400,26 @@ fn tray_subscription(rx: CbReceiver<TrayAction>) -> Subscription<Msg> {
             },
         )
     })
+}
+
+/// Whether the recording overlay needs a layer surface at all.
+///
+/// The surface spans the whole output, so every repaint of it damages the entire screen. With the
+/// toolbar hidden to the tray and a full-output recording there is nothing left to draw - the tray
+/// icon is the indicator - so we skip the surface entirely instead of committing screen-sized
+/// buffers for an invisible canvas.
+pub fn indicator_needs_surface(indicator: &RecordingIndicator, toolbar_visible: bool) -> bool {
+    let covers_output = indicator.region.0 <= 0
+        && indicator.region.1 <= 0
+        && indicator.region.2 as f32 >= indicator.output_size.0
+        && indicator.region.3 as f32 >= indicator.output_size.1;
+
+    toolbar_visible
+        || indicator.annotation_mode
+        || !indicator.annotations.is_empty()
+        || indicator.current_stroke.is_some()
+        // a region border is still worth showing for a partial recording
+        || !covers_output
 }
 
 /// Render the recording indicator overlay - a blinking red border and annotations

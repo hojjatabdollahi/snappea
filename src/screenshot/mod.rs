@@ -1415,6 +1415,13 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                 .map(|o| o.output.clone())
                 .or_else(|| app.outputs.first().map(|o| o.output.clone()));
 
+            // Matches the tray/toolbar state applied below
+            let initial_toolbar_visible = if app.tray_tx.is_some() {
+                !config.hide_toolbar_to_tray
+            } else {
+                true
+            };
+
             let indicator_task = if let Some(wl_output) = indicator_output {
                 // Store the indicator state WITH toolbar
                 app.recording_indicator = Some(RecordingIndicator {
@@ -1438,6 +1445,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     drag_offset: (0.0, 0.0),
                     pencil_popup_open: false,
                     pencil_popup_bounds: None,
+                    surface_alive: false,
                 });
 
                 log::info!(
@@ -1446,6 +1454,16 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     local_region,
                     toolbar_input_bounds
                 );
+
+                // The overlay covers the whole output, so any repaint of it damages the entire
+                // screen. With the toolbar hidden to the tray and nothing to draw over a
+                // full-output recording, skip the surface until the toolbar comes back.
+                let indicator = app.recording_indicator.as_mut().unwrap();
+                if !crate::core::app::indicator_needs_surface(indicator, initial_toolbar_visible) {
+                    log::info!("Skipping recording indicator surface: nothing to draw");
+                    cosmic::Task::none()
+                } else {
+                    indicator.surface_alive = true;
 
                 // Create layer surface for the indicator
                 // ONLY captures input in toolbar area - everything else clicks through!
@@ -1462,6 +1480,7 @@ fn handle_capture_msg(app: &mut App, msg: CaptureMsg) -> cosmic::Task<crate::cor
                     size_limits: Limits::NONE.min_height(1.0).min_width(1.0),
                     ..Default::default()
                 })
+                }
             } else {
                 cosmic::Task::none()
             };
