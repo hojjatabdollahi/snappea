@@ -33,7 +33,7 @@ save-screen = Uložit obrazovku (Ctrl+Enter)
 record-selection = Nahrát výběr (Shift+R)
 record-disabled = Zakázáno: nejprve vyberte oblast nebo obrazovku
 stop-recording = Zastavit nahrávání
-freehand-annotation = Volné kreslení (pravé tlačítko pro možnosti)
+freehand-annotation = Kreslení od ruky (pravé tlačítko myši pro možnosti)
 minimize-to-tray = Minimalizovat do oznamovací oblasti
 
 # OCR tooltips
@@ -60,12 +60,16 @@ color-black = Černá
 
 # Shape tools
 arrow = Šipka
+line = Čára
 oval-circle = Ovál nebo kruh
 rectangle-square = Obdélník nebo čtverec
+pencil = Kreslení od ruky
+text = Text
+text-size = Velikost textu
 shape-cycle-hint = Shift+A pro přepínání tvarů, A pro zapnutí/vypnutí
 color = Barva
 shadow = Stín
-clear-annotations = Vymazat kreslení
+clear-annotations = Vymazat úpravy
 
 # Redact tools
 redact-blackout = Skrýt (začernit)
@@ -80,13 +84,24 @@ fade-duration = Zmizení: { $duration } s
 clear-drawings = Vymazat kresby
 
 # Shape tool tooltips
-draw-arrow = Nakreslit šipku (A, pravé tlačítko pro nastavení)
-draw-circle = Nakreslit kruh (A, Ctrl pro dokonalý tvar, pravé tlačítko pro nastavení)
-draw-rectangle = Nakreslit obdélník (A, Ctrl pro čtverec, pravé tlačítko pro nastavení)
+draw-arrow = Nakreslit šipku (A, pravé tlačítko myši pro nastavení)
+draw-line = Nakreslit čáru (A, Ctrl pro přichycení úhlu, pravé tlačítko myši pro nastavení)
+draw-circle = Nakreslit kruh (A, Ctrl pro dokonalý tvar, pravé tlačítko myši pro nastavení)
+draw-rectangle = Nakreslit obdélník (A, Ctrl pro čtverec, pravé tlačítko myši pro nastavení)
+draw-pencil = Kreslit od ruky (A, pravé tlačítko myši pro nastavení)
+draw-text = Přidat text (A, levé tlačítko myši pro umístění, Enter pro dokončení)
 
 # Redact tool tooltips
-redact-tool = Skrýt (D, pravé tlačítko pro nastavení)
-pixelate-tool = Pixelizovat (D, pravé tlačítko pro nastavení)
+redact-tool = Skrýt (D, pravé tlačítko myši pro nastavení)
+pixelate-tool = Pixelizovat (D, pravé tlačítko myši pro nastavení)
+
+# Magnifier tool
+magnifier-tool = Lupa (pravé tlačítko myši pro nastavení)
+magnification = Zvětšení: { $value }x
+
+# Delayed screenshot
+delayed-screenshot = Snímek obrazovky za { $secs } s (pravé tlačítko myši pro změnu prodlevy)
+screenshot-delay-label = Prodleva snímku obrazovky
 
 # Settings drawer tabs
 general = Obecné
@@ -150,6 +165,7 @@ browse-screenshots-title = Vyberte umístění pro ukládání snímků obrazovk
 browse-videos-title = Vyberte umístění pro ukládání videí
 
 # Status overlays
+press-escape-again = Opětovným stisknutím Escape tento snímek obrazovky zahodíte
 scanning-qr = Vyhledávání QR kódů...
 downloading-ocr-models = Stahování OCR modelů...
 running-ocr = Probíhá OCR...
