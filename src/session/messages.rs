@@ -8,7 +8,7 @@ use wayland_client::protocol::wl_output::WlOutput;
 
 use crate::capture::ocr::OcrStatus;
 use crate::capture::qr::DetectedQrCode;
-use crate::config::{Container, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
+use crate::config::{Container, KeyBinding, RedactTool, ShapeColor, ShapeTool, ToolbarPosition};
 use crate::domain::Choice;
 use cosmic::iced::core::Rectangle;
 use cosmic::iced::time::Instant;
@@ -317,6 +317,12 @@ pub enum SettingsMsg {
     ToggleCopyOnSave,
     /// Set the delayed-screenshot delay (seconds)
     SetCaptureDelay(u32),
+    /// Arm the "press a key" prompt for the copy-to-clipboard shortcut
+    BeginCopyShortcutCapture,
+    /// Abandon rebinding, leaving the existing shortcut alone
+    CancelCopyShortcutCapture,
+    /// Commit a newly captured copy-to-clipboard shortcut
+    SetCopyShortcut(KeyBinding),
     /// Settings tab activated (by segmented button entity)
     SettingsTabActivated(segmented_button::Entity),
     /// Set toolbar opacity when not hovered
@@ -742,6 +748,15 @@ impl Msg {
     }
     pub fn set_capture_delay(secs: u32) -> Self {
         Self::Settings(SettingsMsg::SetCaptureDelay(secs))
+    }
+    pub fn begin_copy_shortcut_capture() -> Self {
+        Self::Settings(SettingsMsg::BeginCopyShortcutCapture)
+    }
+    pub fn cancel_copy_shortcut_capture() -> Self {
+        Self::Settings(SettingsMsg::CancelCopyShortcutCapture)
+    }
+    pub fn set_copy_shortcut(binding: KeyBinding) -> Self {
+        Self::Settings(SettingsMsg::SetCopyShortcut(binding))
     }
     pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
         Self::Settings(SettingsMsg::SettingsTabActivated(entity))

@@ -1,4 +1,4 @@
-use crate::config::ToolbarPosition;
+use crate::config::{KeyBinding, ToolbarPosition};
 use crate::domain::Choice;
 use crate::screenshot::Args;
 use crate::session::messages::Msg;
@@ -37,10 +37,26 @@ fn handle_text_editing_key(key: &Key, modifiers: Modifiers) -> Option<Msg> {
     }
 }
 
+/// Route a key press to the "press a key" rebinding prompt in the settings
+/// drawer.
+///
+/// Returning `None` leaves capture armed and swallows the key, which is what
+/// happens for anything that can't be a shortcut — bare modifier presses
+/// (so `Ctrl+C` can be typed as a unit rather than binding `Ctrl` alone) and
+/// keys the shortcut table already claims ahead of this binding.
+fn handle_shortcut_capture_key(key: &Key, modifiers: Modifiers) -> Option<Msg> {
+    // Escape stays the cancel key everywhere, so here it aborts rebinding
+    // rather than binding itself — and notably does *not* cancel the capture.
+    if matches!(key, Key::Named(Named::Escape)) {
+        return Some(Msg::cancel_copy_shortcut_capture());
+    }
+    KeyBinding::from_event(key, modifiers).map(Msg::set_copy_shortcut)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::messages::{DrawMsg, TextAction};
+    use crate::session::messages::{DrawMsg, SettingsMsg, TextAction};
 
     fn ch(c: &str) -> Key {
         Key::Character(c.into())
@@ -120,6 +136,54 @@ mod tests {
         ));
     }
 
+    /// Extract the binding a key press would commit, if any.
+    fn captured(key: Key, modifiers: Modifiers) -> Option<KeyBinding> {
+        match handle_shortcut_capture_key(&key, modifiers) {
+            Some(Msg::Settings(SettingsMsg::SetCopyShortcut(b))) => Some(b),
+            _ => None,
+        }
+    }
+
+    #[test]
+    fn capture_binds_a_plain_letter_instead_of_running_its_shortcut() {
+        // "r" is region mode in the normal table. While capturing it must be
+        // read as a binding — that's the whole reason capture intercepts first.
+        let b = captured(ch("r"), Modifiers::default()).expect("r should bind");
+        assert_eq!(
+            b,
+            KeyBinding::from_event(&ch("r"), Modifiers::default()).unwrap()
+        );
+        assert_eq!(b.display_name(), "R");
+    }
+
+    #[test]
+    fn capture_keeps_waiting_through_a_bare_modifier() {
+        // Ctrl alone isn't a binding; swallowing it lets Ctrl+C be typed as a
+        // unit rather than committing "Ctrl" the moment it goes down.
+        assert!(
+            handle_shortcut_capture_key(&Key::Named(Named::Control), Modifiers::CTRL).is_none()
+        );
+    }
+
+    #[test]
+    fn escape_aborts_capture_rather_than_binding_itself() {
+        // Escape stays the cancel key, so it must neither bind nor fall through
+        // to cancelling the whole screenshot.
+        assert!(matches!(
+            handle_shortcut_capture_key(&Key::Named(Named::Escape), Modifiers::default()),
+            Some(Msg::Settings(SettingsMsg::CancelCopyShortcutCapture))
+        ));
+    }
+
+    #[test]
+    fn capture_refuses_bindings_the_table_would_shadow() {
+        // Ctrl+Enter is matched by the save arm above the configurable one, so
+        // accepting it would hand the user a shortcut that never fires.
+        assert!(captured(Key::Named(Named::Enter), Modifiers::CTRL).is_none());
+        // Plain Enter is still fine — that's the default.
+        assert!(captured(Key::Named(Named::Enter), Modifiers::default()).is_some());
+    }
+
     #[test]
     fn navigation_keys_are_swallowed_while_editing() {
         // Must not fall through to screen navigation / toolbar movement.
@@ -142,6 +206,13 @@ pub fn handle_key_event(
     modifiers: Modifiers,
     current_output_index: usize,
 ) -> Option<Msg> {
+    // Rebinding owns the keyboard outright: the whole point is to read a raw
+    // key, so nothing below may act on it (otherwise arming capture and
+    // pressing "r" would jump into region mode instead of binding "r").
+    if args.ui.capturing_copy_shortcut {
+        return handle_shortcut_capture_key(&key, modifiers);
+    }
+
     // Text editing owns the keyboard while it's active.
     if args.annotations.text_editing.is_some() {
         return handle_text_editing_key(&key, modifiers);
@@ -206,8 +277,6 @@ pub fn handle_key_event(
         // Space/Enter to confirm selection in picker mode (screen)
         Key::Character(c) if c.as_str() == " " && in_screen_picker => Some(Msg::confirm()),
         Key::Named(Named::Enter) if in_screen_picker => Some(Msg::confirm()),
-        // Enter to copy when not in picker mode
-        Key::Named(Named::Enter) => Some(Msg::copy_to_clipboard()),
         // Navigation keys in screen picker: h/l and arrows navigate screens
         Key::Character(c) if c.as_str() == "h" && in_screen_picker => Some(Msg::navigate_left()),
         Key::Character(c) if c.as_str() == "l" && in_screen_picker => Some(Msg::navigate_right()),
@@ -248,6 +317,13 @@ pub fn handle_key_event(
         Key::Character(c) if c.as_str() == "s" && !arrow_mode && !redact_mode => {
             Some(Msg::screen_mode(current_output_index))
         }
+        // Copy the selection to the clipboard. This is the one user-rebindable
+        // shortcut (Enter by default), so it's a guard rather than a literal
+        // pattern — and it goes last on purpose: every hardcoded binding above
+        // keeps priority, so no rebind can make an existing shortcut
+        // unreachable. Nothing above matches Enter outside the screen picker,
+        // so the default behaviour is unchanged by sitting here.
+        _ if args.ui.copy_shortcut.matches(&key, modifiers) => Some(Msg::copy_to_clipboard()),
         _ => None,
     }
 }

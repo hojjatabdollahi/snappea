@@ -46,6 +46,9 @@ pub fn build_settings_drawer<'a, Msg: Clone + 'static, F, G, H, I>(
     on_copy_on_save_toggle: Msg,
     capture_delay_secs: u32,
     on_capture_delay_select: I,
+    copy_shortcut_label: String,
+    capturing_copy_shortcut: bool,
+    on_copy_shortcut_capture: Msg,
     on_github_click: Msg,
     settings_tab: SettingsTab,
     settings_tab_model: &'a segmented_button::SingleSelectModel,
@@ -164,6 +167,23 @@ where
         text::body(fl!("screenshot-delay-label")),
         cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
         capture_delay_dropdown,
+    ]
+    .spacing(space_s)
+    .align_y(cosmic::iced::core::Alignment::Center)
+    .width(Length::Fill);
+
+    // Copy-shortcut rebinding. The button doubles as the display of the current
+    // binding; pressing it arms capture and the next key press replaces it.
+    let copy_shortcut_button = cosmic::widget::button::standard(if capturing_copy_shortcut {
+        fl!("press-a-key")
+    } else {
+        copy_shortcut_label
+    })
+    .on_press_maybe((!capturing_copy_shortcut).then_some(on_copy_shortcut_capture));
+    let copy_shortcut_row = row![
+        text::body(fl!("copy-shortcut")),
+        cosmic::iced::widget::space().width(cosmic::iced::Length::Fill),
+        copy_shortcut_button,
     ]
     .spacing(space_s)
     .align_y(cosmic::iced::core::Alignment::Center)
@@ -372,6 +392,8 @@ where
         copy_on_save_row,
         cosmic::widget::divider::horizontal::light(),
         capture_delay_row,
+        cosmic::widget::divider::horizontal::light(),
+        copy_shortcut_row,
     ]
     .spacing(space_xs)
     .into();

@@ -2,6 +2,7 @@
 
 use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use cosmic::iced::Color;
+use cosmic::iced::keyboard::{Key, Modifiers, key::Named};
 use serde::{Deserialize, Serialize};
 
 use crate::fl;
@@ -227,6 +228,199 @@ impl Container {
     }
 }
 
+/// A named (non-character) key that may be bound to an action.
+///
+/// Deliberately a small closed set rather than a mirror of iced's `Named`: only
+/// keys that make sense as a shortcut are listed, and everything else converts
+/// to `None`, which is what makes unbindable keys (bare modifiers, media keys)
+/// impossible to write into the config in the first place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindNamed {
+    Enter,
+    Space,
+    Tab,
+    Backspace,
+    Delete,
+    Insert,
+    Home,
+    End,
+    PageUp,
+    PageDown,
+    F1,
+    F2,
+    F3,
+    F4,
+    F5,
+    F6,
+    F7,
+    F8,
+    F9,
+    F10,
+    F11,
+    F12,
+}
+
+impl BindNamed {
+    fn from_named(named: Named) -> Option<Self> {
+        Some(match named {
+            Named::Enter => Self::Enter,
+            // No `Named::Space` arm: iced has no such variant — space always
+            // arrives as `Key::Character(" ")`, folded in by `BindKey::from_key`.
+            Named::Tab => Self::Tab,
+            Named::Backspace => Self::Backspace,
+            Named::Delete => Self::Delete,
+            Named::Insert => Self::Insert,
+            Named::Home => Self::Home,
+            Named::End => Self::End,
+            Named::PageUp => Self::PageUp,
+            Named::PageDown => Self::PageDown,
+            Named::F1 => Self::F1,
+            Named::F2 => Self::F2,
+            Named::F3 => Self::F3,
+            Named::F4 => Self::F4,
+            Named::F5 => Self::F5,
+            Named::F6 => Self::F6,
+            Named::F7 => Self::F7,
+            Named::F8 => Self::F8,
+            Named::F9 => Self::F9,
+            Named::F10 => Self::F10,
+            Named::F11 => Self::F11,
+            Named::F12 => Self::F12,
+            _ => return None,
+        })
+    }
+
+    /// Human-readable name for tooltips and the settings button
+    fn label(self) -> &'static str {
+        match self {
+            Self::Enter => "Enter",
+            Self::Space => "Space",
+            Self::Tab => "Tab",
+            Self::Backspace => "Backspace",
+            Self::Delete => "Delete",
+            Self::Insert => "Insert",
+            Self::Home => "Home",
+            Self::End => "End",
+            Self::PageUp => "PageUp",
+            Self::PageDown => "PageDown",
+            Self::F1 => "F1",
+            Self::F2 => "F2",
+            Self::F3 => "F3",
+            Self::F4 => "F4",
+            Self::F5 => "F5",
+            Self::F6 => "F6",
+            Self::F7 => "F7",
+            Self::F8 => "F8",
+            Self::F9 => "F9",
+            Self::F10 => "F10",
+            Self::F11 => "F11",
+            Self::F12 => "F12",
+        }
+    }
+}
+
+/// The key half of a binding, without modifiers
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BindKey {
+    Named(BindNamed),
+    /// A printable character, always stored lowercase — case is carried by the
+    /// binding's `shift` flag instead, so "c" and "C" can't both be stored.
+    Character(String),
+}
+
+impl BindKey {
+    /// Normalise a live key press into a bindable key, or `None` if this key
+    /// can't be a shortcut (bare modifiers, media keys, dead keys).
+    fn from_key(key: &Key) -> Option<Self> {
+        match key {
+            Key::Named(n) => BindNamed::from_named(*n).map(Self::Named),
+            // Space arrives as a character, not a named key (see the shortcuts
+            // tests), but reads better as "Space" — fold it into the named set
+            // so both spellings compare equal.
+            Key::Character(c) if c.as_str() == " " => Some(Self::Named(BindNamed::Space)),
+            Key::Character(c) if !c.trim().is_empty() => Some(Self::Character(c.to_lowercase())),
+            _ => None,
+        }
+    }
+}
+
+/// A user-rebindable keyboard shortcut.
+///
+/// Stored as our own owned type rather than iced's `Key`/`Modifiers`, which
+/// aren't serialisable (and `Key::Character` holds a borrowed-ish `SmolStr`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct KeyBinding {
+    pub key: BindKey,
+    #[serde(default)]
+    pub ctrl: bool,
+    #[serde(default)]
+    pub shift: bool,
+    #[serde(default)]
+    pub alt: bool,
+}
+
+impl KeyBinding {
+    /// A plain named key with no modifiers
+    fn plain(key: BindNamed) -> Self {
+        Self {
+            key: BindKey::Named(key),
+            ctrl: false,
+            shift: false,
+            alt: false,
+        }
+    }
+
+    /// Does this live key press trigger the binding?
+    pub fn matches(&self, key: &Key, modifiers: Modifiers) -> bool {
+        self.ctrl == modifiers.control()
+            && self.alt == modifiers.alt()
+            && self.shift == modifiers.shift()
+            && BindKey::from_key(key).is_some_and(|pressed| pressed == self.key)
+    }
+
+    /// Build a binding from a live key press, or `None` if this key may not be
+    /// bound.
+    ///
+    /// Escape and Ctrl+Enter are refused because the shortcut table matches
+    /// them *above* the configurable arm — binding copy to either would hand
+    /// the user a shortcut that silently never fires. Bare modifiers and other
+    /// unbindable keys fall out via [`BindKey::from_key`] returning `None`.
+    pub fn from_event(key: &Key, modifiers: Modifiers) -> Option<Self> {
+        if matches!(key, Key::Named(Named::Escape)) {
+            return None;
+        }
+        let bind = BindKey::from_key(key)?;
+        if bind == BindKey::Named(BindNamed::Enter) && modifiers.control() {
+            return None;
+        }
+        Some(Self {
+            key: bind,
+            ctrl: modifiers.control(),
+            shift: modifiers.shift(),
+            alt: modifiers.alt(),
+        })
+    }
+
+    /// "Enter", "Ctrl+Shift+C" — for the toolbar tooltip and settings button
+    pub fn display_name(&self) -> String {
+        let mut out = String::new();
+        if self.ctrl {
+            out.push_str("Ctrl+");
+        }
+        if self.alt {
+            out.push_str("Alt+");
+        }
+        if self.shift {
+            out.push_str("Shift+");
+        }
+        match &self.key {
+            BindKey::Named(n) => out.push_str(n.label()),
+            BindKey::Character(c) => out.push_str(&c.to_uppercase()),
+        }
+        out
+    }
+}
+
 /// Application configuration persisted between sessions
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, CosmicConfigEntry)]
 #[version = 1]
@@ -293,6 +487,13 @@ pub struct SnapPeaConfig {
     /// Whether to hide toolbar to system tray when recording
     #[serde(default)]
     pub hide_toolbar_to_tray: bool,
+    /// Key that copies the current selection to the clipboard
+    #[serde(default = "default_copy_shortcut")]
+    pub copy_shortcut: KeyBinding,
+}
+
+fn default_copy_shortcut() -> KeyBinding {
+    KeyBinding::plain(BindNamed::Enter)
 }
 
 fn default_magnifier_magnification() -> f32 {
@@ -423,6 +624,8 @@ impl Default for SnapPeaConfig {
             pencil_fade_duration: default_pencil_fade_duration(),
             pencil_thickness: default_pencil_thickness(),
             hide_toolbar_to_tray: false,
+            // Enter copies the selection, as it always has
+            copy_shortcut: default_copy_shortcut(),
         }
     }
 }
@@ -452,6 +655,71 @@ mod tests {
         for (i, tool) in ShapeTool::ALL.iter().enumerate() {
             assert_eq!(tool.index(), i);
         }
+    }
+
+    fn ch(c: &str) -> Key {
+        Key::Character(c.into())
+    }
+
+    #[test]
+    fn the_default_copy_shortcut_is_still_enter() {
+        let b = default_copy_shortcut();
+        assert!(b.matches(&Key::Named(Named::Enter), Modifiers::default()));
+        assert_eq!(b.display_name(), "Enter");
+    }
+
+    #[test]
+    fn a_rebound_key_matches_and_the_old_one_stops_matching() {
+        let b = KeyBinding::from_event(&ch("c"), Modifiers::default()).unwrap();
+        assert!(b.matches(&ch("c"), Modifiers::default()));
+        assert!(!b.matches(&Key::Named(Named::Enter), Modifiers::default()));
+    }
+
+    #[test]
+    fn modifiers_must_match_exactly() {
+        // A plain binding must not fire when a modifier is held, or Ctrl+Enter
+        // (save) would also trigger copy.
+        let enter = default_copy_shortcut();
+        assert!(!enter.matches(&Key::Named(Named::Enter), Modifiers::CTRL));
+
+        let ctrl_c = KeyBinding::from_event(&ch("c"), Modifiers::CTRL).unwrap();
+        assert!(ctrl_c.matches(&ch("c"), Modifiers::CTRL));
+        assert!(!ctrl_c.matches(&ch("c"), Modifiers::default()));
+        assert_eq!(ctrl_c.display_name(), "Ctrl+C");
+    }
+
+    #[test]
+    fn space_binds_the_same_whether_it_arrives_named_or_as_a_character() {
+        // Space reaches the shortcut table as Character(" "), but reads as
+        // "Space" in the UI — both spellings must be one binding.
+        let b = KeyBinding::from_event(&ch(" "), Modifiers::default()).unwrap();
+        assert_eq!(b.key, BindKey::Named(BindNamed::Space));
+        assert!(b.matches(&ch(" "), Modifiers::default()));
+        assert_eq!(b.display_name(), "Space");
+    }
+
+    #[test]
+    fn unbindable_keys_are_refused() {
+        // Bare modifiers, Escape (cancel) and Ctrl+Enter (save) must not be
+        // storable — the shortcut table claims them ahead of the copy arm.
+        for (key, mods) in [
+            (Key::Named(Named::Escape), Modifiers::default()),
+            (Key::Named(Named::Control), Modifiers::CTRL),
+            (Key::Named(Named::Shift), Modifiers::SHIFT),
+            (Key::Named(Named::Enter), Modifiers::CTRL),
+        ] {
+            assert!(
+                KeyBinding::from_event(&key, mods).is_none(),
+                "{key:?} should not be bindable"
+            );
+        }
+    }
+
+    #[test]
+    fn a_binding_survives_a_serde_round_trip() {
+        let b = KeyBinding::from_event(&ch("c"), Modifiers::CTRL | Modifiers::SHIFT).unwrap();
+        let json = serde_json::to_string(&b).unwrap();
+        assert_eq!(serde_json::from_str::<KeyBinding>(&json).unwrap(), b);
     }
 
     #[test]

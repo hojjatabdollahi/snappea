@@ -193,6 +193,8 @@ pub enum SettingsEvent {
     CopyOnSaveToggle,
     /// Delayed-screenshot delay selected (seconds)
     CaptureDelaySelect(u32),
+    /// Copy-shortcut rebind button pressed ("press a key…")
+    CopyShortcutCapture,
     /// Settings tab activated (by entity from segmented button)
     TabActivated(segmented_button::Entity),
     /// Toolbar opacity updated
@@ -625,6 +627,9 @@ impl ScreenshotEvent {
     pub fn capture_delay_select(secs: u32) -> Self {
         Self::Settings(SettingsEvent::CaptureDelaySelect(secs))
     }
+    pub fn copy_shortcut_capture() -> Self {
+        Self::Settings(SettingsEvent::CopyShortcutCapture)
+    }
 
     pub fn settings_tab_activated(entity: segmented_button::Entity) -> Self {
         Self::Settings(SettingsEvent::TabActivated(entity))
@@ -935,6 +940,9 @@ impl ScreenshotEvent {
             }
             Self::Settings(SettingsEvent::CopyOnSaveToggle) => Msg::toggle_copy_on_save(),
             Self::Settings(SettingsEvent::CaptureDelaySelect(secs)) => Msg::set_capture_delay(secs),
+            Self::Settings(SettingsEvent::CopyShortcutCapture) => {
+                Msg::begin_copy_shortcut_capture()
+            }
             Self::Settings(SettingsEvent::TabActivated(entity)) => {
                 Msg::settings_tab_activated(entity)
             }

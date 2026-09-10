@@ -19,10 +19,10 @@ select-region = Select Region (R)
 select-screen = Select Screen (S)
 
 # Context-sensitive copy/save tooltips
-copy-selected-region = Copy Selected Region (Enter)
-copy-selected-screen = Copy Selected Screen (Enter)
-copy-all-screens = Copy All Screens (Enter)
-copy-screen = Copy Screen (Enter)
+copy-selected-region = Copy Selected Region ({ $key })
+copy-selected-screen = Copy Selected Screen ({ $key })
+copy-all-screens = Copy All Screens ({ $key })
+copy-screen = Copy Screen ({ $key })
 
 save-selected-region = Save Selected Region (Ctrl+Enter)
 save-selected-screen = Save Selected Screen (Ctrl+Enter)
@@ -102,6 +102,10 @@ magnification = Magnification: { $value }x
 # Delayed screenshot
 delayed-screenshot = Screenshot in { $secs }s (right-click to change delay)
 screenshot-delay-label = Screenshot delay
+
+# Rebindable copy shortcut
+copy-shortcut = Copy shortcut
+press-a-key = Press a key…
 
 # Settings drawer tabs
 general = General

@@ -7,7 +7,8 @@
 use std::io::Write;
 
 use crate::config::{
-    Container, SaveLocationChoice, SnapPeaConfig, ToolbarPosition, VideoSaveLocationChoice,
+    Container, KeyBinding, SaveLocationChoice, SnapPeaConfig, ToolbarPosition,
+    VideoSaveLocationChoice,
 };
 use crate::screenshot::Args;
 use crate::screenshot::handlers::HandlerResult;
@@ -112,6 +113,31 @@ pub fn handle_toggle_copy_on_save(args: &mut Args) -> HandlerResult {
     args.ui.copy_to_clipboard_on_save = !args.ui.copy_to_clipboard_on_save;
     let mut config = SnapPeaConfig::load();
     config.copy_to_clipboard_on_save = args.ui.copy_to_clipboard_on_save;
+    config.save();
+    cosmic::Task::none()
+}
+
+/// Handle BeginCopyShortcutCapture message
+///
+/// Arms the "press a key" prompt. `handle_key_event` checks this flag before
+/// anything else, so the next press is read as a binding rather than acted on.
+pub fn handle_begin_copy_shortcut_capture(args: &mut Args) -> HandlerResult {
+    args.ui.capturing_copy_shortcut = true;
+    cosmic::Task::none()
+}
+
+/// Handle CancelCopyShortcutCapture message
+pub fn handle_cancel_copy_shortcut_capture(args: &mut Args) -> HandlerResult {
+    args.ui.capturing_copy_shortcut = false;
+    cosmic::Task::none()
+}
+
+/// Handle SetCopyShortcut message
+pub fn handle_set_copy_shortcut(args: &mut Args, binding: KeyBinding) -> HandlerResult {
+    args.ui.capturing_copy_shortcut = false;
+    args.ui.copy_shortcut = binding.clone();
+    let mut config = SnapPeaConfig::load();
+    config.copy_shortcut = binding;
     config.save();
     cosmic::Task::none()
 }

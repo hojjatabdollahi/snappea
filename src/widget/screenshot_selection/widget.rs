@@ -335,6 +335,7 @@ where
             on_event(ScreenshotEvent::delayed_capture()),
             on_event(ScreenshotEvent::cycle_capture_delay()),
             ui.capture_delay_secs,
+            ui.copy_shortcut.display_name(),
             on_event(ScreenshotEvent::record_region()),
             on_event(ScreenshotEvent::stop_recording()),
             on_event(ScreenshotEvent::toggle_recording_annotation()),
@@ -475,6 +476,9 @@ where
                     let on_event = on_event.clone();
                     move |secs| on_event(ScreenshotEvent::capture_delay_select(secs))
                 },
+                ui.copy_shortcut.display_name(),
+                ui.capturing_copy_shortcut,
+                on_event(ScreenshotEvent::copy_shortcut_capture()),
                 on_event(ScreenshotEvent::open_url(REPOSITORY.to_string())),
                 ui.settings_tab,
                 settings_tab_model,
