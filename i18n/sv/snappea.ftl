@@ -19,10 +19,10 @@ select-region = Välj region (R)
 select-screen = Välj Skärm (S)
 
 # Kontextkänsliga verktygstips för kopiering/spara
-copy-selected-region = Kopiera vald region (Enter)
-copy-selected-screen = Kopiera vald skärm (Enter)
-copy-all-screens = Kopiera alla skärmar (Enter)
-copy-screen = Kopiera skärm (Enter)
+copy-selected-region = Kopiera vald region ({ $key })
+copy-selected-screen = Kopiera vald skärm ({ $key })
+copy-all-screens = Kopiera alla skärmar ({ $key })
+copy-screen = Kopiera skärm ({ $key })
 
 save-selected-region = Spara vald region (Ctrl+Enter)
 save-selected-screen = Spara vald skärm (Ctrl+Enter)

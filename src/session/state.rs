@@ -2,7 +2,7 @@ use crate::capture::image::ScreenshotImage;
 use crate::capture::ocr::{OcrStatus, OcrTextOverlay};
 use crate::capture::qr::DetectedQrCode;
 use crate::config::{
-    Container, RedactTool, SaveLocationChoice, ShapeColor, ShapeTool, ToolbarPosition,
+    Container, KeyBinding, RedactTool, SaveLocationChoice, ShapeColor, ShapeTool, ToolbarPosition,
     VideoSaveLocationChoice,
 };
 use crate::core::portal::PortalResponse;
@@ -528,6 +528,11 @@ pub struct UiState {
     pub move_offset: Option<(i32, i32)>,
     /// Whether snappea is currently set as the default screenshot portal for the current user
     pub is_default_portal: bool,
+    /// User-rebindable key that copies the selection to the clipboard
+    pub copy_shortcut: KeyBinding,
+    /// Whether the settings drawer is waiting for the next key press to become
+    /// the new copy shortcut. While set, keys are captured instead of acted on.
+    pub capturing_copy_shortcut: bool,
 }
 
 impl UiState {
@@ -542,6 +547,10 @@ impl UiState {
         self.magnifier_popup_open = false;
         self.settings_drawer_open = false;
         self.pencil_popup_open = false;
+        // The rebinding prompt swallows every key press, so it must never
+        // outlive the drawer that shows it — otherwise the keyboard goes dead
+        // with nothing on screen explaining why.
+        self.capturing_copy_shortcut = false;
     }
 }
 

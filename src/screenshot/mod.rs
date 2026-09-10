@@ -427,6 +427,8 @@ impl Screenshot {
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
                         move_offset: None,
                         is_default_portal: is_snappea_default_portal(),
+                        copy_shortcut: config.copy_shortcut.clone(),
+                        capturing_copy_shortcut: false,
                     }
                 },
             }))
@@ -750,6 +752,10 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
     if let SettingsMsg::ToggleDrawer = msg {
         if let Some(args) = app.screenshot_args.as_mut() {
             args.ui.settings_drawer_open = !args.ui.settings_drawer_open;
+            // Never leave the rebinding prompt armed behind a closed drawer —
+            // it swallows every key press, so the keyboard would go dead with
+            // nothing on screen to explain why.
+            args.ui.capturing_copy_shortcut = false;
 
             // When opening the drawer, sync the tab state with the model
             if args.ui.settings_drawer_open {
@@ -901,6 +907,15 @@ fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crate::c
                 config.capture_delay_secs = secs;
                 config.save();
                 cosmic::Task::none()
+            }
+            SettingsMsg::BeginCopyShortcutCapture => {
+                settings_handlers::handle_begin_copy_shortcut_capture(args)
+            }
+            SettingsMsg::CancelCopyShortcutCapture => {
+                settings_handlers::handle_cancel_copy_shortcut_capture(args)
+            }
+            SettingsMsg::SetCopyShortcut(binding) => {
+                settings_handlers::handle_set_copy_shortcut(args, binding)
             }
             SettingsMsg::SettingsTabActivated(_) => {
                 // Already handled above

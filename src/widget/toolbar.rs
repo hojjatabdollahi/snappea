@@ -1199,6 +1199,8 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     on_delayed_capture: Msg,
     on_cycle_capture_delay: Msg,
     capture_delay_secs: u32,
+    // Display name of the user-configurable copy shortcut, for the tooltip
+    copy_shortcut_label: String,
     on_record_region: Msg,
     on_stop_recording: Msg,
     on_toggle_recording_annotation: Msg,
@@ -1315,12 +1317,16 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
         tooltip::Position::Bottom,
     );
 
-    // Context-sensitive copy tooltip
+    // Context-sensitive copy tooltip. The key is interpolated rather than baked
+    // into the string because the binding is user-configurable.
+    let copy_key = copy_shortcut_label.as_str();
     let copy_tooltip = match &choice {
-        Choice::Rectangle(r, _) if r.dimensions().is_some() => fl!("copy-selected-region"),
-        Choice::Output(Some(_)) => fl!("copy-selected-screen"),
-        _ if output_count > 1 => fl!("copy-all-screens"),
-        _ => fl!("copy-screen"),
+        Choice::Rectangle(r, _) if r.dimensions().is_some() => {
+            fl!("copy-selected-region", key = copy_key)
+        }
+        Choice::Output(Some(_)) => fl!("copy-selected-screen", key = copy_key),
+        _ if output_count > 1 => fl!("copy-all-screens", key = copy_key),
+        _ => fl!("copy-screen", key = copy_key),
     };
 
     // Context-sensitive save tooltip

@@ -19,10 +19,10 @@ select-region = Vybrat oblast (R)
 select-screen = Vybrat obrazovku (S)
 
 # Context-sensitive copy/save tooltips
-copy-selected-region = Kopírovat vybranou oblast (Enter)
-copy-selected-screen = Kopírovat vybranou obrazovku (Enter)
-copy-all-screens = Kopírovat všechny obrazovky (Enter)
-copy-screen = Kopírovat obrazovku (Enter)
+copy-selected-region = Kopírovat vybranou oblast ({ $key })
+copy-selected-screen = Kopírovat vybranou obrazovku ({ $key })
+copy-all-screens = Kopírovat všechny obrazovky ({ $key })
+copy-screen = Kopírovat obrazovku ({ $key })
 
 save-selected-region = Uložit vybranou oblast (Ctrl+Enter)
 save-selected-screen = Uložit vybranou obrazovku (Ctrl+Enter)

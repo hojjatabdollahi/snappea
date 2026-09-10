@@ -1341,6 +1341,8 @@ pub(crate) fn direct_screenshot_subscription(
                         hide_toolbar_to_tray: config.hide_toolbar_to_tray,
                         move_offset: None,
                         is_default_portal: crate::screenshot::is_snappea_default_portal(),
+                        copy_shortcut: config.copy_shortcut.clone(),
+                        capturing_copy_shortcut: false,
                     },
                 };
 
@@ -2184,6 +2186,8 @@ async fn trigger_screenshot(
             hide_toolbar_to_tray: config.hide_toolbar_to_tray,
             move_offset: None,
             is_default_portal: crate::screenshot::is_snappea_default_portal(),
+            copy_shortcut: config.copy_shortcut.clone(),
+            capturing_copy_shortcut: false,
         },
     };
 
