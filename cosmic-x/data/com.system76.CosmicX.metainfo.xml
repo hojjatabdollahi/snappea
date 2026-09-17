@@ -1,0 +1,50 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<component type="desktop-application">
+    <id>com.system76.CosmicX</id>
+    <metadata_license>CC0-1.0</metadata_license>
+    <project_license>GPL-3.0-only</project_license>
+    <project_group>COSMIC</project_group>
+    <developer id="com.system76">
+        <name>System76</name>
+    </developer>
+    <url type="homepage">https://github.com/pop-os/cosmic-x</url>
+    <url type="bugtracker">https://github.com/pop-os/cosmic-x/issues</url>
+    <name>COSMIC X</name>
+    <summary>Screenshots and screen recording for the COSMIC desktop</summary>
+    <description>
+        <p>
+            COSMIC X captures a region, a window or a screen, annotates the result,
+            and records the screen. It implements the Screenshot portal.
+        </p>
+        <ul>
+            <li>Region, window, output and all-screens capture</li>
+            <li>Pen, highlighter, shapes, text, redaction, pixelation and a loupe</li>
+            <li>Screen recording with hardware encoding and live drawing</li>
+            <li>A trimmer for recordings, with GIF and video export</li>
+            <li>Text recognition and QR code detection on the selection</li>
+            <li>Delayed capture</li>
+        </ul>
+    </description>
+    <keywords>
+        <keyword>Screenshot</keyword>
+        <keyword>Screen</keyword>
+        <keyword>Capture</keyword>
+        <keyword>Record</keyword>
+        <keyword>Annotate</keyword>
+    </keywords>
+    <launchable type="desktop-id">com.system76.CosmicX.desktop</launchable>
+    <releases>
+        <release version="0.9.1" date="2026-09-03">
+            <description>
+                <p>Initial release.</p>
+            </description>
+        </release>
+    </releases>
+    <content_rating type="oars-1.1" />
+    <provides>
+        <id>com.system76.CosmicApplication</id>
+        <dbus type="session">com.system76.CosmicX</dbus>
+        <binary>cosmic-x</binary>
+        <binary>cosmic-x-trim</binary>
+    </provides>
+</component>

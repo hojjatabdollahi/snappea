@@ -1,0 +1,7 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: cosmic-x
+Upstream-Contact: Hojjat <hojjat.abdollahi@gmail.com>
+Source: https://github.com/pop-os/cosmic-x
+Files: *
+Copyright: Hojjat
+License: GPL-3.0

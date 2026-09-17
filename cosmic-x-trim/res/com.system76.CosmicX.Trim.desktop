@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=COSMIC X Trim
+Comment=Trim and speed up a video clip
+Exec=cosmic-x-trim %f
+Terminal=false
+Type=Application
+StartupNotify=true
+NoDisplay=true
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;
+Icon=com.system76.CosmicX.Trim
+Categories=COSMIC;AudioVideo;Video;

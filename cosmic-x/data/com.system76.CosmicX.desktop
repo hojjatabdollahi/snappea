@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=COSMIC X
+Comment=Screenshots and screen recording
+Comment[cs]=Snímky a nahrávání obrazovky pro Linux/Wayland
+Exec=cosmic-x
+Icon=com.system76.CosmicX
+Terminal=false
+Type=Application
+Categories=Utility;Graphics;
+Keywords=screenshot;screen;capture;record;snip;
+Keywords[cs]=snímek;obrazovky;zachytit;nahrát;výstřižek;
+StartupNotify=false

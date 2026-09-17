@@ -1,0 +1,29 @@
+Source: cosmic-x
+Section: utils
+Priority: optional
+Maintainer: Hojjat <hojjat.abdollahi@gmail.com>
+Build-Depends:
+    debhelper-compat (=13),
+    just (>= 1.13.0),
+    pkg-config,
+    rust-all,
+    libdrm-dev,
+    libgbm-dev,
+    libgstreamer1.0-dev,
+    libgstreamer-plugins-base1.0-dev,
+    libwayland-dev,
+    libxkbcommon-dev,
+Standards-Version: 4.6.2
+Homepage: https://github.com/pop-os/cosmic-x
+
+Package: cosmic-x
+Architecture: amd64 arm64
+Depends: ${misc:Depends}, ${shlibs:Depends},
+    gstreamer1.0-plugins-base,
+    gstreamer1.0-plugins-good,
+    ffmpeg,
+Recommends:
+    gstreamer1.0-plugins-bad,
+    gstreamer1.0-vaapi,
+    tesseract-ocr,
+Description: COSMIC screenshot and screen recording tool

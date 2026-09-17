@@ -1,0 +1,639 @@
+// SPDX-License-Identifier: GPL-3.0-only
+
+use std::borrow::Cow;
+
+use cosmic::{
+    iced::{
+        clipboard::dnd::{self, DndAction, DndDestinationRectangle},
+        core::{
+            self, Border, Color, Length, Point, Rectangle, Renderer, Shadow, Size, layout::Node,
+            renderer::Quad,
+        },
+        mouse,
+    },
+    widget::{self, Widget},
+};
+
+use super::magnifier::draw_magnifier;
+use crate::geometry::Rect;
+
+pub const MIME: &str = "X-COSMIC-X-MyData";
+
+// Re-export DragState for backwards compatibility
+pub use crate::geometry::DragState;
+
+const EDGE_GRAB_THICKNESS: f32 = 8.0;
+const CORNER_DIAMETER: f32 = 16.0;
+
+pub struct RectangleSelection<'a, Msg> {
+    output_rect: Rect,
+    rectangle_selection: Rect,
+    on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
+    on_move_offset: Box<dyn Fn(Option<(i32, i32)>) -> Msg>,
+    drag_state: DragState,
+    widget_id: widget::Id,
+    drag_id: u128,
+    /// Screenshot image for magnifier
+    screenshot_image: &'a crate::capture::ScreenshotImage,
+    /// Scale factor (physical pixels per logical pixel)
+    image_scale: f32,
+    /// Whether something else owns the mouse: a tool, a popup or a drawer.
+    suppress_selection: bool,
+    /// Whether magnifier is enabled
+    magnifier_enabled: bool,
+    /// Whether recording is active (hide selection UI)
+    is_recording: bool,
+    /// Move offset for dragging: (`cursor_x` - `rect_left`, `cursor_y` - `rect_top`) when move started
+    move_offset: Option<(i32, i32)>,
+    _phantom: std::marker::PhantomData<Msg>,
+}
+
+impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        output_rect: Rect,
+        rectangle_selection: Rect,
+        drag_direction: DragState,
+        window_id: core::window::Id,
+        drag_id: u128,
+        on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
+        on_move_offset: impl Fn(Option<(i32, i32)>) -> Msg + 'static,
+        screenshot_image: &'a crate::capture::ScreenshotImage,
+        image_scale: f32,
+        suppress_selection: bool,
+        magnifier_enabled: bool,
+        is_recording: bool,
+        move_offset: Option<(i32, i32)>,
+    ) -> Self {
+        Self {
+            on_rectangle: Box::new(on_rectangle),
+            on_move_offset: Box::new(on_move_offset),
+            drag_state: drag_direction,
+            rectangle_selection,
+            output_rect,
+            drag_id,
+            widget_id: widget::Id::new(format!("rectangle-selection-{window_id:?}")),
+            screenshot_image,
+            image_scale,
+            suppress_selection,
+            magnifier_enabled,
+            is_recording,
+            move_offset,
+            _phantom: std::marker::PhantomData,
+        }
+    }
+
+    pub fn translated_inner_rect(&self) -> Rectangle {
+        let inner_rect = self.rectangle_selection;
+        let inner_rect = Rectangle::new(
+            Point::new(inner_rect.left as f32, inner_rect.top as f32),
+            Size::new(
+                (inner_rect.right - inner_rect.left).abs() as f32,
+                (inner_rect.bottom - inner_rect.top).abs() as f32,
+            ),
+        );
+        Rectangle::new(
+            Point::new(
+                inner_rect.x - self.output_rect.left as f32,
+                inner_rect.y - self.output_rect.top as f32,
+            ),
+            inner_rect.size(),
+        )
+    }
+
+    fn drag_state(&self, cursor: mouse::Cursor) -> DragState {
+        let inner_rect = self.translated_inner_rect();
+
+        let nw_corner_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x - CORNER_DIAMETER / 2.0,
+                inner_rect.y - CORNER_DIAMETER / 2.0,
+            ),
+            Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+        );
+        if cursor.is_over(nw_corner_rect) {
+            return DragState::NW;
+        }
+
+        let ne_corner_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x + inner_rect.width - CORNER_DIAMETER / 2.0,
+                inner_rect.y - CORNER_DIAMETER / 2.0,
+            ),
+            Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+        );
+        if cursor.is_over(ne_corner_rect) {
+            return DragState::NE;
+        }
+
+        let sw_corner_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x - CORNER_DIAMETER / 2.0,
+                inner_rect.y + inner_rect.height - CORNER_DIAMETER / 2.0,
+            ),
+            Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+        );
+        if cursor.is_over(sw_corner_rect) {
+            return DragState::SW;
+        }
+
+        let se_corner_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x + inner_rect.width - CORNER_DIAMETER / 2.,
+                inner_rect.y + inner_rect.height - CORNER_DIAMETER / 2.,
+            ),
+            Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+        );
+        if cursor.is_over(se_corner_rect) {
+            return DragState::SE;
+        }
+
+        let n_edge_rect = Rectangle::new(
+            Point::new(inner_rect.x, inner_rect.y - EDGE_GRAB_THICKNESS / 2.0),
+            Size::new(inner_rect.width, EDGE_GRAB_THICKNESS),
+        );
+        if cursor.is_over(n_edge_rect) {
+            return DragState::N;
+        }
+
+        let s_edge_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x,
+                inner_rect.y + inner_rect.height - EDGE_GRAB_THICKNESS / 2.0,
+            ),
+            Size::new(inner_rect.width, EDGE_GRAB_THICKNESS),
+        );
+        if cursor.is_over(s_edge_rect) {
+            return DragState::S;
+        }
+
+        let w_edge_rect = Rectangle::new(
+            Point::new(inner_rect.x - EDGE_GRAB_THICKNESS / 2.0, inner_rect.y),
+            Size::new(EDGE_GRAB_THICKNESS, inner_rect.height),
+        );
+        if cursor.is_over(w_edge_rect) {
+            return DragState::W;
+        }
+
+        let e_edge_rect = Rectangle::new(
+            Point::new(
+                inner_rect.x + inner_rect.width - EDGE_GRAB_THICKNESS / 2.0,
+                inner_rect.y,
+            ),
+            Size::new(EDGE_GRAB_THICKNESS, inner_rect.height),
+        );
+        if cursor.is_over(e_edge_rect) {
+            return DragState::E;
+        }
+
+        // Check if cursor is inside the selection rectangle (for moving)
+        // Only allow move when selection has meaningful size (> 5x5)
+        if inner_rect.width > 5.0 && inner_rect.height > 5.0 && cursor.is_over(inner_rect) {
+            return DragState::Move;
+        }
+
+        DragState::None
+    }
+
+    fn handle_drag_pos(&mut self, x: i32, y: i32, shell: &mut core::Shell<'_, Msg>) {
+        let prev = self.rectangle_selection;
+
+        let d_x = self.output_rect.left + x;
+        let d_y = self.output_rect.top + y;
+
+        let prev_state = self.drag_state;
+
+        // Handle Move state separately: translate the entire rectangle
+        if prev_state == DragState::Move {
+            if let Some((offset_x, offset_y)) = self.move_offset {
+                let new_left = d_x - offset_x;
+                let new_top = d_y - offset_y;
+                let width = prev.right - prev.left;
+                let height = prev.bottom - prev.top;
+
+                let new_rect = Rect {
+                    left: new_left,
+                    top: new_top,
+                    right: new_left + width,
+                    bottom: new_top + height,
+                };
+                self.rectangle_selection = new_rect;
+                shell.publish((self.on_rectangle)(DragState::Move, new_rect));
+            }
+            return;
+        }
+
+        let reflection_point = match prev_state {
+            DragState::None | DragState::Move => return,
+            DragState::NW => (prev.right, prev.bottom),
+            DragState::N => (0, prev.bottom),
+            DragState::NE => (prev.left, prev.bottom),
+            DragState::E => (prev.left, 0),
+            DragState::SE => (prev.left, prev.top),
+            DragState::S => (0, prev.top),
+            DragState::SW => (prev.right, prev.top),
+            DragState::W => (prev.right, 0),
+        };
+
+        let new_drag_state = match prev_state {
+            DragState::SE | DragState::NW | DragState::NE | DragState::SW => {
+                if d_x < reflection_point.0 && d_y < reflection_point.1 {
+                    DragState::NW
+                } else if d_x > reflection_point.0 && d_y > reflection_point.1 {
+                    DragState::SE
+                } else if d_x > reflection_point.0 && d_y < reflection_point.1 {
+                    DragState::NE
+                } else if d_x < reflection_point.0 && d_y > reflection_point.1 {
+                    DragState::SW
+                } else {
+                    prev_state
+                }
+            }
+            DragState::N | DragState::S => {
+                if d_y < reflection_point.1 {
+                    DragState::N
+                } else {
+                    DragState::S
+                }
+            }
+            DragState::E | DragState::W => {
+                if d_x > reflection_point.0 {
+                    DragState::E
+                } else {
+                    DragState::W
+                }
+            }
+
+            DragState::None | DragState::Move => DragState::None,
+        };
+        let top_left = match new_drag_state {
+            DragState::NW => (d_x, d_y),
+            DragState::NE => (reflection_point.0, d_y),
+            DragState::SE => (reflection_point.0, reflection_point.1),
+            DragState::SW => (d_x, reflection_point.1),
+            DragState::N => (prev.left, d_y),
+            DragState::E => (reflection_point.0, prev.top),
+            DragState::S => (prev.left, reflection_point.1),
+            DragState::W => (d_x, prev.top),
+            DragState::None | DragState::Move => (prev.left, prev.top),
+        };
+
+        let bottom_right = match new_drag_state {
+            DragState::NW => (reflection_point.0, reflection_point.1),
+            DragState::NE => (d_x, reflection_point.1),
+            DragState::SE => (d_x, d_y),
+            DragState::SW => (reflection_point.0, d_y),
+            DragState::N => (prev.right, reflection_point.1),
+            DragState::E => (d_x, prev.bottom),
+            DragState::S => (prev.right, d_y),
+            DragState::W => (reflection_point.0, prev.bottom),
+            DragState::None | DragState::Move => (prev.right, prev.bottom),
+        };
+        let new_rect = Rect {
+            left: top_left.0,
+            top: top_left.1,
+            right: bottom_right.0,
+            bottom: bottom_right.1,
+        };
+        self.rectangle_selection = new_rect;
+        self.drag_state = new_drag_state;
+
+        shell.publish((self.on_rectangle)(new_drag_state, new_rect));
+    }
+}
+
+impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
+    for RectangleSelection<'_, Msg>
+{
+    fn size(&self) -> Size<Length> {
+        Size::new(Length::Fill, Length::Fill)
+    }
+
+    fn layout(
+        &mut self,
+        _tree: &mut core::widget::Tree,
+        _renderer: &cosmic::Renderer,
+        limits: &core::layout::Limits,
+    ) -> core::layout::Node {
+        Node::new(limits.width(Length::Fill).height(Length::Fill).resolve(
+            Length::Fill,
+            Length::Fill,
+            core::Size::ZERO,
+        ))
+    }
+
+    fn tag(&self) -> core::widget::tree::Tag {
+        struct MyState;
+        core::widget::tree::Tag::of::<MyState>()
+    }
+
+    fn mouse_interaction(
+        &self,
+        _state: &core::widget::Tree,
+        _layout: core::Layout<'_>,
+        cursor: core::mouse::Cursor,
+        _viewport: &Rectangle,
+        _renderer: &cosmic::Renderer,
+    ) -> core::mouse::Interaction {
+        if self.is_recording {
+            return core::mouse::Interaction::default();
+        }
+
+        // While dragging, the pointer shape follows the drag, not what is under the
+        // pointer, so it cannot flicker on fast moves. Resizing puts the loupe under
+        // the pointer, whose crosshair then replaces it.
+        if self.drag_state != DragState::None {
+            return match self.drag_state {
+                DragState::Move => core::mouse::Interaction::Grabbing,
+                _ if self.magnifier_enabled => core::mouse::Interaction::Hidden,
+                DragState::N | DragState::S => core::mouse::Interaction::ResizingVertically,
+                DragState::E | DragState::W => core::mouse::Interaction::ResizingHorizontally,
+                DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
+                    core::mouse::Interaction::Grabbing
+                }
+                DragState::None => unreachable!(),
+            };
+        }
+
+        // Not dragging: show cursor based on what we're hovering over
+        match self.drag_state(cursor) {
+            DragState::None => core::mouse::Interaction::Crosshair,
+            DragState::NW | DragState::NE | DragState::SE | DragState::SW => {
+                core::mouse::Interaction::Grab
+            }
+            DragState::N | DragState::S => core::mouse::Interaction::ResizingVertically,
+            DragState::E | DragState::W => core::mouse::Interaction::ResizingHorizontally,
+            DragState::Move => core::mouse::Interaction::Grab,
+        }
+    }
+
+    fn update(
+        &mut self,
+        _state: &mut core::widget::Tree,
+        event: &core::Event,
+        layout: core::Layout<'_>,
+        cursor: core::mouse::Cursor,
+        _renderer: &cosmic::Renderer,
+        _clipboard: &mut dyn core::Clipboard,
+        shell: &mut core::Shell<'_, Msg>,
+        _viewport: &Rectangle,
+    ) {
+        if self.is_recording {
+            return;
+        }
+        if let core::Event::Mouse(e) = event {
+            if !cursor.is_over(layout.bounds()) {
+                return;
+            }
+
+            // Skip rectangle drawing while an annotation tool owns the mouse
+            // or a popup/drawer is open.
+            if self.suppress_selection {
+                return;
+            }
+
+            match e {
+                core::mouse::Event::ButtonPressed(core::mouse::Button::Left) => {
+                    let s = self.drag_state(cursor);
+
+                    if s == DragState::Move {
+                        // For Move: compute offset for translation
+                        let pos = cursor.position().unwrap_or_default();
+                        let cursor_x = self.output_rect.left + pos.x as i32;
+                        let cursor_y = self.output_rect.top + pos.y as i32;
+                        let offset_x = cursor_x - self.rectangle_selection.left;
+                        let offset_y = cursor_y - self.rectangle_selection.top;
+                        self.drag_state = DragState::Move;
+                        shell.publish((self.on_move_offset)(Some((offset_x, offset_y))));
+                        shell.publish((self.on_rectangle)(
+                            DragState::Move,
+                            self.rectangle_selection,
+                        ));
+                    } else if s == DragState::None {
+                        // New selection: start drawing from current position
+                        let mut pos = cursor.position().unwrap_or_default();
+                        pos.x += self.output_rect.left as f32;
+                        pos.y += self.output_rect.top as f32;
+                        self.drag_state = DragState::SE;
+                        shell.publish((self.on_move_offset)(None));
+                        shell.publish((self.on_rectangle)(
+                            DragState::SE,
+                            Rect {
+                                left: pos.x as i32,
+                                top: pos.y as i32,
+                                right: pos.x as i32 + 1,
+                                bottom: pos.y as i32 + 1,
+                            },
+                        ));
+                    } else {
+                        // Resize from corner or edge
+                        self.drag_state = s;
+                        shell.publish((self.on_move_offset)(None));
+                        shell.publish((self.on_rectangle)(s, self.rectangle_selection));
+                    }
+                    shell.capture_event();
+                }
+                core::mouse::Event::CursorMoved { .. } => {
+                    // Handle all drag operations without DnD for proper cursor control
+                    if self.drag_state != DragState::None {
+                        if let Some(pos) = cursor.position() {
+                            let x = pos.x.round() as i32;
+                            let y = pos.y.round() as i32;
+                            self.handle_drag_pos(x, y, shell);
+                        }
+                        shell.capture_event();
+                    }
+                }
+                core::mouse::Event::ButtonReleased(core::mouse::Button::Left)
+                    // End any drag operation
+                    if self.drag_state != DragState::None => {
+                        self.drag_state = DragState::None;
+                        shell.publish((self.on_move_offset)(None));
+                        // Only keep rectangle if it has meaningful dimensions (> 5x5)
+                        let rect = self.rectangle_selection;
+                        let width = (rect.right - rect.left).abs();
+                        let height = (rect.bottom - rect.top).abs();
+                        if width > 5 && height > 5 {
+                            shell.publish((self.on_rectangle)(DragState::None, rect));
+                        } else {
+                            // Clear the selection: just a click, not a drag
+                            shell
+                                .publish((self.on_rectangle)(DragState::None, Rect::default()));
+                        }
+                        shell.capture_event();
+                    }
+                _ => {}
+            }
+        }
+    }
+
+    fn draw(
+        &self,
+        _tree: &core::widget::Tree,
+        renderer: &mut cosmic::Renderer,
+        theme: &cosmic::Theme,
+        _style: &core::renderer::Style,
+        _layout: core::Layout<'_>,
+        cursor: core::mouse::Cursor,
+        _viewport: &core::Rectangle,
+    ) {
+        if self.is_recording {
+            return;
+        }
+        let cosmic = theme.cosmic();
+        let accent = Color::from(cosmic.accent_color());
+        let inner_rect = self.rectangle_selection;
+        let inner_rect = Rectangle::new(
+            Point::new(inner_rect.left as f32, inner_rect.top as f32),
+            Size::new(
+                (inner_rect.right - inner_rect.left).abs() as f32,
+                (inner_rect.bottom - inner_rect.top).abs() as f32,
+            ),
+        );
+        let outer_size = Size::new(
+            (self.output_rect.right - self.output_rect.left).abs() as f32,
+            (self.output_rect.bottom - self.output_rect.top).abs() as f32,
+        );
+        let outer_top_left = Point::new(self.output_rect.left as f32, self.output_rect.top as f32);
+        let outer_rect = Rectangle::new(outer_top_left, outer_size);
+        let Some(clipped_inner_rect) = inner_rect.intersection(&outer_rect) else {
+            return;
+        };
+
+        // Translate selection rect to output-relative coordinates (0,0 is top-left of this output).
+        let translated_clipped_inner_rect = Rectangle::new(
+            Point::new(
+                clipped_inner_rect.x - outer_rect.x,
+                clipped_inner_rect.y - outer_rect.y,
+            ),
+            clipped_inner_rect.size(),
+        );
+
+        let quad = Quad {
+            bounds: translated_clipped_inner_rect,
+            border: Border {
+                radius: 0.0.into(),
+                width: 2.0,
+                color: accent,
+            },
+            shadow: Shadow::default(),
+            snap: false,
+        };
+        renderer.fill_quad(quad, Color::TRANSPARENT);
+
+        let radius_s = cosmic.radius_s();
+        for (x, y) in &[
+            (inner_rect.x, inner_rect.y),
+            (inner_rect.x + inner_rect.width, inner_rect.y),
+            (inner_rect.x, inner_rect.y + inner_rect.height),
+            (
+                inner_rect.x + inner_rect.width,
+                inner_rect.y + inner_rect.height,
+            ),
+        ] {
+            if !outer_rect.contains(Point::new(*x, *y)) {
+                continue;
+            }
+            let translated_x = x - outer_rect.x;
+            let translated_y = y - outer_rect.y;
+            let bounds = Rectangle::new(
+                Point::new(
+                    translated_x - CORNER_DIAMETER / 2.0,
+                    translated_y - CORNER_DIAMETER / 2.0,
+                ),
+                Size::new(CORNER_DIAMETER, CORNER_DIAMETER),
+            );
+            let quad = Quad {
+                bounds,
+                border: Border {
+                    radius: radius_s.into(),
+                    width: 0.0,
+                    color: Color::TRANSPARENT,
+                },
+                shadow: Shadow::default(),
+                snap: false,
+            };
+            renderer.fill_quad(quad, accent);
+        }
+
+        // Draw magnifier when dragging a corner or initially drawing (if enabled)
+        if self.magnifier_enabled && self.drag_state != DragState::None {
+            // The point under the pointer: a corner, or the pointer's own position
+            // along the edge being dragged. Global logical coordinates.
+            let sel = self.rectangle_selection;
+            let pointer = cursor.position().map(|p| {
+                (
+                    p.x as i32 + self.output_rect.left,
+                    p.y as i32 + self.output_rect.top,
+                )
+            });
+            let along_x = pointer.map_or(i32::midpoint(sel.left, sel.right), |(x, _)| {
+                x.clamp(sel.left, sel.right)
+            });
+            let along_y = pointer.map_or(i32::midpoint(sel.top, sel.bottom), |(_, y)| {
+                y.clamp(sel.top, sel.bottom)
+            });
+            let drag_corner = match self.drag_state {
+                DragState::NW => Some((sel.left, sel.top)),
+                DragState::NE => Some((sel.right, sel.top)),
+                DragState::SW => Some((sel.left, sel.bottom)),
+                DragState::SE => Some((sel.right, sel.bottom)),
+                DragState::N => Some((along_x, sel.top)),
+                DragState::S => Some((along_x, sel.bottom)),
+                DragState::E => Some((sel.right, along_y)),
+                DragState::W => Some((sel.left, along_y)),
+                DragState::None | DragState::Move => None,
+            };
+
+            if let Some((drag_x, drag_y)) = drag_corner {
+                draw_magnifier(
+                    renderer,
+                    &self.screenshot_image.handle,
+                    self.screenshot_image.rgba.dimensions(),
+                    self.image_scale,
+                    drag_x,
+                    drag_y,
+                    &self.output_rect,
+                    outer_size,
+                    outer_rect,
+                    accent,
+                );
+            }
+        }
+    }
+
+    fn drag_destinations(
+        &self,
+        _state: &core::widget::Tree,
+        layout: core::Layout<'_>,
+        _renderer: &cosmic::Renderer,
+        dnd_rectangles: &mut core::clipboard::DndDestinationRectangles,
+    ) {
+        let bounds = layout.bounds();
+        dnd_rectangles.push(DndDestinationRectangle {
+            id: self.drag_id,
+            rectangle: dnd::Rectangle {
+                x: f64::from(bounds.x),
+                y: f64::from(bounds.y),
+                width: f64::from(bounds.width),
+                height: f64::from(bounds.height),
+            },
+            mime_types: vec![Cow::Borrowed(MIME)],
+            actions: DndAction::Copy,
+            preferred: DndAction::Copy,
+        });
+    }
+
+    fn set_id(&mut self, id: widget::Id) {
+        self.widget_id = id;
+    }
+}
+
+impl<'a, Message> From<RectangleSelection<'a, Message>> for cosmic::Element<'a, Message>
+where
+    Message: 'static + Clone,
+{
+    fn from(w: RectangleSelection<'a, Message>) -> Self {
+        cosmic::Element::new(w)
+    }
+}

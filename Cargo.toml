@@ -1,143 +1,92 @@
-[package]
-name = "snappea"
-version = "0.9.1"
+[workspace]
+members = ["cosmic-x", "cosmic-x-trim"]
+resolver = "3"
+
+[workspace.package]
 edition = "2024"
-license = "GPL-3.0-or-later"
-description = "Screenshot and screen recording for COSMIC desktop"
+authors = ["Hojjat Abdollahi"]
+license = "GPL-3.0-only"
+repository = "https://github.com/pop-os/cosmic-x"
 
-[features]
-default = ["wgpu"]
-wgpu = ["cosmic/wgpu"]
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+# Geometry code converts between logical, pixel and f32 coordinates everywhere.
+# cast_possible_truncation = "allow"
+# cast_possible_wrap = "allow"
+# # cast_precision_loss = "allow"
+# cast_sign_loss = "allow"
+# # Presets are exact floats compared to themselves.
+# float_cmp = "allow"
+# similar_names = "allow"
+# struct_excessive_bools = "allow"
+too_many_lines = "allow"
+# # Style lints whose fixes would not make this code clearer.
+# assigning_clones = "allow"
+# default_trait_access = "allow"
+# fn_params_excessive_bools = "allow"
+# items_after_statements = "allow"
+# large_enum_variant = "allow"
+# many_single_char_names = "allow"
+# match_same_arms = "allow"
+# needless_pass_by_value = "allow"
+# option_if_let_else = "allow"
+# significant_drop_tightening = "allow"
+# struct_field_names = "allow"
+# too_many_arguments = "allow"
+# # zbus interface methods are async by protocol, and its macro references every parameter.
+# unused_async = "allow"
+# unused_async_trait_impl = "allow"
+# used_underscore_binding = "allow"
+# while_float = "allow"
+# branches_sharing_code = "allow"
+# format_collect = "allow"
+# match_wildcard_for_single_variants = "allow"
+# needless_collect = "allow"
+# type_complexity = "allow"
+# unnecessary_wraps = "allow"
+# useless_let_if_seq = "allow"
+#
+[workspace.lints.rust]
+unused = { level = "warn", priority = -1 }
+dead_code = "warn"
 
-[dependencies]
-anyhow = "1.0.100"
-chrono = "0.4"
-cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
-cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
-dirs = "6.0.0"
-env_logger = "0.11.8"
-futures = "0.3"
-image = { version = "0.25", default-features = false, features = [
-  "png",
-  "gif",
-] }
-tiny-skia = "0.12"
-libc = "0.2"
-log = "0.4.28"
-memmap2 = "0.9.8"
-# OCR backends
-rusty-tesseract = "1.1.10"
-png = "0.18"
-rfd = "0.17"
-rqrr = "0.10"
-rustix = { version = "1.1", features = ["fs"] }
-nix = { version = "0.31", features = ["signal", "process"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tempfile = "3"
-tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
-wayland-client = "0.31.11"
-wayland-protocols = "0.32.9"
-zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
+[profile.release-with-debug]
+inherits = "release"
+debug = true
 
-# System tray
-ksni = { version = "0.3.3", features = ["blocking"] }
-crossbeam-channel = "0.5"
+# [patch."https://github.com/pop-os/cosmic-protocols"]
+# cosmic-protocols = { path = "../cosmic-protocols" }
+# cosmic-client-toolkit = { path = "../cosmic-protocols/client-toolkit" }
 
-# Screen recording
-gstreamer = "0.25"
-gstreamer-app = "0.25"
-gstreamer-video = "0.25"
-gstreamer-allocators = "0.25"
-gbm = "0.18"
-drm-fourcc = "2"
+# Local checkouts, pending upstream PRs.
+[patch."https://github.com/wash2/iced_video_player.git"]
+iced_video_player = { git = "https://github.com/hojjatabdollahi/iced_video_player.git", branch = "hojjat/fix-size" }
 
-# i18n
-i18n-embed = { version = "0.16", features = [
-  "fluent-system",
-  "desktop-requester",
-] }
-i18n-embed-fl = "0.10"
-rust-embed = "8.7.2"
+# [patch."https://github.com/pop-os/cosmic-viewer.git"]
+# viewer-tools = { path = "../cosmic-viewer/viewer-tools" }
+# viewer-widgets = { path = "../cosmic-viewer/viewer-widgets" }
+[patch."https://github.com/pop-os/cosmic-viewer.git"]
+viewer-tools = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
+viewer-widgets = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
 
-[[bin]]
-name = "snappea"
-path = "src/main.rs"
-
-[[bin]]
-name = "snappea-edit"
-path = "src/bin/snappea-edit.rs"
-
-[dependencies.cosmetics]
-git = "https://github.com/hojjatabdollahi/cosmetics"
-features = ["gif-player"]
-
-[dependencies.iced_video_player]
-git = "https://github.com/wash2/iced_video_player"
-branch = "iced-rebase"
-default-features = false
-features = ["wgpu"]
-
-[dependencies.url]
-version = "2"
-
-[dependencies.cosmic]
-package = "libcosmic"
-git = "https://github.com/pop-os/libcosmic"
-default-features = false
-features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
-
-[dependencies.iced]
-git = "https://github.com/pop-os/libcosmic"
-default-features = false
-
-[build-dependencies]
-iced_lucide = { git = "https://github.com/A-Disruption/iced_lucide", rev = "d06e2cc2a16b60bcd076a0904faf3ebb6b2c89f2" }
-
-[package.metadata.deb]
-maintainer = "Hojjat Abdollahi"
-copyright = "2024, Hojjat Abdollahi"
-license-file = ["LICENSE", "4"]
-depends = "$auto"
-section = "utils"
-priority = "optional"
-assets = [
-  [
-    "target/release/snappea",
-    "usr/bin/",
-    "755",
-  ],
-  [
-    "target/release/snappea-edit",
-    "usr/bin/",
-    "755",
-  ],
-  [
-    "data/io.github.hojjatabdollahi.snappea.desktop",
-    "usr/share/applications/",
-    "644",
-  ],
-  [
-    "data/logo.svg",
-    "usr/share/icons/hicolor/scalable/apps/io.github.hojjatabdollahi.snappea.svg",
-    "644",
-  ],
-  [
-    "data/snappea.portal",
-    "usr/share/xdg-desktop-portal/portals/snappea.portal",
-    "644",
-  ],
-  [
-    "data/io.github.hojjatabdollahi.snappea.service",
-    "usr/share/dbus-1/services/io.github.hojjatabdollahi.snappea.service",
-    "644",
-  ],
-]
-
-# [profile.release]
-# opt-level = 3
-# lto = "fat"
-# panic = "abort"
-# codegen-units = 1
-# strip = "symbols"
+# # Every crate from the repo must be listed, or two copies of iced end up linked.
+# [patch."https://github.com/pop-os/libcosmic.git"]
+# build_helpers = { path = "../libcosmic/iced/build_helpers" }
+# cosmic-config = { path = "../libcosmic/cosmic-config" }
+# cosmic-config-derive = { path = "../libcosmic/cosmic-config-derive" }
+# cosmic-theme = { path = "../libcosmic/cosmic-theme" }
+# iced = { path = "../libcosmic/iced" }
+# iced_accessibility = { path = "../libcosmic/iced/accessibility" }
+# iced_core = { path = "../libcosmic/iced/core" }
+# iced_debug = { path = "../libcosmic/iced/debug" }
+# iced_futures = { path = "../libcosmic/iced/futures" }
+# iced_graphics = { path = "../libcosmic/iced/graphics" }
+# iced_program = { path = "../libcosmic/iced/program" }
+# iced_renderer = { path = "../libcosmic/iced/renderer" }
+# iced_runtime = { path = "../libcosmic/iced/runtime" }
+# iced_tiny_skia = { path = "../libcosmic/iced/tiny_skia" }
+# iced_wgpu = { path = "../libcosmic/iced/wgpu" }
+# iced_widget = { path = "../libcosmic/iced/widget" }
+# iced_winit = { path = "../libcosmic/iced/winit" }
+# libcosmic = { path = "../libcosmic" }

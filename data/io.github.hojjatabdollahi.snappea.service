@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=io.github.hojjatabdollahi.snappea
-Exec=/usr/bin/snappea --portal

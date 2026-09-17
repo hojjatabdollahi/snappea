@@ -1,0 +1,137 @@
+[package]
+name = "cosmic-x"
+version = "0.9.1"
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Screenshot and screen recording for COSMIC desktop"
+
+[features]
+default = ["wgpu"]
+wgpu = ["cosmic/wgpu"]
+
+[lints]
+workspace = true
+
+[dependencies]
+anyhow = "1.0.100"
+chrono = "0.4"
+cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
+cosmic-config = { git = "https://github.com/pop-os/libcosmic.git" }
+cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
+dirs = "6.0.0"
+env_logger = "0.11.8"
+futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+libc = "0.2"
+log = "0.4.28"
+memmap2 = "0.9.8"
+rusty-tesseract = "1.1.10"
+png = "0.18"
+rfd = "0.17"
+rqrr = "0.10"
+rustix = { version = "1.1", features = ["fs"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
+wayland-client = "0.31.11"
+wayland-protocols = "0.32.9"
+zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
+
+
+# Screen recording
+gstreamer = "0.25"
+gstreamer-app = "0.25"
+gstreamer-video = { version = "0.25", features = ["v1_24"] }
+gstreamer-allocators = "0.25"
+gbm = "0.18"
+drm-fourcc = "2"
+
+viewer-tools = { git = "https://github.com/pop-os/cosmic-viewer.git", features = ["serde"] }
+viewer-widgets = { git = "https://github.com/pop-os/cosmic-viewer.git" }
+
+# i18n
+i18n-embed = { version = "0.16", features = [
+  "fluent-system",
+  "desktop-requester",
+] }
+i18n-embed-fl = "0.10"
+rust-embed = "8.7.2"
+
+[[bin]]
+name = "cosmic-x"
+path = "src/main.rs"
+
+[dependencies.url]
+version = "2"
+
+[dependencies.cosmic]
+package = "libcosmic"
+git = "https://github.com/pop-os/libcosmic.git"
+default-features = false
+features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
+
+[dependencies.iced]
+git = "https://github.com/pop-os/libcosmic.git"
+default-features = false
+
+[package.metadata.deb]
+maintainer = "Hojjat Abdollahi"
+copyright = "2024, Hojjat Abdollahi"
+license-file = ["../LICENSE", "4"]
+depends = "$auto"
+section = "utils"
+priority = "optional"
+assets = [
+  [
+    "target/release/cosmic-x",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "target/release/cosmic-x-trim",
+    "usr/bin/",
+    "755",
+  ],
+  [
+    "data/com.system76.CosmicX.desktop",
+    "usr/share/applications/",
+    "644",
+  ],
+  [
+    "../cosmic-x-trim/res/com.system76.CosmicX.Trim.desktop",
+    "usr/share/applications/",
+    "644",
+  ],
+  [
+    "../cosmic-x-trim/res/icons/scalable/actions/*.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/com.system76.CosmicX.metainfo.xml",
+    "usr/share/metainfo/",
+    "644",
+  ],
+  [
+    "data/logo.svg",
+    "usr/share/icons/hicolor/scalable/apps/com.system76.CosmicX.svg",
+    "644",
+  ],
+  [
+    "data/icons/scalable/actions/*.svg",
+    "usr/share/icons/hicolor/scalable/actions/",
+    "644",
+  ],
+  [
+    "data/cosmic-x.portal",
+    "usr/share/xdg-desktop-portal/portals/cosmic-x.portal",
+    "644",
+  ],
+  [
+    "data/com.system76.CosmicX.service",
+    "usr/share/dbus-1/services/com.system76.CosmicX.service",
+    "644",
+  ],
+]
