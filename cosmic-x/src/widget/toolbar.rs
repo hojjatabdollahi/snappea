@@ -1123,8 +1123,9 @@ fn toolbar_surface<'a, Msg: Clone + 'static>(
 fn grip_button<'a, Msg: Clone + 'static>(on_press: Msg, on_release: Msg) -> Element<'a, Msg> {
     cosmic::widget::mouse_area(tooltip(
         cosmic::widget::container(grip_icon())
-            .width(Length::Fixed(BTN_SIZE))
-            .height(Length::Fixed(BTN_SIZE))
+            .padding([0, 0, 0, SECTION_GAP])
+            .width(Length::Fixed(BTN_SIZE + f32::from(SECTION_GAP)))
+            .height(Length::Fixed(TOOLBAR_H))
             .align_x(cosmic::iced::core::alignment::Horizontal::Center)
             .align_y(cosmic::iced::core::alignment::Vertical::Center),
         text::body(fl!("move-toolbar")),
@@ -1466,12 +1467,7 @@ pub fn build_recording_toolbar<Msg: Clone + 'static>(
     ))
     .align_y(cosmic::iced::core::Alignment::Center)
     .spacing(0)
-    .padding([
-        spacing.space_xxs,
-        SECTION_GAP,
-        spacing.space_xxs,
-        SECTION_GAP,
-    ])
+    .padding([spacing.space_xxs, SECTION_GAP, spacing.space_xxs, 0])
     .into();
 
     toolbar_surface(body)
@@ -1662,12 +1658,7 @@ pub fn build_countdown_toolbar<'a, Msg: Clone + 'static>(
     ]
     .align_y(cosmic::iced::core::Alignment::Center)
     .spacing(0)
-    .padding([
-        spacing.space_xxs,
-        SECTION_GAP,
-        spacing.space_xxs,
-        SECTION_GAP,
-    ])
+    .padding([spacing.space_xxs, SECTION_GAP, spacing.space_xxs, 0])
     .into();
 
     toolbar_surface(body)
@@ -2069,7 +2060,7 @@ pub fn build_toolbar<'a, Msg: Clone + 'static>(
     ]
     .align_y(cosmic::iced::core::Alignment::Center)
     .spacing(0)
-    .padding([space_xxs, SECTION_GAP, space_xxs, SECTION_GAP])
+    .padding([space_xxs, SECTION_GAP, space_xxs, 0])
     .into();
 
     toolbar_surface(toolbar_body_content)
