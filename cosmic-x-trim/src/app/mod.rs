@@ -2,7 +2,7 @@
 
 mod view;
 
-use crate::export::{self, Cancel, Format};
+use crate::export::{self, Cancel, Codec, Encoder, Format};
 use cosmic::app::Task;
 use cosmic::{Application, executor};
 use iced_video_player::Video;
@@ -56,10 +56,17 @@ pub struct Editor {
     export: Option<Export>,
     export_generation: u64,
 
+    source_codec: Option<Codec>,
+    /// Encoders that work here, `Encoder::fallback` until the probe finishes
+    encoders: Vec<Encoder>,
+
     /// Chosen in the export drawer. Save and Save As keep the source's container.
     format: Format,
-    /// indices into `export::WEBM_CRF`, `GIF_FPS` and `GIF_SCALE`
-    webm_quality: usize,
+    /// `None` for GIF
+    encoder: Option<Encoder>,
+    /// index into `export::QUALITY_LEVELS`
+    quality: usize,
+    /// indices into `export::GIF_FPS` and `GIF_SCALE`
     gif_fps: usize,
     gif_scale: usize,
     gifski: bool,
@@ -85,7 +92,9 @@ pub enum Message {
     // Export drawer
     ToggleExportDrawer,
     SetFormat(usize),
-    SetWebmQuality(usize),
+    SetEncoder(usize),
+    SetQuality(usize),
+    EncodersProbed(Vec<Encoder>),
     SetGifFps(usize),
     SetGifScale(usize),
     // Export
@@ -96,7 +105,7 @@ pub enum Message {
     Save,
     SaveAs,
     Export,
-    SaveAsChosen(Format, Option<PathBuf>),
+    SaveAsChosen(Format, Option<Encoder>, Option<PathBuf>),
     Discard,
 }
 
@@ -116,8 +125,24 @@ impl Editor {
         Format::from_path(&self.path)
     }
 
+    /// The working encoders `format` can hold
+    fn encoders_for(&self, format: Format) -> impl Iterator<Item = &Encoder> {
+        self.encoders
+            .iter()
+            .filter(move |e| format.codecs().contains(&e.kind.codec()))
+    }
+
+    /// Software, and the source's codec when `format` holds it, so an untouched
+    /// export can stream-copy
+    fn default_encoder(&self, format: Format) -> Option<Encoder> {
+        self.encoders_for(format)
+            .find(|e| Some(e.kind.codec()) == self.source_codec)
+            .or_else(|| self.encoders_for(format).next())
+            .cloned()
+    }
+
     /// Asks where to write a `format` file, defaulting next to the source
-    fn save_dialog(&self, format: Format) -> Task<Message> {
+    fn save_dialog(&self, format: Format, encoder: Option<Encoder>) -> Task<Message> {
         let stem = self
             .path
             .file_stem()
@@ -134,12 +159,17 @@ impl Editor {
                 }
                 dialog.save_file().await.map(|f| f.path().to_path_buf())
             },
-            move |path| cosmic::Action::App(Message::SaveAsChosen(format, path)),
+            move |path| cosmic::Action::App(Message::SaveAsChosen(format, encoder, path)),
         )
     }
 
     /// Starts an export on a worker thread and opens the progress dialog
-    fn begin_export(&mut self, out: PathBuf, format: Format) -> Task<Message> {
+    fn begin_export(
+        &mut self,
+        out: PathBuf,
+        format: Format,
+        encoder: Option<Encoder>,
+    ) -> Task<Message> {
         if self.export.is_some() {
             return Task::none();
         }
@@ -163,6 +193,7 @@ impl Editor {
 
         let req = export::Request {
             source: self.path.clone(),
+            source_codec: self.source_codec,
             start: self.trim_start,
             end: self.trim_end,
             speed: self.speed,
@@ -170,7 +201,8 @@ impl Editor {
             progress_file,
             cancel,
             format,
-            crf: export::WEBM_CRF[self.webm_quality],
+            encoder,
+            quality: self.quality,
             fps: export::GIF_FPS[self.gif_fps],
             scale: export::GIF_SCALE[self.gif_scale],
             gifski: self.gifski,
@@ -225,34 +257,45 @@ impl Application for Editor {
             |colors| cosmic::Action::App(Message::ColorsExtracted(colors)),
         );
 
-        (
-            Self {
-                core,
-                format: Format::from_path(&flags.path),
-                path: flags.path,
-                video,
-                can_discard: flags.can_discard,
-                duration,
-                position: 0.0,
-                trim_start: 0.0,
-                trim_end: duration,
-                speed: 1.0,
-                playing: false,
-                dragging: false,
-                pending_seek: None,
-                seek_scheduled: false,
-                seek_generation: 0,
-                speed_menu_open: false,
-                frame_colors: Vec::new(),
-                export: None,
-                export_generation: 0,
-                webm_quality: 1,
-                gif_fps: 1,
-                gif_scale: 0,
-                gifski: export::gifski_available(),
+        let probe_task = Task::perform(
+            async {
+                tokio::task::spawn_blocking(export::probe_encoders)
+                    .await
+                    .unwrap_or_else(|_| Encoder::fallback())
             },
-            Task::batch([title_task, colors_task]),
-        )
+            |encoders| cosmic::Action::App(Message::EncodersProbed(encoders)),
+        );
+
+        let mut editor = Self {
+            core,
+            source_codec: export::source_codec(&flags.path),
+            encoders: Encoder::fallback(),
+            format: Format::from_path(&flags.path),
+            encoder: None,
+            path: flags.path,
+            video,
+            can_discard: flags.can_discard,
+            duration,
+            position: 0.0,
+            trim_start: 0.0,
+            trim_end: duration,
+            speed: 1.0,
+            playing: false,
+            dragging: false,
+            pending_seek: None,
+            seek_scheduled: false,
+            seek_generation: 0,
+            speed_menu_open: false,
+            frame_colors: Vec::new(),
+            export: None,
+            export_generation: 0,
+            quality: 1,
+            gif_fps: 1,
+            gif_scale: 0,
+            gifski: export::gifski_available(),
+        };
+        editor.encoder = editor.default_encoder(editor.format);
+        (editor, Task::batch([title_task, colors_task, probe_task]))
     }
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
@@ -386,9 +429,26 @@ impl Application for Editor {
             }
             Message::SetFormat(index) => {
                 self.format = Format::ALL[index.min(Format::ALL.len() - 1)];
+                self.encoder = self.default_encoder(self.format);
             }
-            Message::SetWebmQuality(index) => {
-                self.webm_quality = index.min(export::WEBM_CRF.len() - 1);
+            Message::SetEncoder(index) => {
+                let encoder = self.encoders_for(self.format).nth(index).cloned();
+                if encoder.is_some() {
+                    self.encoder = encoder;
+                }
+            }
+            Message::SetQuality(index) => self.quality = index.min(export::QUALITY_LEVELS - 1),
+            Message::EncodersProbed(encoders) => {
+                // An empty probe means ffmpeg misbehaved, so keep the fallback.
+                if !encoders.is_empty() {
+                    self.encoders = encoders;
+                }
+                let kept = self.encoder.as_ref().and_then(|chosen| {
+                    self.encoders_for(self.format)
+                        .find(|e| e.kind == chosen.kind)
+                        .cloned()
+                });
+                self.encoder = kept.or_else(|| self.default_encoder(self.format));
             }
             Message::SetGifFps(index) => self.gif_fps = index.min(export::GIF_FPS.len() - 1),
             Message::SetGifScale(index) => {
@@ -436,12 +496,18 @@ impl Application for Editor {
             Message::Save => {
                 let out = self.path.clone();
                 let format = self.source_format();
-                return self.begin_export(out, format);
+                let encoder = self.default_encoder(format);
+                return self.begin_export(out, format, encoder);
             }
-            Message::SaveAs => return self.save_dialog(self.source_format()),
-            Message::Export => return self.save_dialog(self.format),
-            Message::SaveAsChosen(format, Some(path)) => return self.begin_export(path, format),
-            Message::SaveAsChosen(_, None) => {}
+            Message::SaveAs => {
+                let format = self.source_format();
+                return self.save_dialog(format, self.default_encoder(format));
+            }
+            Message::Export => return self.save_dialog(self.format, self.encoder.clone()),
+            Message::SaveAsChosen(format, encoder, Some(path)) => {
+                return self.begin_export(path, format, encoder);
+            }
+            Message::SaveAsChosen(_, _, None) => {}
             Message::Discard => {
                 let _ = std::fs::remove_file(&self.path);
                 std::process::exit(0);

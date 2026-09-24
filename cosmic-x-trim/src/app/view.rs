@@ -194,22 +194,39 @@ fn format_settings(editor: &Editor) -> cosmic::Element<'_, Message> {
     ));
 
     match editor.format {
-        Format::Mp4 | Format::Mkv => {}
-        Format::Webm => {
+        Format::Mp4 | Format::Mkv | Format::Webm => {
+            let encoders: Vec<_> = editor.encoders_for(editor.format).collect();
+            let selected = editor
+                .encoder
+                .as_ref()
+                .and_then(|chosen| encoders.iter().position(|e| e.kind == chosen.kind));
+            let labels: Vec<String> = encoders
+                .iter()
+                .map(|e| {
+                    let kind = if e.kind.is_hardware() {
+                        fl!("hardware")
+                    } else {
+                        fl!("software")
+                    };
+                    format!("{} · {} ({kind})", e.kind.codec().label(), e.kind.name())
+                })
+                .collect();
             let qualities = vec![
                 fl!("quality-low"),
                 fl!("quality-medium"),
                 fl!("quality-high"),
             ];
-            section = section.add(widget::settings::item(
-                fl!("quality"),
-                widget::dropdown(
-                    qualities,
-                    Some(editor.webm_quality),
-                    Message::SetWebmQuality,
-                )
-                .width(Length::Fixed(120.0)),
-            ));
+            section = section
+                .add(widget::settings::item(
+                    fl!("encoder"),
+                    widget::dropdown(labels, selected, Message::SetEncoder)
+                        .width(Length::Fixed(220.0)),
+                ))
+                .add(widget::settings::item(
+                    fl!("quality"),
+                    widget::dropdown(qualities, Some(editor.quality), Message::SetQuality)
+                        .width(Length::Fixed(120.0)),
+                ));
         }
         Format::Gif => {
             let fps: Vec<String> = export::GIF_FPS.iter().map(|f| format!("{f} fps")).collect();

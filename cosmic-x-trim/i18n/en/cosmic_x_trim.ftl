@@ -9,6 +9,9 @@ cancel = Cancel
 
 export = Export
 format = Format
+encoder = Encoder
+hardware = Hardware
+software = Software
 quality = Quality
 quality-low = Low
 quality-medium = Medium
