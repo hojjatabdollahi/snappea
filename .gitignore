@@ -1,3 +1,8 @@
 /target
-/fonts/lucide.ttf
-/src/lucide_icon.rs
+**/.cargo/
+/debian/*debhelper*
+/debian/cosmic-x.substvars
+/debian/cosmic-x/
+/debian/files
+/vendor.tar
+/vendor/

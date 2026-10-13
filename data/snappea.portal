@@ -1,4 +1,0 @@
-[portal]
-DBusName=io.github.hojjatabdollahi.snappea
-Interfaces=org.freedesktop.impl.portal.Screenshot
-UseIn=COSMIC

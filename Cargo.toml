@@ -1,143 +1,31 @@
-[package]
-name = "snappea"
-version = "0.9.1"
+[workspace]
+members = ["cosmic-x", "cosmic-x-trim"]
+resolver = "3"
+
+[workspace.package]
 edition = "2024"
-license = "GPL-3.0-or-later"
-description = "Screenshot and screen recording for COSMIC desktop"
+authors = ["Hojjat Abdollahi"]
+license = "GPL-3.0-only"
+repository = "https://github.com/pop-os/cosmic-x"
 
-[features]
-default = ["wgpu"]
-wgpu = ["cosmic/wgpu"]
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+nursery = { level = "warn", priority = -1 }
+too_many_lines = "allow"
+default_trait_access = "allow"
 
-[dependencies]
-anyhow = "1.0.100"
-chrono = "0.4"
-cosmic-client-toolkit = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
-cosmic-config = { git = "https://github.com/pop-os/libcosmic" }
-cosmic-protocols = { git = "https://github.com/pop-os/cosmic-protocols", branch = "main" }
-dirs = "6.0.0"
-env_logger = "0.11.8"
-futures = "0.3"
-image = { version = "0.25", default-features = false, features = [
-  "png",
-  "gif",
-] }
-tiny-skia = "0.12"
-libc = "0.2"
-log = "0.4.28"
-memmap2 = "0.9.8"
-# OCR backends
-rusty-tesseract = "1.1.10"
-png = "0.18"
-rfd = "0.17"
-rqrr = "0.10"
-rustix = { version = "1.1", features = ["fs"] }
-nix = { version = "0.31", features = ["signal", "process"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-tempfile = "3"
-tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
-wayland-client = "0.31.11"
-wayland-protocols = "0.32.9"
-zbus = { version = "5.11.0", default-features = false, features = ["tokio"] }
+[workspace.lints.rust]
+unused = { level = "warn", priority = -1 }
+dead_code = "warn"
 
-# System tray
-ksni = { version = "0.3.3", features = ["blocking"] }
-crossbeam-channel = "0.5"
+[profile.release-with-debug]
+inherits = "release"
+debug = true
 
-# Screen recording
-gstreamer = "0.25"
-gstreamer-app = "0.25"
-gstreamer-video = "0.25"
-gstreamer-allocators = "0.25"
-gbm = "0.18"
-drm-fourcc = "2"
+# TODO: upstream these
+[patch."https://github.com/wash2/iced_video_player.git"]
+iced_video_player = { git = "https://github.com/hojjatabdollahi/iced_video_player.git", branch = "hojjat/fix-size" }
 
-# i18n
-i18n-embed = { version = "0.16", features = [
-  "fluent-system",
-  "desktop-requester",
-] }
-i18n-embed-fl = "0.10"
-rust-embed = "8.7.2"
-
-[[bin]]
-name = "snappea"
-path = "src/main.rs"
-
-[[bin]]
-name = "snappea-edit"
-path = "src/bin/snappea-edit.rs"
-
-[dependencies.cosmetics]
-git = "https://github.com/hojjatabdollahi/cosmetics"
-features = ["gif-player"]
-
-[dependencies.iced_video_player]
-git = "https://github.com/wash2/iced_video_player"
-branch = "iced-rebase"
-default-features = false
-features = ["wgpu"]
-
-[dependencies.url]
-version = "2"
-
-[dependencies.cosmic]
-package = "libcosmic"
-git = "https://github.com/pop-os/libcosmic"
-default-features = false
-features = ["dbus-config", "multi-window", "tokio", "wayland", "wgpu", "winit"]
-
-[dependencies.iced]
-git = "https://github.com/pop-os/libcosmic"
-default-features = false
-
-[build-dependencies]
-iced_lucide = { git = "https://github.com/A-Disruption/iced_lucide", rev = "d06e2cc2a16b60bcd076a0904faf3ebb6b2c89f2" }
-
-[package.metadata.deb]
-maintainer = "Hojjat Abdollahi"
-copyright = "2024, Hojjat Abdollahi"
-license-file = ["LICENSE", "4"]
-depends = "$auto"
-section = "utils"
-priority = "optional"
-assets = [
-  [
-    "target/release/snappea",
-    "usr/bin/",
-    "755",
-  ],
-  [
-    "target/release/snappea-edit",
-    "usr/bin/",
-    "755",
-  ],
-  [
-    "data/io.github.hojjatabdollahi.snappea.desktop",
-    "usr/share/applications/",
-    "644",
-  ],
-  [
-    "data/logo.svg",
-    "usr/share/icons/hicolor/scalable/apps/io.github.hojjatabdollahi.snappea.svg",
-    "644",
-  ],
-  [
-    "data/snappea.portal",
-    "usr/share/xdg-desktop-portal/portals/snappea.portal",
-    "644",
-  ],
-  [
-    "data/io.github.hojjatabdollahi.snappea.service",
-    "usr/share/dbus-1/services/io.github.hojjatabdollahi.snappea.service",
-    "644",
-  ],
-]
-
-# [profile.release]
-# opt-level = 3
-# lto = "fat"
-# panic = "abort"
-# codegen-units = 1
-# strip = "symbols"
+[patch."https://github.com/pop-os/cosmic-viewer.git"]
+viewer-tools = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
+viewer-widgets = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
