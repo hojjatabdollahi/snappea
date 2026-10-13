@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=SnapPea Edit
+Comment=Trim and speed up a video clip
+Exec=snappea-edit %f
+Terminal=false
+Type=Application
+StartupNotify=true
+NoDisplay=true
+MimeType=video/mp4;video/x-matroska;video/webm;video/quicktime;
+Icon=io.github.hojjatabdollahi.snappea.edit
+Categories=COSMIC;AudioVideo;Video;

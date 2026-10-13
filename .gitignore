@@ -1,8 +1,8 @@
 /target
 **/.cargo/
 /debian/*debhelper*
-/debian/cosmic-x.substvars
-/debian/cosmic-x/
+/debian/snappea.substvars
+/debian/snappea/
 /debian/files
 /vendor.tar
 /vendor/

@@ -1,12 +1,12 @@
 [workspace]
-members = ["cosmic-x", "cosmic-x-trim"]
+members = ["snappea", "snappea-edit"]
 resolver = "3"
 
 [workspace.package]
 edition = "2024"
 authors = ["Hojjat Abdollahi"]
 license = "GPL-3.0-only"
-repository = "https://github.com/pop-os/cosmic-x"
+repository = "https://github.com/hojjatabdollahi/snappea"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }

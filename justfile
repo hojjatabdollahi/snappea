@@ -1,8 +1,8 @@
 set dotenv-load := true
 
-name := 'cosmic-x'
-trim := 'cosmic-x-trim'
-export APPID := 'com.system76.CosmicX'
+name := 'snappea'
+trim := 'snappea-edit'
+export APPID := 'io.github.hojjatabdollahi.snappea'
 
 rootdir := ''
 prefix := '/usr'
@@ -19,27 +19,27 @@ bin-dst := base-dir / 'bin' / name
 trim-bin-src := cargo-target-dir / 'release' / trim
 trim-bin-dst := base-dir / 'bin' / trim
 
-desktop-src := name / 'data' / 'com.system76.CosmicX.desktop'
-desktop-dst := base-dir / 'share' / 'applications' / 'com.system76.CosmicX.desktop'
+desktop-src := name / 'data' / 'io.github.hojjatabdollahi.snappea.desktop'
+desktop-dst := base-dir / 'share' / 'applications' / 'io.github.hojjatabdollahi.snappea.desktop'
 
-trim-desktop-src := trim / 'res' / 'com.system76.CosmicX.Trim.desktop'
-trim-desktop-dst := base-dir / 'share' / 'applications' / 'com.system76.CosmicX.Trim.desktop'
+trim-desktop-src := trim / 'res' / 'io.github.hojjatabdollahi.snappea.edit.desktop'
+trim-desktop-dst := base-dir / 'share' / 'applications' / 'io.github.hojjatabdollahi.snappea.edit.desktop'
 
-metainfo-src := name / 'data' / 'com.system76.CosmicX.metainfo.xml'
-metainfo-dst := base-dir / 'share' / 'metainfo' / 'com.system76.CosmicX.metainfo.xml'
+metainfo-src := name / 'data' / 'io.github.hojjatabdollahi.snappea.metainfo.xml'
+metainfo-dst := base-dir / 'share' / 'metainfo' / 'io.github.hojjatabdollahi.snappea.metainfo.xml'
 
 appicon-src := name / 'data' / 'logo.svg'
-appicon-dst := base-dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'com.system76.CosmicX.svg'
+appicon-dst := base-dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'apps' / 'io.github.hojjatabdollahi.snappea.svg'
 
 icons-src := name / 'data' / 'icons' / 'scalable' / 'actions'
 trim-icons-src := trim / 'res' / 'icons' / 'scalable' / 'actions'
 icons-dst := base-dir / 'share' / 'icons' / 'hicolor' / 'scalable' / 'actions'
 
-portal-src := name / 'data' / 'cosmic-x.portal'
-portal-dst := base-dir / 'share' / 'xdg-desktop-portal' / 'portals' / 'cosmic-x.portal'
+portal-src := name / 'data' / 'snappea.portal'
+portal-dst := base-dir / 'share' / 'xdg-desktop-portal' / 'portals' / 'snappea.portal'
 
-service-src := name / 'data' / 'com.system76.CosmicX.service'
-service-dst := base-dir / 'share' / 'dbus-1' / 'services' / 'com.system76.CosmicX.service'
+service-src := name / 'data' / 'io.github.hojjatabdollahi.snappea.service'
+service-dst := base-dir / 'share' / 'dbus-1' / 'services' / 'io.github.hojjatabdollahi.snappea.service'
 
 default: build-release
 
@@ -120,8 +120,8 @@ install: _built
     install -Dm0644 {{service-src}} {{service-dst}}
     @just rootdir={{rootdir}} prefix={{prefix}} _refresh-caches
     @echo ""
-    @echo "Installed cosmic-x and cosmic-x-trim to {{base-dir}}/bin."
-    @echo "Run 'just install-portal' (as your user, not root) to make COSMIC X"
+    @echo "Installed snappea and snappea-edit to {{base-dir}}/bin."
+    @echo "Run 'just install-portal' (as your user, not root) to make SnapPea"
     @echo "the default screenshot tool."
 
 # Skipped under a rootdir, where the package manager owns the caches.
@@ -145,17 +145,17 @@ doctor:
         fi; \
     done
     @echo ""
-    @echo "ffmpeg and GStreamer are required by cosmic-x-trim."
+    @echo "ffmpeg and GStreamer are required by snappea-edit."
     @echo "tesseract enables OCR."
 
 # Per-user, so resolve the invoking user's home even under sudo.
 portal-conf := '"$(getent passwd "${SUDO_USER:-$(id -un)}" | cut -d: -f6)/.config/xdg-desktop-portal/cosmic-portals.conf"'
 
-# Install portal config to use COSMIC X as the default screenshot tool
+# Install portal config to use SnapPea as the default screenshot tool
 install-portal:
     @CONF={{portal-conf}}; \
     mkdir -p "$(dirname "$CONF")"; \
-    printf '[preferred]\ndefault=cosmic;gtk;\norg.freedesktop.impl.portal.Screenshot=cosmic-x\n' > "$CONF"; \
+    printf '[preferred]\ndefault=cosmic;gtk;\norg.freedesktop.impl.portal.Screenshot=snappea\n' > "$CONF"; \
     echo "Portal config written to $CONF"; \
     echo "Run 'systemctl --user restart xdg-desktop-portal' to apply."
 
@@ -173,7 +173,7 @@ uninstall:
     rm -f {{portal-dst}}
     rm -f {{service-dst}}
     @just rootdir={{rootdir}} prefix={{prefix}} _refresh-caches
-    @OURS="$(printf '[preferred]\ndefault=cosmic;gtk;\norg.freedesktop.impl.portal.Screenshot=cosmic-x\n')"; \
+    @OURS="$(printf '[preferred]\ndefault=cosmic;gtk;\norg.freedesktop.impl.portal.Screenshot=snappea\n')"; \
     CONF={{portal-conf}}; \
     if [ -f "$CONF" ]; then \
         if [ "$(cat "$CONF")" = "$OURS" ]; then \

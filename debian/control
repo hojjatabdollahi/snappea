@@ -1,4 +1,4 @@
-Source: cosmic-x
+Source: snappea
 Section: utils
 Priority: optional
 Maintainer: Hojjat <hojjat.abdollahi@gmail.com>
@@ -14,9 +14,9 @@ Build-Depends:
     libwayland-dev,
     libxkbcommon-dev,
 Standards-Version: 4.6.2
-Homepage: https://github.com/pop-os/cosmic-x
+Homepage: https://github.com/hojjatabdollahi/snappea
 
-Package: cosmic-x
+Package: snappea
 Architecture: amd64 arm64
 Depends: ${misc:Depends}, ${shlibs:Depends},
     gstreamer1.0-plugins-base,

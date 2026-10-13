@@ -1255,65 +1255,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cosmic-x"
-version = "0.9.1"
-dependencies = [
- "anyhow",
- "chrono",
- "cosmic-client-toolkit 0.2.0 (git+https://github.com/pop-os/cosmic-protocols?branch=main)",
- "cosmic-config",
- "cosmic-protocols 0.2.0 (git+https://github.com/pop-os/cosmic-protocols?branch=main)",
- "dirs",
- "drm-fourcc",
- "env_logger",
- "futures",
- "gbm",
- "gstreamer",
- "gstreamer-allocators",
- "gstreamer-app",
- "gstreamer-video",
- "i18n-embed",
- "i18n-embed-fl",
- "iced",
- "image",
- "libc",
- "libcosmic",
- "log",
- "memmap2 0.9.11",
- "png 0.18.1",
- "rfd 0.17.2",
- "rqrr",
- "rust-embed",
- "rustix 1.1.4",
- "rusty-tesseract",
- "serde",
- "tokio",
- "url",
- "viewer-tools",
- "viewer-widgets",
- "wayland-client",
- "wayland-protocols",
- "zbus",
-]
-
-[[package]]
-name = "cosmic-x-trim"
-version = "0.1.0"
-dependencies = [
- "env_logger",
- "i18n-embed",
- "i18n-embed-fl",
- "iced_video_player",
- "libc",
- "libcosmic",
- "log",
- "rfd 0.17.2",
- "rust-embed",
- "tokio",
- "url",
-]
-
-[[package]]
 name = "cpufeatures"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5643,6 +5584,65 @@ checksum = "4aaa7368fcf4852a4c2dd92df0cace6a71f2091ca0a23391ce7f3a31833f1523"
 dependencies = [
  "borsh",
  "serde_core",
+]
+
+[[package]]
+name = "snappea"
+version = "0.9.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "cosmic-client-toolkit 0.2.0 (git+https://github.com/pop-os/cosmic-protocols?branch=main)",
+ "cosmic-config",
+ "cosmic-protocols 0.2.0 (git+https://github.com/pop-os/cosmic-protocols?branch=main)",
+ "dirs",
+ "drm-fourcc",
+ "env_logger",
+ "futures",
+ "gbm",
+ "gstreamer",
+ "gstreamer-allocators",
+ "gstreamer-app",
+ "gstreamer-video",
+ "i18n-embed",
+ "i18n-embed-fl",
+ "iced",
+ "image",
+ "libc",
+ "libcosmic",
+ "log",
+ "memmap2 0.9.11",
+ "png 0.18.1",
+ "rfd 0.17.2",
+ "rqrr",
+ "rust-embed",
+ "rustix 1.1.4",
+ "rusty-tesseract",
+ "serde",
+ "tokio",
+ "url",
+ "viewer-tools",
+ "viewer-widgets",
+ "wayland-client",
+ "wayland-protocols",
+ "zbus",
+]
+
+[[package]]
+name = "snappea-edit"
+version = "0.1.0"
+dependencies = [
+ "env_logger",
+ "i18n-embed",
+ "i18n-embed-fl",
+ "iced_video_player",
+ "libc",
+ "libcosmic",
+ "log",
+ "rfd 0.17.2",
+ "rust-embed",
+ "tokio",
+ "url",
 ]
 
 [[package]]

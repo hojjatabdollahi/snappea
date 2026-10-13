@@ -1,4 +1,0 @@
-[portal]
-DBusName=com.system76.CosmicX
-Interfaces=org.freedesktop.impl.portal.Screenshot
-UseIn=COSMIC

@@ -1,6 +1,6 @@
 #!/usr/bin/make -f
 
-export DESTDIR = debian/cosmic-x
+export DESTDIR = debian/snappea
 export VENDOR ?= 1
 
 %:

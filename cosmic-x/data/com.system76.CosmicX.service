@@ -1,3 +1,0 @@
-[D-BUS Service]
-Name=com.system76.CosmicX
-Exec=/usr/bin/cosmic-x --portal
