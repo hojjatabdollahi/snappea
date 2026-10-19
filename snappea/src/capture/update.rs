@@ -429,12 +429,6 @@ pub fn handle_capture_msg(app: &mut App, msg: ActionMsg) -> cosmic::Task<crate::
                 cancel(app)
             }
         }
-        ActionMsg::CopyToClipboard => {
-            if let Some(capture) = app.capture.as_mut() {
-                capture.selection.location = SaveLocationChoice::Clipboard;
-            }
-            save(app)
-        }
         ActionMsg::SaveToPictures => {
             if let Some(capture) = app.capture.as_mut() {
                 capture.selection.location = capture.ui.save_location_setting;

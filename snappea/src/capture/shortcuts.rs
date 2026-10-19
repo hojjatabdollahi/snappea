@@ -58,16 +58,14 @@ pub fn handle_key_event(
         {
             Some(Msg::toggle_move_mode())
         }
-        // Save/copy shortcuts (always available: empty selection captures all screens)
-        Key::Named(Named::Enter) if modifiers.control() && delayed => Some(Msg::delayed_capture()),
-        Key::Named(Named::Enter) if modifiers.control() => Some(Msg::save_to_pictures()),
         Key::Named(Named::Escape) => Some(Msg::cancel_requested()),
         // Space/Enter to confirm selection in picker mode (screen)
         Key::Character(c) if c.as_str() == " " && in_screen_picker => Some(Msg::confirm()),
         Key::Named(Named::Enter) if in_screen_picker => Some(Msg::confirm()),
+        // Otherwise Enter is the capture button: the configured save, or a
+        // countdown first when a delay is armed. An empty selection is every screen.
         Key::Named(Named::Enter) if delayed => Some(Msg::delayed_capture()),
-        // Enter to copy when not in picker mode
-        Key::Named(Named::Enter) => Some(Msg::copy_to_clipboard()),
+        Key::Named(Named::Enter) => Some(Msg::save_to_pictures()),
         // Navigation keys in screen picker: h/l and arrows navigate screens
         Key::Character(c) if c.as_str() == "h" && in_screen_picker => Some(Msg::navigate_left()),
         Key::Character(c) if c.as_str() == "l" && in_screen_picker => Some(Msg::navigate_right()),

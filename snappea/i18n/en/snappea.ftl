@@ -15,9 +15,9 @@ video-mode = Video Mode
 select-region = Select Region (R)
 select-screen = Select Screen (S)
 select-all-screens = All Screens
-save-selected-region = Save Selected Region (Ctrl+Enter)
-save-selected-screen = Save Selected Screen (Ctrl+Enter)
-save-all-screens = Save All Screens (Ctrl+Enter)
+save-selected-region = Save Selected Region (Enter)
+save-selected-screen = Save Selected Screen (Enter)
+save-all-screens = Save All Screens (Enter)
 select-something-first = Select a region or screen first
 cancel-escape = Cancel (Escape)
 

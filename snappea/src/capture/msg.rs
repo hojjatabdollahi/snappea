@@ -120,7 +120,6 @@ pub enum ActionMsg {
     /// Escape was pressed. Cancels immediately unless there is unsaved
     /// annotation work, in which case it asks for confirmation first.
     CancelRequested,
-    CopyToClipboard,
     SaveToPictures,
     DelayedCapture,
     RecordRegion,
@@ -324,9 +323,6 @@ impl Msg {
     }
     pub const fn cancel_requested() -> Self {
         Self::Action(ActionMsg::CancelRequested)
-    }
-    pub const fn copy_to_clipboard() -> Self {
-        Self::Action(ActionMsg::CopyToClipboard)
     }
     pub const fn save_to_pictures() -> Self {
         Self::Action(ActionMsg::SaveToPictures)
