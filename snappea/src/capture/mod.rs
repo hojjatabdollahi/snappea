@@ -694,6 +694,11 @@ impl UiState {
         self.font_popup_open = false;
         self.settings_drawer_open = false;
     }
+
+    #[must_use]
+    pub const fn delayed_capture(&self) -> bool {
+        self.capture_delay_secs > 0 && !self.is_video_mode
+    }
 }
 
 #[cfg(test)]

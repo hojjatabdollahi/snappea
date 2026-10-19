@@ -30,6 +30,7 @@ pub fn handle_key_event(
     // Check if OCR/QR have results (pressing O/Q again should copy and close)
     let has_ocr_result = capture.detection.ocr_text.is_some();
     let has_qr_result = !capture.detection.qr_codes.is_empty();
+    let delayed = capture.ui.delayed_capture();
 
     match key {
         // Undo/redo shortcuts
@@ -58,11 +59,13 @@ pub fn handle_key_event(
             Some(Msg::toggle_move_mode())
         }
         // Save/copy shortcuts (always available: empty selection captures all screens)
+        Key::Named(Named::Enter) if modifiers.control() && delayed => Some(Msg::delayed_capture()),
         Key::Named(Named::Enter) if modifiers.control() => Some(Msg::save_to_pictures()),
         Key::Named(Named::Escape) => Some(Msg::cancel_requested()),
         // Space/Enter to confirm selection in picker mode (screen)
         Key::Character(c) if c.as_str() == " " && in_screen_picker => Some(Msg::confirm()),
         Key::Named(Named::Enter) if in_screen_picker => Some(Msg::confirm()),
+        Key::Named(Named::Enter) if delayed => Some(Msg::delayed_capture()),
         // Enter to copy when not in picker mode
         Key::Named(Named::Enter) => Some(Msg::copy_to_clipboard()),
         // Navigation keys in screen picker: h/l and arrows navigate screens

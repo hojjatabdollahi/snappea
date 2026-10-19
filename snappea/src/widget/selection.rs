@@ -228,9 +228,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
 
         // Build menu_element
         let has_selection = choice.has_selection();
-        // Whether the capture button starts a countdown instead of saving. The
-        // recapture drops any annotations, so they do not disarm the delay.
-        let delayed = ui.capture_delay_secs > 0 && !ui.is_video_mode;
+        let delayed = ui.delayed_capture();
 
         let menu_element = build_toolbar(ToolbarMode::Capture(CaptureToolbar {
             choice: choice.clone(),
