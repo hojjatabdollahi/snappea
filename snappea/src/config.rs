@@ -285,8 +285,7 @@ pub struct Config {
     pub video_framerate: u32,
     /// Whether to show cursor in recordings
     pub video_show_cursor: bool,
-    /// Whether a blinking red border marks the recording region. Not in the UI.
-    /// Set `video_region_border` to `false` in the config directory to turn it off.
+    /// Whether a blinking red border marks the recording region.
     #[serde(default = "default_video_region_border")]
     pub video_region_border: bool,
     /// Whether a screenshot includes the pointer. Separate from [`Self::video_show_cursor`].

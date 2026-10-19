@@ -298,6 +298,11 @@ pub fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crat
             crate::config::Config::store("video_show_cursor", capture.ui.video_show_cursor);
             cosmic::Task::none()
         }
+        SettingsMsg::ToggleRegionBorder => {
+            capture.ui.video_region_border = !capture.ui.video_region_border;
+            crate::config::Config::store("video_region_border", capture.ui.video_region_border);
+            cosmic::Task::none()
+        }
         SettingsMsg::ToggleScreenshotCursor => {
             capture.ui.show_cursor = !capture.ui.show_cursor;
             crate::config::Config::store("show_cursor", capture.ui.show_cursor);
@@ -695,8 +700,8 @@ fn start_recording(app: &mut App) -> cosmic::Task<AppMsg> {
         output: output.output.clone(),
         output_size: (output.logical_size.0 as f32, output.logical_size.1 as f32),
         region: local_region,
-        region_border: config.video_region_border,
-        blink_visible: config.video_region_border,
+        region_border: capture.ui.video_region_border,
+        blink_visible: capture.ui.video_region_border,
         annotations: Vec::new(),
         current_stroke: None,
         pointer: None,

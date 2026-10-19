@@ -176,6 +176,7 @@ pub enum SettingsMsg {
     SetVideoContainer(Container),
     SetVideoFramerate(u32),
     ToggleShowCursor,
+    ToggleRegionBorder,
     ToggleScreenshotCursor,
     EncodersDetected(Vec<crate::recording::encoder::EncoderInfo>),
     TimelineTick(window::Id, Instant),
@@ -436,6 +437,9 @@ impl Msg {
     }
     pub const fn toggle_show_cursor() -> Self {
         Self::Settings(SettingsMsg::ToggleShowCursor)
+    }
+    pub const fn toggle_region_border() -> Self {
+        Self::Settings(SettingsMsg::ToggleRegionBorder)
     }
     pub const fn toggle_screenshot_cursor() -> Self {
         Self::Settings(SettingsMsg::ToggleScreenshotCursor)

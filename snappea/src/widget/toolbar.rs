@@ -840,6 +840,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub on_browse_video_custom: Msg,
     pub video_save_location: VideoSaveLocationChoice,
     pub video_show_cursor: bool,
+    pub video_region_border: bool,
     /// Whether a screenshot includes the pointer.
     pub show_cursor: bool,
     pub is_default_portal: bool,
@@ -852,6 +853,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub on_magnifier: Msg,
     pub on_save_clipboard: Msg,
     pub on_show_cursor: Msg,
+    pub on_region_border: Msg,
     pub on_screenshot_cursor: Msg,
     pub on_default_portal: Msg,
     pub on_recognize_qr_codes: Msg,
@@ -874,6 +876,11 @@ fn build_settings_menu<Msg: Clone + 'static>(
             fl!("show-cursor"),
             settings.video_show_cursor,
             settings.on_show_cursor.clone(),
+        ));
+        list = list.push(menu_row(
+            fl!("show-region-border"),
+            settings.video_region_border,
+            settings.on_region_border.clone(),
         ));
         list = list.push(menu_divider());
         list = list.push(menu_row(

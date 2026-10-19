@@ -600,6 +600,8 @@ pub struct UiState {
     pub video_container: Container,
     pub video_framerate: u32,
     pub video_show_cursor: bool,
+    /// Whether a blinking red border marks the recording region.
+    pub video_region_border: bool,
     /// Whether a screenshot includes the pointer.
     pub show_cursor: bool,
     /// Whether video mode is selected (false = screenshot, true = video)
@@ -672,6 +674,7 @@ impl UiState {
             video_container: config.video_container,
             video_framerate: config.video_framerate,
             video_show_cursor: config.video_show_cursor,
+            video_region_border: config.video_region_border,
             show_cursor: config.show_cursor,
             is_video_mode: false,
             is_recording: false,
