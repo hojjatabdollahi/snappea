@@ -245,6 +245,52 @@ struct OverlayState {
     cursor_position: cosmic::iced::core::Point,
 }
 
+const BORDER_WIDTH: f32 = 4.0;
+/// Safety margin against rounding and scaling, so the stroke stays out of the crop.
+/// TODO: this is not needed when cosmic-comp's PR to ignore this UI is merged.
+const BORDER_MARGIN: f32 = 2.0;
+fn border_sides(region: (i32, i32, u32, u32), output: (f32, f32)) -> Vec<(Point, Point)> {
+    let gap = BORDER_WIDTH + BORDER_MARGIN;
+    // The stroke straddles the path, so a side needs half a width to the edge
+    // or its outer half gets clipped away.
+    let inset = BORDER_WIDTH / 2.0;
+    let (x, y, w, h) = region;
+    let left = x as f32 - gap;
+    let top = y as f32 - gap;
+    let right = (x + w as i32) as f32 + gap;
+    let bottom = (y + h as i32) as f32 + gap;
+    // Ends clamped to the output, so a left-out neighbor leaves no dangling end.
+    let clamp_x = |v: f32| v.clamp(0.0, output.0);
+    let clamp_y = |v: f32| v.clamp(0.0, output.1);
+
+    let mut sides = Vec::with_capacity(4);
+    if left >= inset {
+        sides.push((
+            Point::new(left, clamp_y(top)),
+            Point::new(left, clamp_y(bottom)),
+        ));
+    }
+    if right <= output.0 - inset {
+        sides.push((
+            Point::new(right, clamp_y(top)),
+            Point::new(right, clamp_y(bottom)),
+        ));
+    }
+    if top >= inset {
+        sides.push((
+            Point::new(clamp_x(left), top),
+            Point::new(clamp_x(right), top),
+        ));
+    }
+    if bottom <= output.1 - inset {
+        sides.push((
+            Point::new(clamp_x(left), bottom),
+            Point::new(clamp_x(right), bottom),
+        ));
+    }
+    sides
+}
+
 /// Canvas for the recording chrome surface: draws the blinking region border and
 /// carries the toolbar drag.
 struct ChromeOverlay {
@@ -307,39 +353,26 @@ impl cosmic::iced::widget::canvas::Program<AppMsg, cosmic::Theme, cosmic::Render
         bounds: cosmic::iced::core::Rectangle,
         _cursor: cosmic::iced::core::mouse::Cursor,
     ) -> Vec<cosmic::iced::widget::canvas::Geometry> {
-        use cosmic::iced::widget::canvas::{self, Path, Stroke};
+        use cosmic::iced::widget::canvas::{self, LineCap, Path, Stroke};
 
         let mut frame = canvas::Frame::new(renderer, bounds.size());
 
-        // The border sits just outside the region, clamped inside the output at its edges.
+        // The border sits just outside the region. Sides on the output's edge are left out.
         if self.border_visible {
-            let border_width = 4.0;
-            // Add safety margin to account for rounding/scaling errors
-            let margin = 2.0;
-            // The stroke straddles the path, so keep the path half a width inside
-            // the canvas or the outer half gets clipped away.
-            let inset = border_width / 2.0;
-
-            let left = (self.region.0 as f32 - border_width - margin).max(inset);
-            let top = (self.region.1 as f32 - border_width - margin).max(inset);
-            let right = ((self.region.0 + self.region.2 as i32) as f32 + border_width + margin)
-                .min(bounds.width - inset);
-            let bottom = ((self.region.1 + self.region.3 as i32) as f32 + border_width + margin)
-                .min(bounds.height - inset);
-
-            if right > left && bottom > top {
-                let path = Path::rectangle(
-                    cosmic::iced::core::Point::new(left, top),
-                    cosmic::iced::core::Size::new(right - left, bottom - top),
-                );
-
-                frame.stroke(
-                    &path,
-                    Stroke::default()
-                        .with_color(cosmic::iced::core::Color::from_rgb(1.0, 0.0, 0.0))
-                        .with_width(border_width),
-                );
-            }
+            let path = Path::new(|b| {
+                for (from, to) in border_sides(self.region, (bounds.width, bounds.height)) {
+                    b.move_to(from);
+                    b.line_to(to);
+                }
+            });
+            frame.stroke(
+                &path,
+                Stroke::default()
+                    .with_color(cosmic::iced::core::Color::from_rgb(1.0, 0.0, 0.0))
+                    .with_width(BORDER_WIDTH)
+                    // Square caps fill the corner where two sides meet.
+                    .with_line_cap(LineCap::Square),
+            );
         }
 
         vec![frame.into_geometry()]
