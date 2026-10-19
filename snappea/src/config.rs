@@ -275,7 +275,7 @@ pub struct Config {
     #[serde(default = "default_magnifier_magnification")]
     pub magnifier_magnification: f32,
     /// Delay in seconds for the "delayed screenshot" toolbar button
-    #[serde(default = "default_capture_delay_secs")]
+    #[serde(default)]
     pub capture_delay_secs: u32,
     /// Video encoder to use (None = auto-detect hardware encoder)
     pub video_encoder: Option<String>,
@@ -320,10 +320,6 @@ const fn default_video_region_border() -> bool {
 
 const fn default_highlighter_thickness() -> f32 {
     12.0
-}
-
-const fn default_capture_delay_secs() -> u32 {
-    3
 }
 
 const fn default_pencil_color() -> AnnotateColor {
@@ -450,7 +446,7 @@ impl Default for Config {
             pixelation_block_size: 16,
             recognize_qr_codes: default_recognize_qr_codes(),
             magnifier_magnification: default_magnifier_magnification(),
-            capture_delay_secs: default_capture_delay_secs(),
+            capture_delay_secs: 0,
             video_encoder: None,
             video_container: Container::Mp4,
             video_framerate: 60,
