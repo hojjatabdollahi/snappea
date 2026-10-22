@@ -841,6 +841,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub video_save_location: VideoSaveLocationChoice,
     pub video_show_cursor: bool,
     pub video_region_border: bool,
+    pub video_system_audio: bool,
     /// Whether a screenshot includes the pointer.
     pub show_cursor: bool,
     pub is_default_portal: bool,
@@ -854,6 +855,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub on_save_clipboard: Msg,
     pub on_show_cursor: Msg,
     pub on_region_border: Msg,
+    pub on_system_audio: Msg,
     pub on_screenshot_cursor: Msg,
     pub on_default_portal: Msg,
     pub on_recognize_qr_codes: Msg,
@@ -882,6 +884,12 @@ fn build_settings_menu<Msg: Clone + 'static>(
             settings.video_region_border,
             settings.on_region_border.clone(),
         ));
+        list = list.push(menu_row(
+            fl!("system-audio"),
+            settings.video_system_audio,
+            settings.on_system_audio.clone(),
+        ));
+
         list = list.push(menu_divider());
         list = list.push(menu_row(
             fl!("save-to-videos"),

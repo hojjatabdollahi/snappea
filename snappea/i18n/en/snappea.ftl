@@ -66,6 +66,7 @@ delay-seconds = { $secs } seconds
 selection-edge-magnification = Selection edge magnification
 show-cursor = Show cursor
 show-region-border = Show region border
+system-audio= System audio
 recognize-qr-codes = Recognize QR codes
 default-screenshot-app = Default screenshot app
 save-to-clipboard = Save to clipboard

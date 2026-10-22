@@ -135,11 +135,13 @@ fn record(args: &[String]) -> cosmic::iced::Result {
     let mut framerate = 60;
     let mut toplevel_index: Option<usize> = None;
     let mut show_cursor = false;
+    let mut system_audio = false;
 
     let mut rest = args.iter();
     while let Some(flag) = rest.next() {
         match flag.as_str() {
             "--show-cursor" => show_cursor = true,
+            "--system_audio" => system_audio = true,
             "--output" => output_file = rest.next().map(std::path::PathBuf::from),
             "--output-name" => output_name = rest.next().cloned(),
             "--region" => {
@@ -192,6 +194,7 @@ fn record(args: &[String]) -> cosmic::iced::Result {
         framerate,
         toplevel_index,
         show_cursor,
+        system_audio,
     ) {
         log::error!("Recording failed: {e}");
         std::process::exit(1);

@@ -174,6 +174,7 @@ pub fn start_recording(
     framerate: u32,
     toplevel_index: Option<usize>,
     show_cursor: bool,
+    system_audio: bool,
 ) -> Result<()> {
     setup_signal_handler();
 
@@ -505,6 +506,7 @@ pub fn record(
     container: crate::config::Container,
     framerate: u32,
     show_cursor: bool,
+    system_audio: bool,
     stop: &AtomicBool,
 ) -> Result<()> {
     let is_toplevel = matches!(capture_source, CaptureSource::Toplevel(_));
@@ -527,6 +529,7 @@ pub fn record(
     }
 
     log::info!("Cursor visibility in recording: {show_cursor}");
+    log::info!("System audio in recording: {system_audio}");
 
     let session = wayland_helper.capture_source_session(capture_source, show_cursor);
 
@@ -678,7 +681,7 @@ pub fn record(
             framerate,
             *import,
             *modifier,
-            true, //TODO
+            system_audio,
         ) {
             Ok(p) => pipeline = Some(p),
             Err(err) => log::warn!(
@@ -699,7 +702,7 @@ pub fn record(
             buffer_height,
             crop,
             framerate,
-            true, //TODO
+            system_audio,
         )
         .context("Failed to create GStreamer pipeline")?,
     };
