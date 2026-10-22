@@ -219,6 +219,7 @@ pub fn start_recording(
         container,
         framerate,
         show_cursor,
+        system_audio,
         &STOP_REQUESTED,
     )
 }

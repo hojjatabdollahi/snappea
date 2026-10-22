@@ -471,6 +471,11 @@ fn ffmpeg_args(req: &Request, tmp: &Path) -> Vec<OsString> {
             if !filters.is_empty() {
                 push(&["-filter:v", &filters.join(",")]);
             }
+            if speed_changed {
+                //TODO
+            }
+            // Opus works with our current supported containers
+            push(&["-c:a", "libopus"]);
             push(&["-c:v", encoder.kind.ffmpeg_name()]);
             args.extend(
                 encoder
@@ -479,7 +484,6 @@ fn ffmpeg_args(req: &Request, tmp: &Path) -> Vec<OsString> {
                     .into_iter()
                     .map(OsString::from),
             );
-            args.push("-an".into());
         }
     }
 
