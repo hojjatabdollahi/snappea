@@ -415,6 +415,18 @@ pub struct Request {
     pub gifski: bool,
 }
 
+/// The `atempo` filter for `speed`. One stage only goes down to 0.5, so slower speeds chain halvings.
+fn atempo(mut speed: f64) -> String {
+    assert!(speed > 0.0, "speed must be positive");
+    let mut stages = Vec::new();
+    while speed < 0.5 {
+        stages.push("atempo=0.5".to_owned());
+        speed /= 0.5;
+    }
+    stages.push(format!("atempo={speed}"));
+    stages.join(",")
+}
+
 /// Builds the ffmpeg command line for `req`, writing to `tmp` (or stdout for gifski).
 fn ffmpeg_args(req: &Request, tmp: &Path) -> Vec<OsString> {
     let speed_changed = (req.speed - 1.0).abs() >= 0.001;
@@ -472,7 +484,7 @@ fn ffmpeg_args(req: &Request, tmp: &Path) -> Vec<OsString> {
                 push(&["-filter:v", &filters.join(",")]);
             }
             if speed_changed {
-                //TODO
+                push(&["-filter:a", &atempo(req.speed)]);
             }
             // Opus works with our current supported containers
             push(&["-c:a", "libopus"]);
