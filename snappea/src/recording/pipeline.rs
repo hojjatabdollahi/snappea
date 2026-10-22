@@ -241,6 +241,27 @@ fn make_muxer(container: Container) -> Result<gst::Element> {
     }
     Ok(muxer)
 }
+/// Capture the default output's monitor from PulseAudio
+fn add_system_audio(pipeline: &gst::Pipeline, muxer: &gst::Element) -> Result<gst::Element> {
+    let build = |name: &str| {
+        gst::ElementFactory::make(name)
+            .build()
+            .with_context(|| format!("Failed to create {name} element"))
+    };
+    // Frames are stamped with wall-clock time, so keep audio on the same
+    pipeline.use_clock(Some(&gst::SystemClock::obtain()));
+    let audio_src = gst::ElementFactory::make("pulsesrc")
+        .property("device", "@DEFAULT_MONITOR@")
+        .build()
+        .context("Failed to create pulsesrc element")?;
+    let convert = build("audioconvert")?;
+    let resample = build("audioresample")?;
+    let encoder = build("opusenc")?;
+    let queue = build("queue")?;
+    pipeline.add_many([&audio_src, &convert, &resample, &encoder, &queue])?;
+    gst::Element::link_many([&audio_src, &convert, &resample, &encoder, &queue, muxer])?;
+    Ok(audio_src)
+}
 
 /// The VA encoders in `GStreamer` 1.24 ignore the timestamps they are given and
 /// stamp output as `frame index / framerate`, on a timeline they shift by a
@@ -302,6 +323,7 @@ pub struct Pipeline {
     zero_copy: Option<(gst_allocators::DmaBufAllocator, gst_video::VideoFormat)>,
     /// `(x, y, w, h)` attached to every DMA-BUF frame. `vapostproc` crops to it.
     crop_meta: Option<(u32, u32, u32, u32)>,
+    audio_src: Option<gst::Element>,
 }
 
 /// Wrap a DMA-BUF as a `GstBuffer` described as `format`, without copying.
@@ -509,6 +531,7 @@ impl Pipeline {
         capture_height: u32,
         crop: Option<CropRegion>,
         framerate: u32,
+        system_audio: bool,
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
@@ -599,6 +622,10 @@ impl Pipeline {
         pipeline.add_many(chain.iter().copied())?;
         gst::Element::link_many(chain.iter().copied())?;
 
+        let audio_src = system_audio
+            .then(|| add_system_audio(&pipeline, &muxer))
+            .transpose()?;
+
         // Configure appsrc caps (raw RGBA video at capture size)
         let caps = gst::Caps::builder("video/x-raw")
             .field("format", "RGBA")
@@ -614,6 +641,7 @@ impl Pipeline {
             output_path: output_path.to_path_buf(),
             zero_copy: None,
             crop_meta: None,
+            audio_src,
         })
     }
 
@@ -629,6 +657,7 @@ impl Pipeline {
         framerate: u32,
         import_fourcc: DrmFourcc,
         modifier: DrmModifier,
+        system_audio: bool,
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
@@ -771,12 +800,17 @@ impl Pipeline {
         }
         muxer.link(&filesink)?;
 
+        let audio_src = system_audio
+            .then(|| add_system_audio(&pipeline, &muxer))
+            .transpose()?;
+
         Ok(Self {
             pipeline,
             appsrc,
             output_path: output_path.to_path_buf(),
             zero_copy: Some((dmabuf_allocator, video_format)),
             crop_meta,
+            audio_src,
         })
     }
 
@@ -818,6 +852,10 @@ impl Pipeline {
         self.appsrc
             .end_of_stream()
             .map_err(|_| anyhow::anyhow!("Failed to send EOS"))?;
+
+        if let Some(src) = &self.audio_src {
+            src.send_event(gst::event::Eos::new());
+        }
 
         // Wait for EOS to propagate through pipeline (30 seconds for long recordings)
         log::info!("Waiting for pipeline to finish (up to 30 seconds)...");

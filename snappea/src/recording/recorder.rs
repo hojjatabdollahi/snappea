@@ -677,6 +677,7 @@ pub fn record(
             framerate,
             *import,
             *modifier,
+            true, //TODO
         ) {
             Ok(p) => pipeline = Some(p),
             Err(err) => log::warn!(
@@ -697,6 +698,7 @@ pub fn record(
             buffer_height,
             crop,
             framerate,
+            true, //TODO
         )
         .context("Failed to create GStreamer pipeline")?,
     };
