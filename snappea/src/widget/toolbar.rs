@@ -1477,6 +1477,8 @@ pub struct RecordingToolbar<'a, Msg> {
     pub fade_popup_open: bool,
     pub thickness: f32,
     pub thickness_popup_open: bool,
+    pub audio_muted: Option<bool>,
+    pub on_mute_toggle: Msg,
     pub on_drag_start: Msg,
     pub on_drag_end: Msg,
     /// Harmless action for the outgoing controls during their brief exit.
@@ -1895,7 +1897,35 @@ fn recording_sections<'a, Msg: Clone + 'static>(t: RecordingToolbar<'a, Msg>) ->
             transition,
         )),
         pen_settings: pen_settings.map(|settings| (settings, 1.0)),
-        elapsed: Some((elapsed_face(t.elapsed), transition)),
+        elapsed: Some((
+            match t.audio_muted {
+                Some(muted) => row![
+                    elapsed_face(t.elapsed),
+                    tool_button(
+                        toolbar_icon(
+                            if muted {
+                                "audio-volume-muted-symbolic"
+                            } else {
+                                "audio-volume-high-symbolic"
+                            },
+                            ICON_PX,
+                        ),
+                        muted,
+                        Some(t.on_mute_toggle),
+                        if muted {
+                            fl!("unmute-audio")
+                        } else {
+                            fl!("mute-audio")
+                        },
+                    ),
+                ]
+                .spacing(BTN_GAP)
+                .align_y(cosmic::iced::core::Alignment::Center)
+                .into(),
+                None => elapsed_face(t.elapsed),
+            },
+            transition,
+        )),
         // Video mode has no delay either.
         delay: (delay_label(0), h.departing(h.outgoing.delay)),
         capture: btn_stop,

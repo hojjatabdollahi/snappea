@@ -25,6 +25,8 @@ cancel-escape = Cancel (Escape)
 record-selection = Record selection (Shift+R)
 record-disabled = Disabled: select a region or screen first
 stop-recording = Stop Recording
+mute-audio = Mute audio
+unmute-audio = Unmute audio
 fade-duration = Fade: { $duration }s
 
 # OCR tooltips

@@ -89,6 +89,8 @@ pub struct RecordingIndicator {
     pub drag_offset: Option<(f32, f32)>,
     pub fade_popup_open: bool,
     pub thickness_popup_open: bool,
+    /// Whether the audio is muted. `None` for a recording with no audio.
+    pub audio_muted: Option<bool>,
 }
 
 impl RecordingIndicator {
@@ -634,6 +636,8 @@ pub fn render_recording_chrome(indicator: &RecordingIndicator) -> cosmic::Elemen
         fade_popup_open: indicator.fade_popup_open,
         thickness: indicator.pencil_thickness,
         thickness_popup_open: indicator.thickness_popup_open,
+        audio_muted: indicator.audio_muted,
+        on_mute_toggle: AppMsg::Recording(Msg::ToggleMute),
         on_drag_start: AppMsg::Recording(Msg::ToolbarDragStart),
         on_drag_end: AppMsg::Recording(Msg::ToolbarDragEnd),
         on_transition_noop: AppMsg::Ignore,
@@ -688,6 +692,7 @@ pub enum Msg {
     ToolbarDragMove(f32, f32),
     ToolbarDragEnd,
     ToolbarMeasured(f32, f32),
+    ToggleMute,
 }
 
 impl RecordingIndicator {
@@ -696,6 +701,12 @@ impl RecordingIndicator {
         match msg {
             Msg::Blink => {
                 self.blink_visible = self.region_border && !self.blink_visible;
+                Task::none()
+            }
+            Msg::ToggleMute => {
+                if let Some(muted) = super::state::toggle_audio_mute() {
+                    self.audio_muted = Some(muted);
+                }
                 Task::none()
             }
             Msg::ToolbarFrame(now) => {

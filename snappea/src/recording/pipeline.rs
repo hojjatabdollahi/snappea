@@ -275,10 +275,13 @@ fn add_audio(
     }
     let convert = build("audioconvert")?;
     let resample = build("audioresample")?;
+    let volume = build("volume")?;
     let encoder = build("opusenc")?;
     let queue = build("queue")?;
-    pipeline.add_many([&convert, &resample, &encoder, &queue])?;
-    gst::Element::link_many([&mix, &convert, &resample, &encoder, &queue, muxer])?;
+    pipeline.add_many([&convert, &resample, &volume, &encoder, &queue])?;
+    gst::Element::link_many([&mix, &convert, &resample, &volume, &encoder, &queue, muxer])?;
+    // Muting sets the volume, so we stay in sync.
+    super::state::set_audio_volume(Some(volume));
     Ok(sources)
 }
 
@@ -863,6 +866,7 @@ impl Pipeline {
 
     /// Signal end of stream and finalize the video file
     pub fn finish(&self) -> Result<()> {
+        super::state::set_audio_volume(None);
         log::info!("Sending EOS signal to pipeline...");
         self.appsrc
             .end_of_stream()

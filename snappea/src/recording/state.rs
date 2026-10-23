@@ -4,6 +4,8 @@
 
 use crate::fl;
 use anyhow::Result;
+use gstreamer as gst;
+use gstreamer::prelude::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -11,6 +13,21 @@ use std::thread::JoinHandle;
 
 /// Global recording handle: only one recording can be active at a time
 static RECORDING_HANDLE: Mutex<Option<RecordingHandle>> = Mutex::new(None);
+
+/// The active recording's `volume` element, muted through its `mute` property. `None` means we're
+/// not recording audio to begin with.
+static AUDIO_VOLUME: Mutex<Option<gst::Element>> = Mutex::new(None);
+
+pub fn set_audio_volume(volume: Option<gst::Element>) {
+    *AUDIO_VOLUME.lock().unwrap() = volume;
+}
+
+pub fn toggle_audio_mute() -> Option<bool> {
+    let volume = AUDIO_VOLUME.lock().unwrap().clone()?;
+    let muted = !volume.property::<bool>("mute");
+    volume.set_property("mute", muted);
+    Some(muted)
+}
 
 /// Handle to control an active recording
 pub struct RecordingHandle {

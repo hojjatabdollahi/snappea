@@ -737,6 +737,8 @@ fn start_recording(app: &mut App) -> cosmic::Task<AppMsg> {
         drag_offset: None,
         fade_popup_open: false,
         thickness_popup_open: false,
+        audio_muted: (capture.ui.video_microphone || capture.ui.video_system_audio)
+            .then_some(false),
     };
 
     if let Some(capture) = app.capture.as_mut() {
