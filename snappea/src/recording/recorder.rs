@@ -532,7 +532,14 @@ pub fn record(
     }
 
     log::info!("Cursor visibility in recording: {show_cursor}");
-    log::info!("Audio recording: {system_audio:?}, {microphone:?}");
+    let audio_devices: Vec<&str> = [
+        (microphone, "@DEFAULT_SOURCE@"),
+        (system_audio, "@DEFAULT_MONITOR@"),
+    ]
+    .into_iter()
+    .filter_map(|(on, device)| on.then_some(device))
+    .collect();
+    log::info!("Audio in recording: {audio_devices:?}");
 
     let session = wayland_helper.capture_source_session(capture_source, show_cursor);
 
@@ -684,8 +691,7 @@ pub fn record(
             framerate,
             *import,
             *modifier,
-            system_audio,
-            microphone,
+            &audio_devices,
         ) {
             Ok(p) => pipeline = Some(p),
             Err(err) => log::warn!(
@@ -706,8 +712,7 @@ pub fn record(
             buffer_height,
             crop,
             framerate,
-            system_audio,
-            microphone,
+            &audio_devices,
         )
         .context("Failed to create GStreamer pipeline")?,
     };

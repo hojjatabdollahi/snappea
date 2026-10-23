@@ -241,26 +241,45 @@ fn make_muxer(container: Container) -> Result<gst::Element> {
     }
     Ok(muxer)
 }
-/// Capture the default output's monitor from PulseAudio
-fn add_system_audio(pipeline: &gst::Pipeline, muxer: &gst::Element) -> Result<gst::Element> {
+
+/// Capture each PulseAudio device, mixed into one Opus track on `muxer`
+fn add_audio(
+    pipeline: &gst::Pipeline,
+    muxer: &gst::Element,
+    devices: &[&str],
+) -> Result<Vec<gst::Element>> {
+    if devices.is_empty() {
+        return Ok(Vec::new());
+    }
     let build = |name: &str| {
         gst::ElementFactory::make(name)
             .build()
             .with_context(|| format!("Failed to create {name} element"))
     };
-    // Frames are stamped with wall-clock time, so keep audio on the same
+    // Frames are stamped with wall-clock time, so keep audio on the same clock.
     pipeline.use_clock(Some(&gst::SystemClock::obtain()));
-    let audio_src = gst::ElementFactory::make("pulsesrc")
-        .property("device", "@DEFAULT_MONITOR@")
-        .build()
-        .context("Failed to create pulsesrc element")?;
+    let mix = build("audiomixer")?;
+    pipeline.add(&mix)?;
+    let mut sources = Vec::new();
+    for device in devices {
+        let src = gst::ElementFactory::make("pulsesrc")
+            .property("device", *device)
+            .build()
+            .context("Failed to create pulsesrc element")?;
+        // Each input in the mixer's format before it is summed.
+        let convert = build("audioconvert")?;
+        let resample = build("audioresample")?;
+        pipeline.add_many([&src, &convert, &resample])?;
+        gst::Element::link_many([&src, &convert, &resample, &mix])?;
+        sources.push(src);
+    }
     let convert = build("audioconvert")?;
     let resample = build("audioresample")?;
     let encoder = build("opusenc")?;
     let queue = build("queue")?;
-    pipeline.add_many([&audio_src, &convert, &resample, &encoder, &queue])?;
-    gst::Element::link_many([&audio_src, &convert, &resample, &encoder, &queue, muxer])?;
-    Ok(audio_src)
+    pipeline.add_many([&convert, &resample, &encoder, &queue])?;
+    gst::Element::link_many([&mix, &convert, &resample, &encoder, &queue, muxer])?;
+    Ok(sources)
 }
 
 /// The VA encoders in `GStreamer` 1.24 ignore the timestamps they are given and
@@ -323,7 +342,7 @@ pub struct Pipeline {
     zero_copy: Option<(gst_allocators::DmaBufAllocator, gst_video::VideoFormat)>,
     /// `(x, y, w, h)` attached to every DMA-BUF frame. `vapostproc` crops to it.
     crop_meta: Option<(u32, u32, u32, u32)>,
-    audio_src: Option<gst::Element>,
+    audio_src: Vec<gst::Element>,
 }
 
 /// Wrap a DMA-BUF as a `GstBuffer` described as `format`, without copying.
@@ -531,8 +550,7 @@ impl Pipeline {
         capture_height: u32,
         crop: Option<CropRegion>,
         framerate: u32,
-        system_audio: bool,
-        microphone: bool,
+        audio_devices: &[&str],
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
@@ -623,9 +641,7 @@ impl Pipeline {
         pipeline.add_many(chain.iter().copied())?;
         gst::Element::link_many(chain.iter().copied())?;
 
-        let audio_src = system_audio
-            .then(|| add_system_audio(&pipeline, &muxer))
-            .transpose()?;
+        let audio_src = add_audio(&pipeline, &muxer, audio_devices)?;
 
         // Configure appsrc caps (raw RGBA video at capture size)
         let caps = gst::Caps::builder("video/x-raw")
@@ -658,8 +674,7 @@ impl Pipeline {
         framerate: u32,
         import_fourcc: DrmFourcc,
         modifier: DrmModifier,
-        system_audio: bool,
-        microphone: bool,
+        audio_devices: &[&str],
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
@@ -802,9 +817,7 @@ impl Pipeline {
         }
         muxer.link(&filesink)?;
 
-        let audio_src = system_audio
-            .then(|| add_system_audio(&pipeline, &muxer))
-            .transpose()?;
+        let audio_src = add_audio(&pipeline, &muxer, audio_devices)?;
 
         Ok(Self {
             pipeline,
@@ -855,7 +868,7 @@ impl Pipeline {
             .end_of_stream()
             .map_err(|_| anyhow::anyhow!("Failed to send EOS"))?;
 
-        if let Some(src) = &self.audio_src {
+        for src in &self.audio_src {
             src.send_event(gst::event::Eos::new());
         }
 
