@@ -269,8 +269,25 @@ fn add_audio(
         // Each input in the mixer's format before it is summed.
         let convert = build("audioconvert")?;
         let resample = build("audioresample")?;
-        pipeline.add_many([&src, &convert, &resample])?;
-        gst::Element::link_many([&src, &convert, &resample, &mix])?;
+        // Float samples, so the start fade can scale them in place.
+        let caps = gst::ElementFactory::make("capsfilter")
+            .property(
+                "caps",
+                gst::Caps::builder("audio/x-raw")
+                    .field("format", "F32LE")
+                    .build(),
+            )
+            .build()
+            .context("Failed to create capsfilter element")?;
+        pipeline.add_many([&src, &convert, &resample, &caps])?;
+        gst::Element::link_many([&src, &convert, &resample, &caps, &mix])?;
+        if *device == "@DEFAULT_SOURCE@" {
+            soften_mic_start(
+                &caps
+                    .static_pad("src")
+                    .context("capsfilter has no src pad")?,
+            );
+        }
         sources.push(src);
     }
     let convert = build("audioconvert")?;
@@ -295,6 +312,51 @@ fn add_audio(
         .context("pipeline has no bus")?
         .set_sync_handler(level_to_gauge);
     Ok(sources)
+}
+
+/// The microphone's first samples after the device wakes up create a pop
+fn soften_mic_start(pad: &gst::Pad) {
+    let first_pts: std::sync::Mutex<Option<gst::ClockTime>> = std::sync::Mutex::new(None);
+    pad.add_probe(gst::PadProbeType::BUFFER, move |_, info| {
+        let Some(gst::PadProbeData::Buffer(buffer)) = &mut info.data else {
+            return gst::PadProbeReturn::Ok;
+        };
+        let Some(pts) = buffer.pts() else {
+            return gst::PadProbeReturn::Ok;
+        };
+        let t0 = *first_pts.lock().unwrap().get_or_insert(pts);
+        let duration = buffer.duration().unwrap_or(gst::ClockTime::ZERO);
+        let start = mic_start_gain(pts.saturating_sub(t0));
+        let end = mic_start_gain((pts + duration).saturating_sub(t0));
+        if end <= 0.0 {
+            return gst::PadProbeReturn::Drop;
+        }
+        if start >= 1.0 {
+            // Faded in; stop touching buffers.
+            return gst::PadProbeReturn::Remove;
+        }
+        let buffer = buffer.make_mut();
+        let Ok(mut map) = buffer.map_writable() else {
+            return gst::PadProbeReturn::Ok;
+        };
+        let data = map.as_mut_slice();
+        let n = (data.len() / 4) as f32;
+        for (i, sample) in data.chunks_exact_mut(4).enumerate() {
+            let gain = start + (end - start) * i as f32 / n;
+            let v = f32::from_le_bytes([sample[0], sample[1], sample[2], sample[3]]) * gain;
+            sample.copy_from_slice(&v.to_le_bytes());
+        }
+        gst::PadProbeReturn::Ok
+    });
+}
+
+const MIC_START_DROP: gst::ClockTime = gst::ClockTime::from_mseconds(50);
+const MIC_START_FADE: gst::ClockTime = gst::ClockTime::from_mseconds(600);
+
+/// Gain for the microphone `t` after its first sample
+fn mic_start_gain(t: gst::ClockTime) -> f32 {
+    ((t.nseconds() as f32 - MIC_START_DROP.nseconds() as f32) / MIC_START_FADE.nseconds() as f32)
+        .clamp(0.0, 1.0)
 }
 
 /// Bus handler sending `level` readings to the gauge

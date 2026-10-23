@@ -298,7 +298,10 @@ impl Application for Editor {
             gifski: export::gifski_available(),
         };
         editor.encoder = editor.default_encoder(editor.format);
-        (editor, Task::batch([title_task, colors_task, probe_task]))
+        (
+            editor,
+            Task::batch([title_task, colors_task, probe_task]),
+        )
     }
 
     fn update(&mut self, message: Self::Message) -> Task<Self::Message> {
