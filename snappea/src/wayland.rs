@@ -200,7 +200,11 @@ impl WaylandHelper {
 
         thread::spawn(move || {
             loop {
-                event_queue.blocking_dispatch(&mut data).unwrap();
+                if let Err(err) = event_queue.blocking_dispatch(&mut data) {
+                    // Nothing works without the connection
+                    log::error!("Wayland connection lost: {err}");
+                    std::process::exit(1);
+                }
             }
         });
 
