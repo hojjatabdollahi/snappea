@@ -256,19 +256,25 @@ pub fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crat
         // Choosing a folder also selects it. A cancelled dialog changes nothing.
         SettingsMsg::BrowseSaveLocationResult(path) => {
             if let Some(path) = path {
-                capture.ui.custom_save_path = path.clone();
-                capture.ui.save_location_setting = SaveLocationChoice::Custom;
-                Config::store("custom_save_path", path);
-                Config::store("save_location", SaveLocationChoice::Custom);
+                let choice = SaveLocationChoice::for_path(&path);
+                if choice == SaveLocationChoice::Custom {
+                    capture.ui.custom_save_path = path.clone();
+                    Config::store("custom_save_path", path);
+                }
+                capture.ui.save_location_setting = choice;
+                Config::store("save_location", choice);
             }
             app.open_overlay()
         }
         SettingsMsg::BrowseVideoSaveLocationResult(path) => {
             if let Some(path) = path {
-                capture.ui.video_custom_save_path = path.clone();
-                capture.ui.video_save_location_setting = VideoSaveLocationChoice::Custom;
-                Config::store("video_custom_save_path", path);
-                Config::store("video_save_location", VideoSaveLocationChoice::Custom);
+                let choice = VideoSaveLocationChoice::for_path(&path);
+                if choice == VideoSaveLocationChoice::Custom {
+                    capture.ui.video_custom_save_path = path.clone();
+                    Config::store("video_custom_save_path", path);
+                }
+                capture.ui.video_save_location_setting = choice;
+                Config::store("video_save_location", choice);
             }
             app.open_overlay()
         }
@@ -759,9 +765,8 @@ fn recording_dir(config: &Config) -> Option<std::path::PathBuf> {
         VideoSaveLocationChoice::Custom if !config.video_custom_save_path.is_empty() => {
             std::path::PathBuf::from(&config.video_custom_save_path)
         }
-        _ => dirs::video_dir()
-            .or_else(|| dirs::home_dir().map(|h| h.join("Videos")))
-            .unwrap_or_else(|| std::path::PathBuf::from(".")),
+        // An empty custom folder falls back to the default
+        other => other.dir().unwrap_or_else(crate::config::screencasts_dir),
     };
     if let Err(e) = std::fs::create_dir_all(&dir) {
         log::error!("Failed to create output directory '{}': {e}", dir.display());

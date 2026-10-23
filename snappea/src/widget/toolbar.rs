@@ -863,9 +863,9 @@ pub struct SettingsMenu<'a, Msg> {
     pub on_recognize_qr_codes: Msg,
     pub on_save_pictures: Msg,
     pub on_save_documents: Msg,
+    pub on_save_screenshots: Msg,
     pub on_save_custom: Msg,
-    pub on_save_videos: Msg,
-    pub on_save_video_custom: Msg,
+    pub on_video_location: Box<dyn Fn(VideoSaveLocationChoice) -> Msg + 'a>,
 }
 
 /// Build the settings menu contents for the current capture mode.
@@ -898,15 +898,24 @@ fn build_settings_menu<Msg: Clone + 'static>(
         ));
 
         list = list.push(menu_divider());
-        list = list.push(menu_row(
-            fl!("save-to-videos"),
-            settings.video_save_location == VideoSaveLocationChoice::Videos,
-            settings.on_save_videos.clone(),
-        ));
+        for (label, choice) in [
+            (
+                fl!("save-to-screencasts"),
+                VideoSaveLocationChoice::Screencasts,
+            ),
+            (fl!("save-to-videos"), VideoSaveLocationChoice::Videos),
+            (fl!("save-to-documents"), VideoSaveLocationChoice::Documents),
+        ] {
+            list = list.push(menu_row(
+                label,
+                settings.video_save_location == choice,
+                (settings.on_video_location)(choice),
+            ));
+        }
         for row in custom_folder_rows(
             settings.video_custom_save_path,
             settings.video_save_location == VideoSaveLocationChoice::Custom,
-            settings.on_save_video_custom.clone(),
+            (settings.on_video_location)(VideoSaveLocationChoice::Custom),
             settings.on_browse_video_custom.clone(),
         ) {
             list = list.push(row);
@@ -938,16 +947,29 @@ fn build_settings_menu<Msg: Clone + 'static>(
             settings.save_location == SaveLocationChoice::Clipboard,
             settings.on_save_clipboard.clone(),
         ));
-        list = list.push(menu_row(
-            fl!("save-to-pictures"),
-            settings.save_location == SaveLocationChoice::Pictures,
-            settings.on_save_pictures.clone(),
-        ));
-        list = list.push(menu_row(
-            fl!("save-to-documents"),
-            settings.save_location == SaveLocationChoice::Documents,
-            settings.on_save_documents.clone(),
-        ));
+        for (label, choice, on_press) in [
+            (
+                fl!("save-to-screenshots"),
+                SaveLocationChoice::Screenshots,
+                &settings.on_save_screenshots,
+            ),
+            (
+                fl!("save-to-pictures"),
+                SaveLocationChoice::Pictures,
+                &settings.on_save_pictures,
+            ),
+            (
+                fl!("save-to-documents"),
+                SaveLocationChoice::Documents,
+                &settings.on_save_documents,
+            ),
+        ] {
+            list = list.push(menu_row(
+                label,
+                settings.save_location == choice,
+                on_press.clone(),
+            ));
+        }
         for row in custom_folder_rows(
             settings.custom_save_path,
             settings.save_location == SaveLocationChoice::Custom,

@@ -470,10 +470,10 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                     on_save_clipboard: Msg::set_save_location_clipboard(),
                     on_save_pictures: Msg::set_save_location_pictures(),
                     on_save_documents: Msg::set_save_location_documents(),
+                    on_save_screenshots: Msg::set_save_location_screenshots(),
                     on_save_custom: Msg::set_save_location_custom(),
                     on_browse_custom: Msg::browse_save_location(),
-                    on_save_videos: Msg::set_video_save_location_videos(),
-                    on_save_video_custom: Msg::set_video_save_location_custom(),
+                    on_video_location: Box::new(Msg::set_video_save_location),
                     on_browse_video_custom: Msg::browse_video_save_location(),
                 }
             },

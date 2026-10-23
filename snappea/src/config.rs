@@ -6,6 +6,7 @@ use crate::fl;
 use crate::geometry::{Choice, Rect};
 use cosmic::cosmic_config::{self, CosmicConfigEntry, cosmic_config_derive::CosmicConfigEntry};
 use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use viewer_tools::annotate::{AnnotateColor, ShapeKind};
 
 /// Starting stroke thickness for shapes, in logical units.
@@ -18,18 +19,103 @@ pub const TEXT_SIZE_DEFAULT: f32 = 24.0;
 pub enum SaveLocationChoice {
     /// The clipboard and no file. Every folder choice also copies to the clipboard.
     Clipboard,
+    /// [`screenshots_dir`].
     #[default]
+    Screenshots,
     Pictures,
     Documents,
     Custom,
 }
 
+impl SaveLocationChoice {
+    /// The folder a named choice saves to. `None` for the clipboard and custom.
+    #[must_use]
+    pub fn dir(self) -> Option<PathBuf> {
+        match self {
+            Self::Pictures => {
+                dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
+            }
+            Self::Documents => {
+                dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")))
+            }
+            Self::Screenshots => Some(screenshots_dir()),
+            Self::Clipboard | Self::Custom => None,
+        }
+    }
+
+    /// The named choice whose folder is `path`, else custom, so a browsed
+    /// folder that already has a row selects that row.
+    #[must_use]
+    pub fn for_path(path: &str) -> Self {
+        [Self::Screenshots, Self::Pictures, Self::Documents]
+            .into_iter()
+            .find(|c| c.dir().is_some_and(|d| d == Path::new(path)))
+            .unwrap_or(Self::Custom)
+    }
+}
+
+/// An absolute path from the environment variable `var`.
+fn env_dir(var: &str) -> Option<PathBuf> {
+    std::env::var_os(var)
+        .map(PathBuf::from)
+        .filter(|p| p.is_absolute())
+}
+
+/// Where screenshots go by default: `XDG_SCREENSHOTS_DIR`
+#[must_use]
+pub fn screenshots_dir() -> PathBuf {
+    env_dir("XDG_SCREENSHOTS_DIR").unwrap_or_else(|| {
+        dirs::picture_dir()
+            .or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Screenshots")
+    })
+}
+
+/// Where recordings go by default: `XDG_SCREENCASTS_DIR`
+#[must_use]
+pub fn screencasts_dir() -> PathBuf {
+    env_dir("XDG_SCREENCASTS_DIR").unwrap_or_else(|| {
+        dirs::video_dir()
+            .or_else(|| dirs::home_dir().map(|h| h.join("Videos")))
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join("Screencasts")
+    })
+}
+
 /// Save location choice for videos
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum VideoSaveLocationChoice {
+    /// [`screencasts_dir`].
     #[default]
+    Screencasts,
     Videos,
+    Documents,
     Custom,
+}
+
+impl VideoSaveLocationChoice {
+    /// The folder a named choice saves to. `None` for custom.
+    #[must_use]
+    pub fn dir(self) -> Option<PathBuf> {
+        match self {
+            Self::Screencasts => Some(screencasts_dir()),
+            Self::Videos => {
+                dirs::video_dir().or_else(|| dirs::home_dir().map(|h| h.join("Videos")))
+            }
+            Self::Documents => SaveLocationChoice::Documents.dir(),
+            Self::Custom => None,
+        }
+    }
+
+    /// The named choice whose folder is `path`, else custom.
+    #[must_use]
+    pub fn for_path(path: &str) -> Self {
+        [Self::Screencasts, Self::Videos, Self::Documents]
+            .into_iter()
+            .find(|c| c.dir().is_some_and(|d| d == Path::new(path)))
+            .unwrap_or(Self::Custom)
+    }
 }
 
 /// Shape annotation tool type (for split button selection)
@@ -437,9 +523,9 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             magnifier_enabled: true,
-            save_location: SaveLocationChoice::Pictures,
+            save_location: SaveLocationChoice::Screenshots,
             custom_save_path: default_custom_save_path(),
-            video_save_location: VideoSaveLocationChoice::Videos,
+            video_save_location: VideoSaveLocationChoice::Screencasts,
             video_custom_save_path: default_video_custom_save_path(),
             primary_shape_tool: ShapeTool::Arrow,
             shape_choice: default_shape_choice(),

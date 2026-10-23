@@ -50,13 +50,11 @@ pub fn get_img_path(location: SaveLocationChoice, custom_dir: &str) -> Option<Pa
     let dir = match location {
         SaveLocationChoice::Clipboard => return None,
         SaveLocationChoice::Custom if !custom_dir.is_empty() => PathBuf::from(custom_dir),
-        SaveLocationChoice::Custom | SaveLocationChoice::Pictures => {
-            dirs::picture_dir().or_else(|| dirs::home_dir().map(|h| h.join("Pictures")))?
-        }
-        SaveLocationChoice::Documents => {
-            dirs::document_dir().or_else(|| dirs::home_dir().map(|h| h.join("Documents")))?
-        }
+        // An empty custom folder falls back to the default
+        other => other.dir().unwrap_or_else(crate::config::screenshots_dir),
     };
+    // The screenshots folder need not exist yet
+    let _ = std::fs::create_dir_all(&dir);
     Some(dir.join(img_file_name()))
 }
 

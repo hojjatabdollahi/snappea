@@ -367,7 +367,7 @@ impl Default for Selection {
     fn default() -> Self {
         Self {
             choice: Choice::Rectangle(Rect::default(), DragState::default()),
-            location: SaveLocationChoice::Pictures,
+            location: SaveLocationChoice::Screenshots,
             focused_output_index: 0,
             also_copy_to_clipboard: false,
             has_mouse_entered: false,

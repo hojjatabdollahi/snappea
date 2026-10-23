@@ -393,6 +393,11 @@ impl Msg {
     pub const fn set_save_location_documents() -> Self {
         Self::Settings(SettingsMsg::SetSaveLocation(SaveLocationChoice::Documents))
     }
+    pub const fn set_save_location_screenshots() -> Self {
+        Self::Settings(SettingsMsg::SetSaveLocation(
+            SaveLocationChoice::Screenshots,
+        ))
+    }
     pub const fn set_save_location_custom() -> Self {
         Self::Settings(SettingsMsg::SetSaveLocation(SaveLocationChoice::Custom))
     }
@@ -402,15 +407,8 @@ impl Msg {
     pub const fn browse_save_location_result(path: Option<String>) -> Self {
         Self::Settings(SettingsMsg::BrowseSaveLocationResult(path))
     }
-    pub const fn set_video_save_location_videos() -> Self {
-        Self::Settings(SettingsMsg::SetVideoSaveLocation(
-            VideoSaveLocationChoice::Videos,
-        ))
-    }
-    pub const fn set_video_save_location_custom() -> Self {
-        Self::Settings(SettingsMsg::SetVideoSaveLocation(
-            VideoSaveLocationChoice::Custom,
-        ))
+    pub const fn set_video_save_location(choice: VideoSaveLocationChoice) -> Self {
+        Self::Settings(SettingsMsg::SetVideoSaveLocation(choice))
     }
     pub const fn browse_video_save_location() -> Self {
         Self::Settings(SettingsMsg::BrowseVideoSaveLocation)
