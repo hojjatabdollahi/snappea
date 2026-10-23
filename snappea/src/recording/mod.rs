@@ -9,4 +9,4 @@ mod state;
 
 pub use encoder::best_encoder;
 pub use recorder::{record, start_recording};
-pub use state::{RecordingHandle, is_recording, set_recording, stop_recording};
+pub use state::{AUDIO_HISTORY, RecordingHandle, is_recording, set_recording, stop_recording};

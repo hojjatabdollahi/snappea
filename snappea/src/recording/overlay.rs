@@ -91,6 +91,8 @@ pub struct RecordingIndicator {
     pub thickness_popup_open: bool,
     /// Whether the audio is muted. `None` for a recording with no audio.
     pub audio_muted: Option<bool>,
+    /// Recent levels for the toolbar gauge, oldest first
+    pub audio_levels: Vec<f32>,
 }
 
 impl RecordingIndicator {
@@ -637,6 +639,7 @@ pub fn render_recording_chrome(indicator: &RecordingIndicator) -> cosmic::Elemen
         thickness: indicator.pencil_thickness,
         thickness_popup_open: indicator.thickness_popup_open,
         audio_muted: indicator.audio_muted,
+        audio_levels: indicator.audio_levels.clone(),
         on_mute_toggle: AppMsg::Recording(Msg::ToggleMute),
         on_drag_start: AppMsg::Recording(Msg::ToolbarDragStart),
         on_drag_end: AppMsg::Recording(Msg::ToolbarDragEnd),
@@ -693,6 +696,8 @@ pub enum Msg {
     ToolbarDragEnd,
     ToolbarMeasured(f32, f32),
     ToggleMute,
+    /// Poll the recording's audio levels for the gauge.
+    AudioTick,
 }
 
 impl RecordingIndicator {
@@ -701,6 +706,12 @@ impl RecordingIndicator {
         match msg {
             Msg::Blink => {
                 self.blink_visible = self.region_border && !self.blink_visible;
+                Task::none()
+            }
+            Msg::AudioTick => {
+                if let Some(levels) = super::state::audio_levels() {
+                    self.audio_levels = levels;
+                }
                 Task::none()
             }
             Msg::ToggleMute => {

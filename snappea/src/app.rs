@@ -775,6 +775,14 @@ impl cosmic::Application for App {
                 );
             }
 
+            // The level gauge, at the rate `level` reports.
+            if indicator.audio_muted.is_some() {
+                subscriptions.push(
+                    cosmic::iced::time::every(std::time::Duration::from_millis(100))
+                        .map(|_| Msg::Recording(RecordingMsg::AudioTick)),
+                );
+            }
+
             // Check if recording is still active (every second)
             subscriptions.push(
                 cosmic::iced::time::every(std::time::Duration::from_millis(1000)).map(|_| {

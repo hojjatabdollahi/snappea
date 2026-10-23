@@ -6,6 +6,7 @@ use crate::fl;
 use anyhow::Result;
 use gstreamer as gst;
 use gstreamer::prelude::*;
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -27,6 +28,40 @@ pub fn toggle_audio_mute() -> Option<bool> {
     let muted = !volume.property::<bool>("mute");
     volume.set_property("mute", muted);
     Some(muted)
+}
+
+/// Bars in the toolbar's level gauge. `level` reports every 100 ms, 10 is 1 second.
+pub const AUDIO_HISTORY: usize = 10;
+
+/// The active recording's recent levels, oldest first. `None` means we're recording without audio.
+static AUDIO_LEVELS: Mutex<Option<VecDeque<f32>>> = Mutex::new(None);
+
+pub fn start_audio_levels() {
+    *AUDIO_LEVELS.lock().unwrap() = Some(VecDeque::from(vec![0.0; AUDIO_HISTORY]));
+}
+
+pub fn clear_audio_levels() {
+    *AUDIO_LEVELS.lock().unwrap() = None;
+}
+
+/// 0 at -60 dB and below, 1 at full scale.
+pub fn level_from_db(db: f64) -> f32 {
+    ((db + 60.0) / 60.0).clamp(0.0, 1.0) as f32
+}
+
+pub fn push_audio_level(level: f32) {
+    if let Some(levels) = AUDIO_LEVELS.lock().unwrap().as_mut() {
+        levels.pop_front();
+        levels.push_back(level);
+    }
+}
+
+pub fn audio_levels() -> Option<Vec<f32>> {
+    AUDIO_LEVELS
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|levels| levels.iter().copied().collect())
 }
 
 /// Handle to control an active recording

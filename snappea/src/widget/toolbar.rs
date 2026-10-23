@@ -1121,6 +1121,169 @@ fn preset_swatches<'a, Msg: Clone + 'static>(
 /// How long a freehand stroke lingers before fading, in seconds.
 const FADE_PRESETS: &[f32] = &[1.0, 2.0, 3.0, 5.0, 10.0];
 
+/// The microphone audio pill
+const PILL_H: f32 = 32.0;
+/// Vertical padding that keeps the pill at [`PILL_H`] around a [`BTN_SIZE`] icon.
+const PILL_PAD_V: u16 = 8;
+const _: () = assert!(PILL_PAD_V as f32 * 2.0 + BTN_SIZE == PILL_H);
+const PILL_PAD_H: u16 = 10;
+const PILL_GAP: u16 = 7;
+/// Bar width, the gap between bars, and the strip's height, in pixels.
+const BAR_W: f32 = 2.0;
+const BAR_GAP: f32 = 1.0;
+const BARS_H: f32 = 20.0;
+const BARS_W: f32 = crate::recording::AUDIO_HISTORY as f32 * (BAR_W + BAR_GAP) - BAR_GAP;
+/// Levels at or above these are loud (-20 dBFS) and too loud (-9 dBFS), on the gauge's 0 to 1 scale.
+const LOUD: f32 = 45.0 / 60.0;
+const TOO_LOUD: f32 = 55.0 / 60.0;
+/// How faint the oldest bar is drawn.
+const OLDEST_ALPHA: f32 = 0.2;
+
+/// 0 good, 1 loud, 2 too loud.
+fn zone(level: f32) -> usize {
+    usize::from(level >= LOUD) + usize::from(level >= TOO_LOUD)
+}
+
+/// Green, yellow and red
+/// TODO:
+const fn meter_colors(dark: bool) -> [Color; 3] {
+    if dark {
+        [
+            Color::from_rgb8(0x4c, 0xaf, 0x50),
+            Color::from_rgb8(0xf2, 0xc2, 0x30),
+            Color::from_rgb8(0xe0, 0x4a, 0x4a),
+        ]
+    } else {
+        [
+            Color::from_rgb8(0x2e, 0x7d, 0x32),
+            Color::from_rgb8(0xb8, 0x86, 0x0b),
+            Color::from_rgb8(0xc6, 0x28, 0x28),
+        ]
+    }
+}
+
+type PillStyle = Box<dyn Fn(bool, &cosmic::Theme) -> button::Style>;
+
+fn pill_style(muted: bool, alpha: f32) -> PillStyle {
+    Box::new(move |_focused, theme| {
+        let cosmic = theme.cosmic();
+        let on: Color = cosmic.background(false).component.on.into();
+        let mut style = button::Style::new();
+        style.background = Some(Background::Color(if muted {
+            Color {
+                a: 0.14,
+                ..crate::widget::capture_button::RECORD_RED
+            }
+        } else {
+            Color { a: alpha, ..on }
+        }));
+        style.border_radius = cosmic.radius_xl().into();
+        style
+    })
+}
+
+fn audio_pill<'a, Msg: Clone + 'static>(
+    levels: Vec<f32>,
+    muted: bool,
+    on_press: Msg,
+) -> Element<'a, Msg> {
+    let icon: Element<'a, Msg> = if muted {
+        toolbar_icon_colored(
+            "audio-volume-muted-symbolic",
+            ICON_PX,
+            crate::widget::capture_button::RECORD_RED,
+        )
+        .width(Length::Fixed(BTN_SIZE))
+        .height(Length::Fixed(BTN_SIZE))
+        .into()
+    } else {
+        toolbar_icon("audio-volume-high-symbolic", ICON_PX)
+            .width(Length::Fixed(BTN_SIZE))
+            .height(Length::Fixed(BTN_SIZE))
+            .into()
+    };
+    let bars = cosmic::iced::widget::canvas::Canvas::new(LevelBars { levels, muted })
+        .width(Length::Fixed(BARS_W))
+        .height(Length::Fixed(BARS_H));
+    tooltip(
+        button::custom(
+            row![icon, bars]
+                .spacing(PILL_GAP)
+                .align_y(cosmic::iced::core::Alignment::Center),
+        )
+        .class(cosmic::theme::Button::Custom {
+            active: pill_style(muted, 0.10),
+            disabled: Box::new(move |theme| pill_style(muted, 0.10)(false, theme)),
+            hovered: pill_style(muted, 0.16),
+            pressed: pill_style(muted, 0.20),
+        })
+        .padding([PILL_PAD_V, PILL_PAD_H])
+        .on_press(on_press),
+        text::body(if muted {
+            fl!("unmute-audio")
+        } else {
+            fl!("mute-audio")
+        }),
+        tooltip::Position::Bottom,
+    )
+    .into()
+}
+
+struct LevelBars {
+    levels: Vec<f32>,
+    muted: bool,
+}
+
+impl<Msg> cosmic::iced::widget::canvas::Program<Msg, cosmic::Theme, cosmic::Renderer>
+    for LevelBars
+{
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &cosmic::Renderer,
+        theme: &cosmic::Theme,
+        bounds: cosmic::iced::core::Rectangle,
+        _cursor: cosmic::iced::core::mouse::Cursor,
+    ) -> Vec<cosmic::iced::widget::canvas::Geometry> {
+        use cosmic::iced::core::{Point, Size};
+        use cosmic::iced::widget::canvas::{Frame, Path};
+
+        let cosmic = theme.cosmic();
+        let colors = meter_colors(cosmic.is_dark);
+        let on: Color = cosmic.background(false).component.on.into();
+        let mut frame = Frame::new(renderer, bounds.size());
+        let n = crate::recording::AUDIO_HISTORY;
+        for i in 0..n {
+            let level = self.levels.get(i).copied().unwrap_or(0.0);
+            // Older bars fade, so the strip reads left to right as time.
+            let age = (n - 1 - i) as f32 / (n - 1) as f32;
+            let alpha = (1.0 - OLDEST_ALPHA).mul_add(-age, 1.0);
+            let color = if self.muted {
+                Color {
+                    a: 0.32 * alpha,
+                    ..on
+                }
+            } else {
+                Color {
+                    a: alpha,
+                    ..colors[zone(level)]
+                }
+            };
+            // Never shorter than a dot, so silence shows as a row of dots.
+            let h = (level * BARS_H).max(BAR_W);
+            let bar = Path::rounded_rectangle(
+                Point::new(i as f32 * (BAR_W + BAR_GAP), (BARS_H - h) / 2.0),
+                Size::new(BAR_W, h),
+                (BAR_W / 2.0).into(),
+            );
+            frame.fill(&bar, color);
+        }
+        vec![frame.into_geometry()]
+    }
+}
+
 /// Elapsed readout, `mm:ss` with minutes unwrapped, at a fixed width.
 fn elapsed_face<'a, Msg: 'a>(elapsed: Duration) -> Element<'a, Msg> {
     let secs = elapsed.as_secs();
@@ -1479,6 +1642,7 @@ pub struct RecordingToolbar<'a, Msg> {
     pub thickness_popup_open: bool,
     pub audio_muted: Option<bool>,
     pub on_mute_toggle: Msg,
+    pub audio_levels: Vec<f32>,
     pub on_drag_start: Msg,
     pub on_drag_end: Msg,
     /// Harmless action for the outgoing controls during their brief exit.
@@ -1901,23 +2065,7 @@ fn recording_sections<'a, Msg: Clone + 'static>(t: RecordingToolbar<'a, Msg>) ->
             match t.audio_muted {
                 Some(muted) => row![
                     elapsed_face(t.elapsed),
-                    tool_button(
-                        toolbar_icon(
-                            if muted {
-                                "audio-volume-muted-symbolic"
-                            } else {
-                                "audio-volume-high-symbolic"
-                            },
-                            ICON_PX,
-                        ),
-                        muted,
-                        Some(t.on_mute_toggle),
-                        if muted {
-                            fl!("unmute-audio")
-                        } else {
-                            fl!("mute-audio")
-                        },
-                    ),
+                    audio_pill(t.audio_levels, muted, t.on_mute_toggle),
                 ]
                 .spacing(BTN_GAP)
                 .align_y(cosmic::iced::core::Alignment::Center)

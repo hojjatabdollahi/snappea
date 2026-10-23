@@ -28,7 +28,7 @@ const DISC: f32 = RING - 10.0;
 /// How much bigger the disc gets while held.
 const PRESS_GROWTH: f32 = 0.18;
 /// The recording red, shared with the stop button. Not themed.
-const RECORD_RED: Color = Color::from_rgb(0.85, 0.2, 0.2);
+pub const RECORD_RED: Color = Color::from_rgb(0.85, 0.2, 0.2);
 
 // The pressed disc, and the pressed square's diagonal, stay inside the ring.
 const _: () = {

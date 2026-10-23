@@ -275,14 +275,41 @@ fn add_audio(
     }
     let convert = build("audioconvert")?;
     let resample = build("audioresample")?;
+    // `level` is before `volume`, so the gauge keeps moving while muted.
+    let level = gst::ElementFactory::make("level")
+        .property("interval", 100_000_000u64)
+        .build()
+        .context("Failed to create level element")?;
     let volume = build("volume")?;
     let encoder = build("opusenc")?;
     let queue = build("queue")?;
-    pipeline.add_many([&convert, &resample, &volume, &encoder, &queue])?;
-    gst::Element::link_many([&mix, &convert, &resample, &volume, &encoder, &queue, muxer])?;
+    pipeline.add_many([&convert, &resample, &level, &volume, &encoder, &queue])?;
+    gst::Element::link_many([
+        &mix, &convert, &resample, &level, &volume, &encoder, &queue, muxer,
+    ])?;
     // Muting sets the volume, so we stay in sync.
     super::state::set_audio_volume(Some(volume));
+    super::state::start_audio_levels();
+    pipeline
+        .bus()
+        .context("pipeline has no bus")?
+        .set_sync_handler(level_to_gauge);
     Ok(sources)
+}
+
+/// Bus handler sending `level` readings to the gauge
+fn level_to_gauge(_bus: &gst::Bus, msg: &gst::Message) -> gst::BusSyncReply {
+    let Some(s) = msg.structure().filter(|s| s.name() == "level") else {
+        return gst::BusSyncReply::Pass;
+    };
+    if let Ok(peaks) = s.get::<gst::glib::ValueArray>("peak") {
+        let peak = peaks
+            .iter()
+            .filter_map(|v| v.get::<f64>().ok())
+            .fold(f64::NEG_INFINITY, f64::max);
+        super::state::push_audio_level(super::state::level_from_db(peak));
+    }
+    gst::BusSyncReply::Drop
 }
 
 /// The VA encoders in `GStreamer` 1.24 ignore the timestamps they are given and
@@ -867,6 +894,7 @@ impl Pipeline {
     /// Signal end of stream and finalize the video file
     pub fn finish(&self) -> Result<()> {
         super::state::set_audio_volume(None);
+        super::state::clear_audio_levels();
         log::info!("Sending EOS signal to pipeline...");
         self.appsrc
             .end_of_stream()
