@@ -67,6 +67,21 @@ fn controls(editor: &Editor) -> cosmic::Element<'_, Message> {
     let play = widget::container(play)
         .height(Length::Fixed(TRACK_HEIGHT))
         .align_y(Alignment::Center);
+    let audio = widget::container(
+        widget::button::custom(
+            icon::from_name(if editor.audio {
+                "audio-volume-high-symbolic"
+            } else {
+                "audio-volume-muted-symbolic"
+            })
+            .size(16)
+            .icon(),
+        )
+        .class(cosmic::theme::Button::Icon)
+        .on_press(Message::ToggleAudio),
+    )
+    .height(Length::Fixed(TRACK_HEIGHT))
+    .align_y(Alignment::Center);
     let speed = widget::container(speed_menu(editor))
         .height(Length::Fixed(TRACK_HEIGHT))
         .align_y(Alignment::Center);
@@ -74,6 +89,7 @@ fn controls(editor: &Editor) -> cosmic::Element<'_, Message> {
     widget::row::with_children(vec![
         play.into(),
         speed.into(),
+        audio.into(),
         track_bar(
             editor.duration,
             editor.trim_start,

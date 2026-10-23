@@ -39,10 +39,10 @@ pub struct Editor {
     position: f64,
     trim_start: f64,
     trim_end: f64,
-    /// we have one span in snappea, so one speed
     speed: f64,
     playing: bool,
     dragging: bool,
+    audio: bool,
 
     /// Latest scrub position to be sent to `GStreamer`
     pending_seek: Option<f64>,
@@ -86,6 +86,7 @@ pub enum Message {
     SetSpeed(usize),
     // Playback
     TogglePlay,
+    ToggleAudio,
     NewFrame,
     DurationChanged(Duration),
     EndOfStream,
@@ -206,6 +207,7 @@ impl Editor {
             fps: export::GIF_FPS[self.gif_fps],
             scale: export::GIF_SCALE[self.gif_scale],
             gifski: self.gifski,
+            audio: self.audio,
         };
         Task::perform(
             async move {
@@ -282,6 +284,7 @@ impl Application for Editor {
             speed: 1.0,
             playing: false,
             dragging: false,
+            audio: true,
             pending_seek: None,
             seek_scheduled: false,
             seek_generation: 0,
@@ -361,6 +364,10 @@ impl Application for Editor {
             }
             Message::ColorsExtracted(colors) => self.frame_colors = colors,
 
+            Message::ToggleAudio => {
+                self.audio = !self.audio;
+                self.video.set_muted(!self.audio);
+            }
             Message::ToggleSpeedMenu => self.speed_menu_open = !self.speed_menu_open,
             Message::SetSpeed(index) => {
                 self.speed = SPEED_OPTIONS[index.min(SPEED_OPTIONS.len() - 1)];

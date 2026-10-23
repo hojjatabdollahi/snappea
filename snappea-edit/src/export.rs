@@ -413,6 +413,7 @@ pub struct Request {
     pub fps: u32,
     pub scale: u32,
     pub gifski: bool,
+    pub audio: bool,
 }
 
 /// The `atempo` filter for `speed`. One stage only goes down to 0.5, so slower speeds chain halvings.
@@ -499,6 +500,9 @@ fn ffmpeg_args(req: &Request, tmp: &Path) -> Vec<OsString> {
         }
     }
 
+    if !req.audio {
+        args.push("-an".into());
+    }
     args.push(tmp.into());
     args
 }
