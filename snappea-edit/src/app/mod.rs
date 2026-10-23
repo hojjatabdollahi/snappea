@@ -52,6 +52,8 @@ pub struct Editor {
     speed_menu_open: bool,
     /// for the timeline readability
     frame_colors: Vec<[u8; 3]>,
+    /// the audio overlay's bars, empty when the file has no audio
+    peaks: Vec<f32>,
 
     export: Option<Export>,
     export_generation: u64,
@@ -81,6 +83,7 @@ pub enum Message {
     TrimChanged(f64, f64),
     TrimReleased,
     ColorsExtracted(Vec<[u8; 3]>),
+    PeaksExtracted(Vec<f32>),
     // Speed
     ToggleSpeedMenu,
     SetSpeed(usize),
@@ -259,6 +262,16 @@ impl Application for Editor {
             |colors| cosmic::Action::App(Message::ColorsExtracted(colors)),
         );
 
+        let peaks_path = flags.path.clone();
+        let peaks_task = Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || crate::peaks::extract(&peaks_path))
+                    .await
+                    .unwrap_or_default()
+            },
+            |peaks| cosmic::Action::App(Message::PeaksExtracted(peaks)),
+        );
+
         let probe_task = Task::perform(
             async {
                 tokio::task::spawn_blocking(export::probe_encoders)
@@ -290,6 +303,7 @@ impl Application for Editor {
             seek_generation: 0,
             speed_menu_open: false,
             frame_colors: Vec::new(),
+            peaks: Vec::new(),
             export: None,
             export_generation: 0,
             quality: 1,
@@ -300,7 +314,7 @@ impl Application for Editor {
         editor.encoder = editor.default_encoder(editor.format);
         (
             editor,
-            Task::batch([title_task, colors_task, probe_task]),
+            Task::batch([title_task, colors_task, peaks_task, probe_task]),
         )
     }
 
@@ -366,6 +380,10 @@ impl Application for Editor {
                     .seek(Duration::from_secs_f64(self.position), true);
             }
             Message::ColorsExtracted(colors) => self.frame_colors = colors,
+            Message::PeaksExtracted(peaks) => {
+                log::debug!("{} audio peaks", peaks.len());
+                self.peaks = peaks;
+            }
 
             Message::ToggleAudio => {
                 self.audio = !self.audio;

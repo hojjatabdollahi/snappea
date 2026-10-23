@@ -98,6 +98,8 @@ fn controls(editor: &Editor) -> cosmic::Element<'_, Message> {
         )
         .minimum_span(editor.frame_duration())
         .colors(&editor.frame_colors)
+        // Muted audio is not in the export, so it is not on the track either.
+        .audio(if editor.audio { &editor.peaks } else { &[] })
         .on_seek(Message::Seek)
         .on_seek_release(Message::SeekReleased)
         .on_trim(Message::TrimChanged)

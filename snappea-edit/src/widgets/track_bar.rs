@@ -25,6 +25,10 @@ pub const TRACK_HEIGHT: f32 = 34.0;
 pub const HEIGHT: f32 = 62.0;
 /// Width of either visible trim handle.
 pub const HANDLE_WIDTH: f32 = 14.0;
+/// The audio overlay on the bottom of the frame strip: a grey band with one bar per peak.
+const AUDIO_BAND: f32 = 14.0;
+const AUDIO_BAR_PAD: f32 = 2.0;
+const AUDIO_BAR_WIDTH: f32 = 0.7;
 
 const LABEL_BAND: f32 = HEIGHT - TRACK_HEIGHT;
 const LABEL_SIZE: f32 = 11.0;
@@ -77,6 +81,7 @@ pub struct TrackBar<'a, Message> {
     position: f64,
     min_span: f64,
     colors: &'a [[u8; 3]],
+    audio: &'a [f32],
     on_seek: Option<Box<dyn Fn(f64) -> Message + 'a>>,
     on_seek_release: Option<Message>,
     on_trim: Option<Box<dyn Fn(f64, f64) -> Message + 'a>>,
@@ -97,6 +102,7 @@ pub fn track_bar<Message>(
         position,
         min_span: DEFAULT_MIN_SPAN,
         colors: &[],
+        audio: &[],
         on_seek: None,
         on_seek_release: None,
         on_trim: None,
@@ -109,6 +115,13 @@ impl<'a, Message> TrackBar<'a, Message> {
     #[must_use]
     pub const fn colors(mut self, colors: &'a [[u8; 3]]) -> Self {
         self.colors = colors;
+        self
+    }
+
+    /// Audio peaks from 0 to 1, oldest first, drawn over the frames. Empty draws nothing.
+    #[must_use]
+    pub const fn audio(mut self, peaks: &'a [f32]) -> Self {
+        self.audio = peaks;
         self
     }
 
@@ -263,6 +276,42 @@ impl<'a, Message> TrackBar<'a, Message> {
         self.publish_seek(shell, preview);
     }
 
+    /// A grey band on the bottom of the strip, a hairline, and one bar per peak, within `clip`.
+    fn draw_audio(&self, renderer: &mut cosmic::Renderer, axis: Rectangle, clip: Rectangle) {
+        if self.audio.is_empty() || axis.width <= 0.0 {
+            return;
+        }
+        let band = Rectangle {
+            y: axis.y + TRACK_HEIGHT - AUDIO_BAND,
+            height: AUDIO_BAND,
+            ..axis
+        };
+        let Some(clip) = clip.intersection(&band) else {
+            return;
+        };
+        fill(renderer, clip, Color::from_rgba(0.5, 0.5, 0.5, 0.45), 0.0);
+        if let Some(line) = clip.intersection(&Rectangle {
+            height: 1.0,
+            ..band
+        }) {
+            fill(renderer, line, Color::from_rgba(1.0, 1.0, 1.0, 0.25), 0.0);
+        }
+        let bucket = axis.width / self.audio.len() as f32;
+        let bottom = band.y + band.height - AUDIO_BAR_PAD / 2.0;
+        for (i, &peak) in self.audio.iter().enumerate() {
+            let height = (peak * (AUDIO_BAND - AUDIO_BAR_PAD)).max(1.0);
+            let bar = Rectangle {
+                x: (i as f32).mul_add(bucket, axis.x),
+                y: bottom - height,
+                width: (bucket * AUDIO_BAR_WIDTH).max(0.5),
+                height,
+            };
+            if let Some(bar) = bar.intersection(&clip) {
+                fill(renderer, bar, Color::from_rgba(1.0, 1.0, 1.0, 0.85), 0.0);
+            }
+        }
+    }
+
     fn draw_strip(&self, renderer: &mut cosmic::Renderer, axis: Rectangle, clip: Rectangle) {
         if axis.width <= 0.0 || clip.width <= 0.0 || clip.height <= 0.0 {
             return;
@@ -385,6 +434,7 @@ impl<Message: Clone> Widget<Message, cosmic::Theme, cosmic::Renderer> for TrackB
 
         // The full media remains visible, even outside the exported range.
         self.draw_strip(renderer, axis, axis);
+        self.draw_audio(renderer, axis, axis);
         draw_ring(renderer, axis, 0.0, axis, 4.0, surrounding);
         fill(
             renderer,
@@ -418,6 +468,7 @@ impl<Message: Clone> Widget<Message, cosmic::Theme, cosmic::Renderer> for TrackB
             ..kept
         };
         self.draw_strip(renderer, axis, inner);
+        self.draw_audio(renderer, axis, inner);
         fill(
             renderer,
             inner,

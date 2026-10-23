@@ -4,6 +4,7 @@ mod app;
 mod colors;
 mod export;
 mod localize;
+mod peaks;
 mod widgets;
 
 use std::path::PathBuf;
