@@ -308,6 +308,11 @@ pub fn handle_settings_msg(app: &mut App, msg: SettingsMsg) -> cosmic::Task<crat
             crate::config::Config::store("video_system_audio", capture.ui.video_system_audio);
             cosmic::task::none()
         }
+        SettingsMsg::ToggleMicrophone => {
+            capture.ui.video_microphone = !capture.ui.video_microphone;
+            crate::config::Config::store("video_microphone", capture.ui.video_microphone);
+            cosmic::task::none()
+        }
         SettingsMsg::ToggleScreenshotCursor => {
             capture.ui.show_cursor = !capture.ui.show_cursor;
             crate::config::Config::store("show_cursor", capture.ui.show_cursor);
@@ -661,6 +666,7 @@ fn start_recording(app: &mut App) -> cosmic::Task<AppMsg> {
         let output_file = output_file.clone();
         let show_cursor = capture.ui.video_show_cursor;
         let system_audio = capture.ui.video_system_audio;
+        let microphone = capture.ui.video_microphone;
         let output_logical_size = output.logical_size;
 
         std::thread::spawn(move || {
@@ -675,6 +681,7 @@ fn start_recording(app: &mut App) -> cosmic::Task<AppMsg> {
                 config.video_framerate,
                 show_cursor,
                 system_audio,
+                microphone,
                 &stop_flag,
             );
             // The UI already shows "recording", so surface a failure as a notification.

@@ -842,6 +842,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub video_show_cursor: bool,
     pub video_region_border: bool,
     pub video_system_audio: bool,
+    pub video_microphone: bool,
     /// Whether a screenshot includes the pointer.
     pub show_cursor: bool,
     pub is_default_portal: bool,
@@ -856,6 +857,7 @@ pub struct SettingsMenu<'a, Msg> {
     pub on_show_cursor: Msg,
     pub on_region_border: Msg,
     pub on_system_audio: Msg,
+    pub on_microphone: Msg,
     pub on_screenshot_cursor: Msg,
     pub on_default_portal: Msg,
     pub on_recognize_qr_codes: Msg,
@@ -888,6 +890,11 @@ fn build_settings_menu<Msg: Clone + 'static>(
             fl!("system-audio"),
             settings.video_system_audio,
             settings.on_system_audio.clone(),
+        ));
+        list = list.push(menu_row(
+            fl!("microphone"),
+            settings.video_microphone,
+            settings.on_microphone.clone(),
         ));
 
         list = list.push(menu_divider());

@@ -532,6 +532,7 @@ impl Pipeline {
         crop: Option<CropRegion>,
         framerate: u32,
         system_audio: bool,
+        microphone: bool,
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 
@@ -658,6 +659,7 @@ impl Pipeline {
         import_fourcc: DrmFourcc,
         modifier: DrmModifier,
         system_audio: bool,
+        microphone: bool,
     ) -> Result<Self> {
         gst::init().context("Failed to initialize GStreamer")?;
 

@@ -177,6 +177,7 @@ pub enum SettingsMsg {
     ToggleShowCursor,
     ToggleRegionBorder,
     ToggleSystemAudio,
+    ToggleMicrophone,
     ToggleScreenshotCursor,
     EncodersDetected(Vec<crate::recording::encoder::EncoderInfo>),
     TimelineTick(window::Id, Instant),
@@ -440,6 +441,9 @@ impl Msg {
     }
     pub const fn toggle_system_audio() -> Self {
         Self::Settings(SettingsMsg::ToggleSystemAudio)
+    }
+    pub const fn toggle_microphone() -> Self {
+        Self::Settings(SettingsMsg::ToggleMicrophone)
     }
     pub const fn toggle_screenshot_cursor() -> Self {
         Self::Settings(SettingsMsg::ToggleScreenshotCursor)
