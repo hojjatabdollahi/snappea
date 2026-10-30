@@ -1277,21 +1277,20 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             if let Some((index, which, dx, dy)) = drag_state.resize {
                 match mouse_event {
                     MouseEvent::CursorMoved { .. } => {
-                        if let Some((x, y)) = self.clamp_to_selection(pos) {
-                            let (mut px, mut py) = (x - dx, y - dy);
-                            // Ctrl: square, or 45°, against the fixed other point, as when drawing.
-                            if drag_state.ctrl_down
-                                && let Some(handles) = self.picked_handles()
-                                && handles.index == index
-                                && let Some(kind) = handles.kind
-                            {
-                                let fixed = handles.anchors[1 - which];
-                                (px, py) = crate::widget::overlays::constrain_shape(
-                                    kind, fixed.x, fixed.y, px, py,
-                                );
-                            }
-                            shell.publish(Msg::resize_annotation(index, which, px, py));
+                        // an annotation may stick out, and its handle with it.
+                        let (mut px, mut py) = (global_x - dx, global_y - dy);
+                        // Ctrl: square, or 45°, against the fixed other point, as when drawing.
+                        if drag_state.ctrl_down
+                            && let Some(handles) = self.picked_handles()
+                            && handles.index == index
+                            && let Some(kind) = handles.kind
+                        {
+                            let fixed = handles.anchors[1 - which];
+                            (px, py) = crate::widget::overlays::constrain_shape(
+                                kind, fixed.x, fixed.y, px, py,
+                            );
                         }
+                        shell.publish(Msg::resize_annotation(index, which, px, py));
                         shell.capture_event();
                         return;
                     }

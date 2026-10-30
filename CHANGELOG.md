@@ -27,6 +27,7 @@ All notable changes to SnapPea are listed here. The format follows
 - A press outside an open toolbar dropdown now only closes it
 - Drawing on one screen no longer shows a stray piece of the shape on another output
 - A color from the custom picker now applies to the selected annotation
+- An annotation that sticks out of the region can be reshaped by the handle outside it.
 - A click without drag does't draw a shape, or pixelate, or magnifier annotation.
 - The toolbar changed width when the text tool was armed or disarmed, since the font button was narrower than the size dropdown it replaces.
 - Changing the picked screen with S then clicking another could pick a third one, the click now names the screen under it.
