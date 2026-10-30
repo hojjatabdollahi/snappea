@@ -14,6 +14,9 @@ use cosmic::{
 use super::magnifier::draw_magnifier;
 use crate::geometry::{DragState, Rect};
 
+#[derive(Default)]
+struct Press(Option<(i32, i32)>);
+
 const EDGE_GRAB_THICKNESS: f32 = 8.0;
 const CORNER_DIAMETER: f32 = 16.0;
 
@@ -21,6 +24,7 @@ pub struct RectangleSelection<'a, Msg> {
     output_rect: Rect,
     rectangle_selection: Rect,
     on_rectangle: Box<dyn Fn(DragState, Rect) -> Msg>,
+    on_click: Box<dyn Fn(i32, i32) -> Msg>,
     on_move_offset: Box<dyn Fn(Option<(i32, i32)>) -> Msg>,
     drag_state: DragState,
     /// Screenshot image for magnifier
@@ -44,6 +48,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
         rectangle_selection: Rect,
         drag_direction: DragState,
         on_rectangle: impl Fn(DragState, Rect) -> Msg + 'static,
+        on_click: impl Fn(i32, i32) -> Msg + 'static,
         on_move_offset: impl Fn(Option<(i32, i32)>) -> Msg + 'static,
         screenshot_image: &'a crate::capture::ScreenshotImage,
         image_scale: f32,
@@ -54,6 +59,7 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
     ) -> Self {
         Self {
             on_rectangle: Box::new(on_rectangle),
+            on_click: Box::new(on_click),
             on_move_offset: Box::new(on_move_offset),
             drag_state: drag_direction,
             rectangle_selection,
@@ -289,6 +295,14 @@ impl<'a, Msg: Clone> RectangleSelection<'a, Msg> {
 impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
     for RectangleSelection<'_, Msg>
 {
+    fn tag(&self) -> core::widget::tree::Tag {
+        core::widget::tree::Tag::of::<Press>()
+    }
+
+    fn state(&self) -> core::widget::tree::State {
+        core::widget::tree::State::new(Press::default())
+    }
+
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
     }
@@ -348,7 +362,7 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
     fn update(
         &mut self,
-        _state: &mut core::widget::Tree,
+        tree: &mut core::widget::Tree,
         event: &core::Event,
         layout: core::Layout<'_>,
         cursor: core::mouse::Cursor,
@@ -374,6 +388,12 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
             match e {
                 core::mouse::Event::ButtonPressed(core::mouse::Button::Left) => {
                     let s = self.drag_state(cursor);
+                    let pos = cursor.position().unwrap_or_default();
+                    tree.state.downcast_mut::<Press>().0 =
+                        matches!(s, DragState::Move | DragState::None).then_some((
+                            self.output_rect.left + pos.x as i32,
+                            self.output_rect.top + pos.y as i32,
+                        ));
 
                     if s == DragState::Move {
                         // For Move: compute offset for translation
@@ -429,14 +449,19 @@ impl<Msg: 'static + Clone> Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     if self.drag_state != DragState::None => {
                         self.drag_state = DragState::None;
                         shell.publish((self.on_move_offset)(None));
-                        // Only keep rectangle if it has meaningful dimensions (> 5x5)
+                        let pos = cursor.position().unwrap_or_default();
+                        let x = self.output_rect.left + pos.x as i32;
+                        let y = self.output_rect.top + pos.y as i32;
                         let rect = self.rectangle_selection;
-                        let width = (rect.right - rect.left).abs();
-                        let height = (rect.bottom - rect.top).abs();
-                        if width > 5 && height > 5 {
+                        let press = tree.state.downcast_mut::<Press>().0.take();
+                        if let Some((px, py)) = press
+                            && (x - px).abs() <= 5
+                            && (y - py).abs() <= 5
+                        {
+                            shell.publish((self.on_click)(x, y));
+                        } else if rect.width().abs() > 5 && rect.height().abs() > 5 {
                             shell.publish((self.on_rectangle)(DragState::None, rect));
                         } else {
-                            // Clear the selection: just a click, not a drag
                             shell
                                 .publish((self.on_rectangle)(DragState::None, Rect::default()));
                         }

@@ -442,7 +442,9 @@ impl Screenshot {
             tx,
             expects_response: true,
         };
-        let capture = Capture::new(portal, output_images, &Config::load());
+        let config = Config::load();
+        let windows = crate::capture::windows(&self.wayland_helper, config.click_selects_window);
+        let capture = Capture::new(portal, output_images, windows, &config);
         if let Err(err) = self.tx.send(Event::Screenshot(Box::new(capture))).await {
             // Distinct from the *response* path below: this means the UI event
             // loop isn't listening, so the request can't be shown at all.

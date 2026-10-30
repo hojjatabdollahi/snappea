@@ -139,6 +139,8 @@ pub enum Msg {
     Control(ControlCommand),
     /// A layer surface was closed by the compositor (e.g. output disconnected)
     LayerClosed(window::Id),
+    /// The window list, for a capture that started before it had arrived
+    WindowsReady(Vec<crate::capture::Window>),
     /// Failsafe fired ~500 ms after screenshot capture arrive if no windows were created.
     RetryPendingWindows,
     /// The delayed capture's countdown: its timers, the toolbar morph and the pill.
@@ -599,6 +601,15 @@ impl cosmic::Application for App {
                 self.dummy_id = window::Id::unique();
                 dummy_surface(self.dummy_id)
             }
+            // only once, changes after screenshot UI is open shouldn't be considered
+            Msg::WindowsReady(windows) => {
+                if let Some(capture) = self.capture.as_mut()
+                    && capture.windows.is_empty()
+                {
+                    capture.windows = windows;
+                }
+                cosmic::iced::Task::none()
+            }
             Msg::Keyboard(_) | Msg::Ignore | Msg::LayerClosed(_) => cosmic::iced::Task::none(),
             Msg::RetryPendingWindows => {
                 // OutputEvent::Created never fired (outputs were advertised before the
@@ -634,6 +645,8 @@ impl cosmic::Application for App {
                     return cosmic::iced::Task::none();
                 }
                 capture.output_images = output_images;
+                capture.windows =
+                    crate::capture::windows(&self.wayland_helper, capture.ui.click_selects_window);
                 capture.annotations = crate::capture::AnnotationState::default();
                 capture.detection = crate::capture::DetectionState::default();
                 capture.selection.has_mouse_entered = false;
@@ -1088,7 +1101,9 @@ async fn fresh_capture(helper: &crate::wayland::WaylandHelper) -> Option<crate::
         tx,
         expects_response: false,
     };
-    Some(Capture::new(portal, output_images, &config))
+    // Read in the same time as the screenshots, so the two agree.
+    let windows = crate::capture::windows(helper, config.click_selects_window);
+    Some(Capture::new(portal, output_images, windows, &config))
 }
 
 /// Take a screenshot on a D-Bus control command.

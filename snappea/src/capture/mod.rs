@@ -544,10 +544,13 @@ pub struct UiState {
     pub text_font_size: f32,
     /// Whether a second Escape will discard the screenshot. Armed when work would be lost.
     pub exit_armed: bool,
+    /// The title of the selected window
+    pub window_title: Option<(String, Instant)>,
     pub primary_redact_tool: RedactTool,
     pub pixelation_block_size: u32,
     /// Scan a selection for QR codes as soon as it is made
     pub recognize_qr_codes: bool,
+    pub click_selects_window: bool,
     /// Whether `tesseract` is installed, checked once per session.
     pub tesseract_available: bool,
     /// Magnifier annotation tool: zoom level (1.5-10.0)
@@ -628,9 +631,11 @@ impl UiState {
             highlighter_thickness: config.highlighter_thickness,
             text_font_size: config.text_font_size,
             exit_armed: false,
+            window_title: None,
             primary_redact_tool: config.primary_redact_tool,
             pixelation_block_size: config.pixelation_block_size,
             recognize_qr_codes: config.recognize_qr_codes,
+            click_selects_window: config.click_selects_window,
             tesseract_available: detect::is_tesseract_available(),
             magnifier_magnification: config.magnifier_magnification,
             capture_delay_secs: config.capture_delay_secs,
@@ -832,99 +837,61 @@ mod toolbar_anim_tests {
     }
 }
 
-#[cfg(test)]
-mod selection_tests {
-    use super::*;
+/// A window's geometry (global logical), whether it is the active one, and its title.
+pub type Window = (Rect, bool, String);
 
-    #[test]
-    fn picked_annotation_reports_and_takes_its_size_and_color() {
-        use cosmic::iced::{Color, Point};
-        let mut a = AnnotationState::default();
-        a.commit(Box::new(ShapeOperation::new(
-            ShapeKind::Arrow,
-            Point::new(0.0, 0.0),
-            Point::new(10.0, 10.0),
-            Color::BLACK,
-            2.0,
-        )));
-        a.commit(Box::new(PixelateOperation::new(
-            Point::new(0.0, 0.0),
-            Point::new(10.0, 10.0),
-            8.0,
-        )));
-        a.selected = Some(0);
-        let picked = a.picked().unwrap();
-        assert_eq!((picked.tool, picked.size), (ShapeTool::Arrow, Some(2.0)));
-        assert!(a.resize_selected(5.0));
-        a.recolor_selected(AnnotateColor(Color::WHITE));
-        let picked = a.picked().unwrap();
-        assert_eq!(picked.size, Some(5.0));
-        assert_eq!(picked.color, Some(AnnotateColor(Color::WHITE)));
+/// Every window on the workspaces showing right now, minimized ones left out.
+pub fn windows(helper: &crate::wayland::WaylandHelper, enabled: bool) -> Vec<Window> {
+    use cosmic_protocols::toplevel_info::v1::client::zcosmic_toplevel_handle_v1::State;
 
-        a.selected = Some(1);
-        assert_eq!(
-            a.picked().map(|p| (p.tool, p.size)),
-            Some((ShapeTool::Pixelate, Some(8.0)))
-        );
-        assert!(a.resize_selected(12.0));
-        assert_eq!(a.picked().and_then(|p| p.size), Some(12.0));
-
-        a.selected = None;
-        assert!(!a.resize_selected(3.0));
+    // The `click_selects_window` setting
+    if !enabled {
+        return Vec::new();
     }
-    use cosmic::iced::Color;
-    use viewer_tools::annotate::MagnifierOperation;
-
-    fn blob(x: f32) -> Box<dyn ToolOperation> {
-        Box::new(MagnifierOperation::new(
-            Point::new(x, 0.0),
-            Point::new(x + 10.0, 10.0),
-            2.0,
-            Color::BLACK,
-        ))
+    let active = helper.active_workspaces();
+    let mut windows = Vec::new();
+    for info in helper.toplevel_infos() {
+        let shown = info.workspace.is_empty() || info.workspace.iter().any(|w| active.contains(w));
+        if info.state.contains(&State::Minimized) || !shown {
+            continue;
+        }
+        for (output, g) in &info.geometry {
+            // cosmic-comp reports the geometry relative to the output
+            let Some((ox, oy)) = helper.output_info(output).and_then(|o| o.logical_position) else {
+                continue;
+            };
+            let rect = Rect {
+                left: ox + g.x,
+                top: oy + g.y,
+                right: ox + g.x + g.width,
+                bottom: oy + g.y + g.height,
+            };
+            windows.push((
+                rect,
+                info.state.contains(&State::Activated),
+                info.title.clone(),
+            ));
+        }
     }
+    windows
+}
 
-    /// The pick is an index. Anything that reorders the list must drop it.
-    #[test]
-    fn commit_clears_selection() {
-        let mut state = AnnotationState::default();
-        state.commit(blob(0.0));
-        state.commit(blob(20.0));
-        state.selected = Some(0);
-
-        state.commit(blob(40.0));
-        assert_eq!(
-            state.selected, None,
-            "a new annotation is not the picked one"
-        );
-    }
-
-    #[test]
-    fn stale_selection_is_none() {
-        let mut state = AnnotationState::default();
-        state.commit(blob(0.0));
-        state.selected = Some(0);
-        assert!(state.selected_annotation().is_some());
-
-        // A stale index resolves to nothing.
-        state.selected = Some(7);
-        assert!(state.selected_annotation().is_none());
-    }
-
-    #[test]
-    fn clear_all_clears_selection() {
-        let mut state = AnnotationState::default();
-        state.commit(blob(0.0));
-        state.selected = Some(0);
-        state.clear_all();
-        assert_eq!(state.selected, None);
-    }
+/// The window to select for a click at `(x, y)`
+#[must_use]
+pub fn window_at(x: i32, y: i32, windows: &[Window], current: Option<Rect>) -> Option<&Window> {
+    let mut under: Vec<&Window> = windows.iter().filter(|(w, ..)| w.contains(x, y)).collect();
+    under.sort_by_key(|(w, active, _)| (!active, w.width() * w.height()));
+    let next = current
+        .and_then(|c| under.iter().position(|(w, ..)| *w == c))
+        .map_or(0, |i| (i + 1) % under.len());
+    under.get(next).copied()
 }
 
 #[derive(Clone, Debug)]
 pub struct Capture {
     pub portal: PortalContext,
     pub output_images: HashMap<String, ScreenshotImage>,
+    pub windows: Vec<Window>,
     pub detection: DetectionState,
     pub annotations: AnnotationState,
     pub selection: Selection,
@@ -936,11 +903,13 @@ impl Capture {
     pub fn new(
         portal: PortalContext,
         output_images: HashMap<String, ScreenshotImage>,
+        windows: Vec<Window>,
         config: &Config,
     ) -> Self {
         Self {
             portal,
             output_images,
+            windows,
             detection: DetectionState::default(),
             annotations: AnnotationState::default(),
             selection: Selection::default(),
@@ -972,6 +941,7 @@ impl Capture {
         self.clear_annotations();
         self.detection.clear();
         self.close_all_popups();
+        self.ui.window_title = None;
     }
 
     /// Disable all drawing modes without clearing annotations

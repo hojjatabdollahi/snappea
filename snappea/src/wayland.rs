@@ -25,6 +25,8 @@ use cosmic_client_toolkit::sctk::shm::ShmHandler;
 use cosmic_client_toolkit::toplevel_info::ToplevelInfo;
 use cosmic_client_toolkit::toplevel_info::ToplevelInfoHandler;
 use cosmic_client_toolkit::toplevel_info::ToplevelInfoState;
+use cosmic_client_toolkit::workspace::WorkspaceHandler;
+use cosmic_client_toolkit::workspace::WorkspaceState;
 use futures::channel::oneshot;
 use std::collections::HashMap;
 use std::os::fd::AsFd;
@@ -46,6 +48,9 @@ use wayland_client::protocol::wl_output;
 use wayland_client::protocol::wl_shm;
 use wayland_client::protocol::wl_shm_pool;
 pub use wayland_protocols::ext::foreign_toplevel_list::v1::client::ext_foreign_toplevel_handle_v1::ExtForeignToplevelHandleV1;
+use wayland_protocols::ext::workspace::v1::client::ext_workspace_handle_v1::{
+    self, ExtWorkspaceHandleV1,
+};
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1;
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_buffer_params_v1::ZwpLinuxBufferParamsV1;
 use wayland_protocols::wp::linux_dmabuf::zv1::client::zwp_linux_dmabuf_v1;
@@ -63,6 +68,8 @@ struct WaylandHelperInner {
     outputs: Mutex<Vec<wl_output::WlOutput>>,
     output_infos: Mutex<HashMap<wl_output::WlOutput, OutputInfo>>,
     toplevels: Mutex<Vec<ToplevelInfo>>,
+    /// The workspace shown on each output
+    active_workspaces: Mutex<Vec<ExtWorkspaceHandleV1>>,
     qh: QueueHandle<AppData>,
     capturer: Capturer,
     wl_shm: wl_shm::WlShm,
@@ -80,6 +87,7 @@ struct AppData {
     screencopy_state: ScreencopyState,
     output_state: OutputState,
     shm_state: Shm,
+    workspace_state: WorkspaceState,
     toplevel_info_state: ToplevelInfoState,
 }
 
@@ -172,6 +180,7 @@ impl WaylandHelper {
                 outputs: Mutex::new(Vec::new()),
                 output_infos: Mutex::new(HashMap::new()),
                 toplevels: Mutex::new(Vec::new()),
+                active_workspaces: Mutex::new(Vec::new()),
                 qh: qh.clone(),
                 capturer: screencopy_state.capturer().clone(),
                 wl_shm: shm_state.wl_shm().clone(),
@@ -183,6 +192,7 @@ impl WaylandHelper {
             shm_state,
             wayland_helper: wayland_helper.clone(),
             screencopy_state,
+            workspace_state: WorkspaceState::new(&registry_state, &qh),
             toplevel_info_state: ToplevelInfoState::new(&registry_state, &qh),
             registry_state,
         };
@@ -192,11 +202,9 @@ impl WaylandHelper {
         // Do another roundtrip to receive dmabuf format events
         event_queue.roundtrip(&mut data).unwrap();
 
-        // Do additional roundtrips to receive toplevel info
-        // The toplevel protocol requires multiple roundtrips to get all window info
-        for _ in 0..3 {
-            event_queue.roundtrip(&mut data).unwrap();
-        }
+        // The window list is not here yet, the compositor sends each window's
+        // details on its own refresh pass, not in reply to a request. See
+        // `wait_for_toplevels`.
 
         thread::spawn(move || {
             loop {
@@ -248,18 +256,32 @@ impl WaylandHelper {
             .collect()
     }
 
-    /// Wait for toplevels to be populated, with a timeout
-    /// Returns true if toplevels were found, false if timeout expired
+    /// Every known window with its geometry and state, minimized ones included.
+    pub fn toplevel_infos(&self) -> Vec<ToplevelInfo> {
+        self.inner.toplevels.lock().unwrap().clone()
+    }
+
+    /// The workspace shown on each output.
+    pub fn active_workspaces(&self) -> Vec<ExtWorkspaceHandleV1> {
+        self.inner.active_workspaces.lock().unwrap().clone()
+    }
+
+    /// Wait for the window list to arrive and settle, non-empty and unchanged
+    /// over a poll, or `timeout`. Returns whether any arrived. The compositor
+    /// sends the list on its own time after the connection is made, and a
+    /// window only shows once all of its details are in.
     pub fn wait_for_toplevels(&self, timeout: std::time::Duration) -> bool {
         let start = std::time::Instant::now();
         let poll_interval = std::time::Duration::from_millis(50);
+        let mut last = 0;
 
         while start.elapsed() < timeout {
             let count = self.inner.toplevels.lock().unwrap().len();
-            if count > 0 {
+            if count > 0 && count == last {
                 log::debug!("Found {} toplevels after {:?}", count, start.elapsed());
                 return true;
             }
+            last = count;
             std::thread::sleep(poll_interval);
         }
 
@@ -617,9 +639,14 @@ impl ToplevelInfoHandler for AppData {
         &mut self,
         _conn: &Connection,
         _qh: &QueueHandle<Self>,
-        _toplevel: &ExtForeignToplevelHandleV1,
+        toplevel: &ExtForeignToplevelHandleV1,
     ) {
-        self.update_toplevels();
+        *self.wayland_helper.inner.toplevels.lock().unwrap() = self
+            .toplevel_info_state
+            .toplevels()
+            .filter(|info| &info.foreign_toplevel != toplevel)
+            .cloned()
+            .collect();
     }
 }
 
@@ -714,6 +741,22 @@ sctk::delegate_registry!(AppData);
 sctk::delegate_output!(AppData);
 cosmic_client_toolkit::delegate_screencopy!(AppData);
 cosmic_client_toolkit::delegate_toplevel_info!(AppData);
+
+impl WorkspaceHandler for AppData {
+    fn workspace_state(&mut self) -> &mut WorkspaceState {
+        &mut self.workspace_state
+    }
+
+    fn done(&mut self) {
+        *self.wayland_helper.inner.active_workspaces.lock().unwrap() = self
+            .workspace_state
+            .workspaces()
+            .filter(|w| w.state.contains(ext_workspace_handle_v1::State::Active))
+            .map(|w| w.handle.clone())
+            .collect();
+    }
+}
+cosmic_client_toolkit::delegate_workspace!(AppData);
 
 pub fn create_memfd(width: u32, height: u32) -> OwnedFd {
     // TODO: BSD support using shm_open

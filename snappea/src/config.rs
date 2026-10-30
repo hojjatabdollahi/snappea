@@ -358,6 +358,9 @@ pub struct Config {
     /// Scan a selection for QR codes as soon as it is made
     #[serde(default = "default_recognize_qr_codes")]
     pub recognize_qr_codes: bool,
+    /// A click without a drag selects the window under it
+    #[serde(default = "default_click_selects_window")]
+    pub click_selects_window: bool,
     /// Magnifier zoom level (range 1.5-10.0)
     #[serde(default = "default_magnifier_magnification")]
     pub magnifier_magnification: f32,
@@ -406,6 +409,10 @@ pub struct Config {
 
 const fn default_magnifier_magnification() -> f32 {
     2.5
+}
+
+const fn default_click_selects_window() -> bool {
+    true
 }
 
 const fn default_recognize_qr_codes() -> bool {
@@ -548,6 +555,7 @@ impl Default for Config {
             primary_redact_tool: RedactTool::Redact,
             pixelation_block_size: 16,
             recognize_qr_codes: default_recognize_qr_codes(),
+            click_selects_window: default_click_selects_window(),
             magnifier_magnification: default_magnifier_magnification(),
             capture_delay_secs: 0,
             video_encoder: None,

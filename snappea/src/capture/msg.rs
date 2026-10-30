@@ -127,6 +127,8 @@ pub enum ActionMsg {
     ToggleRecordingAnnotation,
     ToggleCaptureMode(bool),
     Choice(Choice),
+    WindowAt(i32, i32),
+    WindowTitleExpired(Instant),
     OutputChanged(WlOutput),
     OpenUrl(String),
 }
@@ -335,6 +337,12 @@ impl Msg {
     }
     pub const fn choice(c: Choice) -> Self {
         Self::Action(ActionMsg::Choice(c))
+    }
+    pub const fn window_at(x: i32, y: i32) -> Self {
+        Self::Action(ActionMsg::WindowAt(x, y))
+    }
+    pub const fn window_title_expired(shown: Instant) -> Self {
+        Self::Action(ActionMsg::WindowTitleExpired(shown))
     }
     pub const fn output_changed(output: WlOutput) -> Self {
         Self::Action(ActionMsg::OutputChanged(output))
