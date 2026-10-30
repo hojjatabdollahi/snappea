@@ -208,7 +208,7 @@ impl Editor {
             fps: export::GIF_FPS[self.gif_fps],
             scale: export::GIF_SCALE[self.gif_scale],
             gifski: self.gifski,
-            audio: self.audio,
+            audio: self.audio && !self.peaks.is_empty(),
         };
         Task::perform(
             async move {

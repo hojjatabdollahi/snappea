@@ -7,23 +7,22 @@ All notable changes to SnapPea are listed here. The format follows
 
 ### Added
 
-- A background behind text labels
-- Text labels start centered, horizontally and vertically, and keep whatever box height you drag out. Typing more only ever grows the box. Resizing no longer changes the font size.
-- Shapes and pixelate can be reshaped after drawing.
-- A click without a drag selects the window under it. `click_selects_window: false` in the config file turns that off.
-- Add a toggle to edit videos after recording
-- Can select pixelate after drawing one
-- Recording refuses to start/stops, when the save folder has less free space than `video_min_free_mb`
+- Text annotation now can have a custom size and a backdrop.
+- Shapes and pixelate can be edited after drawing.
+- You can select a window instead of drawing a region around it, by just clicking on it. `click_selects_window: false` in the config file turns that off.
+- Add a toggle to edit videos after recording.
+- Recording refuses to start/stops, when the save folder has less free space than `video_min_free_mb`.
 
 ### Changed
 
+- Default name for the output files is now just the date, with no prefix or suffixes.
 - The toolbar starts a little higher above the bottom edge.
 - Show file name in the video editor header instead of the full path.
-- Default name for the output files is now just the date, with no prefix or suffixes.
 - Use libcosmic's dropdown widget for the video speed dropdown
 
 ### Fixed
 
+- Annotations in "All Screens" mode are now saved.
 - A press outside an open toolbar dropdown now only closes it
 - Drawing on one screen no longer shows a stray piece of the shape on another output
 - A color from the custom picker now applies to the selected annotation
@@ -35,8 +34,10 @@ All notable changes to SnapPea are listed here. The format follows
 - On a fresh start the overlay could open with no windows to click, it no longer waits on a guess, and takes the list once the compositor has sent it.
 - Pointer shapes are now more consistent and signal the possible action better
 - A screenshot that could not be written to disk, failed silently and left an empty file behind. The file is now removed and a notification is shown.
-- Annotations in "All Screens" mode are now saved.
-- Sometimes when drawing a region, the selection box starts from some random point
+- Sometimes when drawing a region, the selection box starts from some random point.
+- Old text stayed visible while resizing or editing a text label.
+- The editor showed a mute button and passed audio flags to the export for recordings without an audio track.
+- Exporting with a VA-API encoder failed silently when the video had audio, since the quality flag also reached the audio encoder.
 
 ## [1.2.0] - 2026-10-23
 

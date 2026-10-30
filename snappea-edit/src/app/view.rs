@@ -87,10 +87,12 @@ fn controls(editor: &Editor) -> cosmic::Element<'_, Message> {
         .height(Length::Fixed(TRACK_HEIGHT))
         .align_y(Alignment::Center);
 
-    widget::row::with_children(vec![
-        play.into(),
-        speed.into(),
-        audio.into(),
+    let mut children = vec![play.into(), speed.into()];
+    // No audio track, nothing to mute.
+    if !editor.peaks.is_empty() {
+        children.push(audio.into());
+    }
+    children.push(
         track_bar(
             editor.duration,
             editor.trim_start,
@@ -106,10 +108,11 @@ fn controls(editor: &Editor) -> cosmic::Element<'_, Message> {
         .on_trim(Message::TrimChanged)
         .on_release(Message::TrimReleased)
         .into(),
-    ])
-    .spacing(8)
-    .align_y(Alignment::Start)
-    .into()
+    );
+    widget::row::with_children(children)
+        .spacing(8)
+        .align_y(Alignment::Start)
+        .into()
 }
 
 /// Side panel: output format, its settings, and the Export action

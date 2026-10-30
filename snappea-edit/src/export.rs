@@ -181,8 +181,9 @@ impl EncoderKind {
             Self::SvtAv1 => &["-preset", "8", "-crf", &q],
             Self::H264Nvenc => &["-preset", "p4", "-rc", "vbr", "-cq", &q, "-b:v", "0"],
             Self::Av1Nvenc => &["-preset", "p5", "-rc", "vbr", "-cq", &q, "-b:v", "0"],
+            // `global_quality` is a generic option, so unscoped it also reaches libopus, which rejects it.
             Self::H264Vaapi | Self::Vp9Vaapi | Self::Av1Vaapi => {
-                &["-rc_mode", "CQP", "-global_quality", &q]
+                &["-rc_mode", "CQP", "-global_quality:v", &q]
             }
         };
         let mut args: Vec<String> = args.iter().map(ToString::to_string).collect();
