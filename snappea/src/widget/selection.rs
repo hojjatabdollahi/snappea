@@ -59,6 +59,7 @@ struct InteractionState {
     last_press: Option<(std::time::Instant, f32, f32, Option<usize>)>,
     /// A handle of the selected annotation is being dragged
     resize: Option<(usize, usize, f32, f32)>,
+    ctrl_down: bool,
 }
 
 impl InteractionState {
@@ -102,6 +103,7 @@ struct Handles {
     points: [Point; 2],
     anchors: [Point; 2],
     corners: bool,
+    kind: Option<viewer_tools::annotate::ShapeKind>,
 }
 
 /// Output context for multi-monitor support
@@ -627,7 +629,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
         let op = a.stack.get(index)?;
         let any = op.as_any();
         let pad = crate::widget::overlays::SELECTION_PAD;
-        let box_handles = |anchors: [Point; 2]| {
+        let box_handles = |anchors: [Point; 2], kind: Option<ShapeKind>| {
             let b = op.bounds()?;
             Some(Handles {
                 index,
@@ -637,6 +639,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                 ],
                 anchors,
                 corners: true,
+                kind,
             })
         };
         let corners_of = |s: Point, e: Point| {
@@ -647,7 +650,10 @@ impl<'a> ScreenshotSelectionWidget<'a> {
         };
         if let Some(m) = any.downcast_ref::<MagnifierOperation>() {
             let c = m.center();
-            return a.magnifier_mode.then(|| box_handles([c, c])).flatten();
+            return a
+                .magnifier_mode
+                .then(|| box_handles([c, c], None))
+                .flatten();
         }
         if let Some(s) = any.downcast_ref::<ShapeOperation>() {
             if a.shape_mode != Some(s.kind) {
@@ -659,14 +665,15 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                     points: [s.start, s.end],
                     anchors: [s.start, s.end],
                     corners: false,
+                    kind: Some(s.kind),
                 }),
-                _ => box_handles(corners_of(s.start, s.end)),
+                _ => box_handles(corners_of(s.start, s.end), Some(s.kind)),
             };
         }
         if let Some(p) = any.downcast_ref::<PixelateOperation>() {
             return a
                 .pixelate_mode
-                .then(|| box_handles(corners_of(p.start, p.end)))
+                .then(|| box_handles(corners_of(p.start, p.end), None))
                 .flatten();
         }
         None
@@ -1011,6 +1018,11 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         use cosmic::iced::core::Event;
         use cosmic::iced::core::mouse::{Button, Event as MouseEvent};
 
+        if let Event::Keyboard(cosmic::iced::core::keyboard::Event::ModifiersChanged(mods)) = event
+        {
+            tree.state.downcast_mut::<InteractionState>().ctrl_down = mods.control();
+        }
+
         if self.output_ctx.is_active_output
             && matches!(event, Event::Mouse(_))
             && let Some(menu_layout) = layout.children().nth(3)
@@ -1222,7 +1234,19 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 match mouse_event {
                     MouseEvent::CursorMoved { .. } => {
                         if let Some((x, y)) = self.clamp_to_selection(pos) {
-                            shell.publish(Msg::resize_annotation(index, which, x - dx, y - dy));
+                            let (mut px, mut py) = (x - dx, y - dy);
+                            // Ctrl: square, or 45°, against the fixed other point, as when drawing.
+                            if drag_state.ctrl_down
+                                && let Some(handles) = self.picked_handles()
+                                && handles.index == index
+                                && let Some(kind) = handles.kind
+                            {
+                                let fixed = handles.anchors[1 - which];
+                                (px, py) = crate::widget::overlays::constrain_shape(
+                                    kind, fixed.x, fixed.y, px, py,
+                                );
+                            }
+                            shell.publish(Msg::resize_annotation(index, which, px, py));
                         }
                         shell.capture_event();
                         return;

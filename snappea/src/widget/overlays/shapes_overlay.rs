@@ -95,6 +95,22 @@ impl ShapesState {
     }
 }
 
+/// If ctrl is held down, areas become square, lines snap to 45°.
+pub fn constrain_shape(kind: ShapeKind, sx: f32, sy: f32, ex: f32, ey: f32) -> (f32, f32) {
+    use ShapeKind as K;
+    match kind {
+        K::Line | K::Arrow => snap_to_45_degrees(sx, sy, ex, ey),
+        _ => {
+            let dx = ex - sx;
+            let dy = ey - sy;
+            let side = dx.abs().min(dy.abs());
+            let sign_x = if dx < 0.0 { -1.0 } else { 1.0 };
+            let sign_y = if dy < 0.0 { -1.0 } else { 1.0 };
+            (side.mul_add(sign_x, sx), side.mul_add(sign_y, sy))
+        }
+    }
+}
+
 /// Whether `op` draws sampled pixels as an image. iced renders a layer's images
 /// after its meshes whatever the call order, so the operations after one of
 /// these have to go in a layer of their own to land on top of it.
@@ -150,23 +166,9 @@ impl<Message: Clone + 'static> ShapesOverlay<'_, Message> {
         })
     }
 
-    /// What holding Ctrl means for this shape: areas become square, lines snap to 45°.
+    /// What holding Ctrl means for this shape, see [`constrain_shape`].
     fn constrain(kind: ShapeKind, sx: f32, sy: f32, ex: f32, ey: f32) -> (f32, f32) {
-        use ShapeKind as K;
-        match kind {
-            K::Line | K::Arrow => snap_to_45_degrees(sx, sy, ex, ey),
-            _ => Self::constrain_end(sx, sy, ex, ey),
-        }
-    }
-
-    /// Constrain end point to form a square/circle (when Ctrl is held)
-    fn constrain_end(sx: f32, sy: f32, ex: f32, ey: f32) -> (f32, f32) {
-        let dx = ex - sx;
-        let dy = ey - sy;
-        let side = dx.abs().min(dy.abs());
-        let sign_x = if dx < 0.0 { -1.0 } else { 1.0 };
-        let sign_y = if dy < 0.0 { -1.0 } else { 1.0 };
-        (side.mul_add(sign_x, sx), side.mul_add(sign_y, sy))
+        constrain_shape(kind, sx, sy, ex, ey)
     }
 
     /// Whether any drawing gesture handled by this overlay is in progress.
