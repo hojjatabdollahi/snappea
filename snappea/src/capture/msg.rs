@@ -293,6 +293,18 @@ impl Msg {
     pub const fn close_shape_popup() -> Self {
         Self::Tool(ToolMsg::ShapePopup(ToolPopupAction::Close))
     }
+    pub const fn close_freehand_popup() -> Self {
+        Self::Tool(ToolMsg::FreehandPopup(ToolPopupAction::Close))
+    }
+    pub const fn close_stroke_popup() -> Self {
+        Self::Tool(ToolMsg::StrokePopup(ToolPopupAction::Close))
+    }
+    pub const fn close_font_popup() -> Self {
+        Self::Tool(ToolMsg::FontPopup(ToolPopupAction::Close))
+    }
+    pub const fn close_delay_popup() -> Self {
+        Self::Tool(ToolMsg::DelayPopup(ToolPopupAction::Close))
+    }
     pub const fn set_shape_color(color: AnnotateColor) -> Self {
         Self::Tool(ToolMsg::SetAnnotateColor(color))
     }

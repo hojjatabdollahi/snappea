@@ -1074,13 +1074,26 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 .nth(MENU)
                 .is_some_and(|menu| menu.bounds().contains(pos))
         {
-            if self.ui.shape_popup_open {
-                shell.publish(Msg::close_shape_popup());
-                shell.capture_event();
-                return;
-            }
-            if self.ui.settings_drawer_open {
-                shell.publish(Msg::toggle_settings_drawer());
+            let ui = self.ui;
+            let close = if ui.shape_popup_open {
+                Some(Msg::close_shape_popup())
+            } else if ui.freehand_popup_open {
+                Some(Msg::close_freehand_popup())
+            } else if ui.stroke_popup_open {
+                Some(Msg::close_stroke_popup())
+            } else if ui.font_popup_open {
+                Some(Msg::close_font_popup())
+            } else if ui.delay_popup_open {
+                Some(Msg::close_delay_popup())
+            } else if ui.text_format_popup_open {
+                Some(Msg::text(TextAction::TogglePopup))
+            } else if ui.settings_drawer_open {
+                Some(Msg::toggle_settings_drawer())
+            } else {
+                None
+            };
+            if let Some(close) = close {
+                shell.publish(close);
                 shell.capture_event();
                 return;
             }
