@@ -84,6 +84,10 @@ pub struct ShapesState {
     /// Whether the pointer went down on a text label and has not come up. Tracked
     /// here because the view is rebuilt between press and release.
     pub text_pressed: bool,
+    /// Whether the pointer is on this output. A window it has left keeps
+    /// reporting the last position it saw, so only the one it is on previews
+    /// a drag.
+    pub pointer_inside: bool,
 }
 
 impl ShapesState {
@@ -199,6 +203,14 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
                 None => (px, py),
             }
         };
+
+        match event {
+            canvas::Event::Mouse(MouseEvent::CursorEntered | MouseEvent::CursorMoved { .. }) => {
+                state.pointer_inside = true;
+            }
+            canvas::Event::Mouse(MouseEvent::CursorLeft) => state.pointer_inside = false,
+            _ => {}
+        }
 
         match event {
             canvas::Event::Keyboard(keyboard::Event::ModifiersChanged(mods)) => {
@@ -318,6 +330,7 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
         let origin = Point::new(self.output_rect.left as f32, self.output_rect.top as f32);
         let cursor_global = cursor
             .position_in(bounds)
+            .filter(|_| state.pointer_inside)
             .map(|p| Point::new(p.x + origin.x, p.y + origin.y));
         let constrain = state.ctrl_down || state.ctrl_latched;
         let ink: Color = self.shape_color.into();
