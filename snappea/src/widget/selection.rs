@@ -40,7 +40,8 @@ use cosmic::iced::core::widget::Tree;
 use cosmic::iced::widget::canvas;
 use cosmic::widget::image;
 use viewer_tools::annotate::{
-    MagnifierOperation, PixelateOperation, ShapeOperation, TextOperation,
+    HighlighterOperation, MagnifierOperation, PenOperation, PixelateOperation, RedactOperation,
+    ShapeOperation, TextOperation,
 };
 
 /// Distance (logical px) from a magnifier's ring within which a drag resizes it
@@ -605,7 +606,24 @@ impl<'a> ScreenshotSelectionWidget<'a> {
         ]
     }
 
-    /// Whether a point on this output is inside the region being captured.
+    /// If the topmost annotation under `point` is of the same kind
+    /// the active tool, then select it instead of drawing another one.
+    fn own_kind_hit(&self, point: Point) -> Option<usize> {
+        let a = self.annotations;
+        a.operations().iter().rposition(|op| {
+            let any = op.as_any();
+            let own = any
+                .downcast_ref::<ShapeOperation>()
+                .is_some_and(|s| a.shape_mode == Some(s.kind))
+                || (a.text_mode && any.is::<TextOperation>())
+                || (a.pixelate_mode && any.is::<PixelateOperation>())
+                || (a.redact_mode && any.is::<RedactOperation>())
+                || (a.pen_mode && !a.highlighter_mode && any.is::<PenOperation>())
+                || (a.highlighter_mode && any.is::<HighlighterOperation>());
+            own && op.hit_test(point, false)
+        })
+    }
+
     fn inside_selection(&self, pos: Point) -> bool {
         self.selection_rect.is_some_and(|(x, y, w, h)| {
             pos.x >= x && pos.x <= x + w && pos.y >= y && pos.y <= y + h
@@ -1039,10 +1057,8 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 .position()
                 .is_some_and(|pos| layout_children[MENU].bounds().contains(pos));
 
-        // Shape, text and pixelate tools pick up their own kind
         let annotations = self.annotations;
-        let picking =
-            annotations.shape_mode.is_some() || annotations.text_mode || annotations.pixelate_mode;
+        let picking = annotations.any_mode_active() && !annotations.magnifier_mode;
         if picking
             && !click_inside_toolbar
             && !self.ui.move_mode
@@ -1054,16 +1070,7 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 pos.x + self.output_rect.left as f32,
                 pos.y + self.output_rect.top as f32,
             );
-            let point = Point::new(global_x, global_y);
-            let hit = annotations.operations().iter().rposition(|op| {
-                let any = op.as_any();
-                let own = any
-                    .downcast_ref::<ShapeOperation>()
-                    .is_some_and(|s| annotations.shape_mode == Some(s.kind))
-                    || (annotations.text_mode && any.is::<TextOperation>())
-                    || (annotations.pixelate_mode && any.is::<PixelateOperation>());
-                own && op.hit_test(point, false)
-            });
+            let hit = self.own_kind_hit(Point::new(global_x, global_y));
             if hit.is_some() || annotations.selected.is_some() {
                 let drag_state = tree.state.downcast_mut::<InteractionState>();
                 // Double-clicking a text opens it for editing.
@@ -1397,27 +1404,46 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 .any(|child| child.bounds().contains(pos))
         });
 
-        // Move: open hand over a pickable annotation, closed while carrying.
-        if self.ui.move_mode && !over_chrome {
-            let dragging = state
-                .state
-                .downcast_ref::<InteractionState>()
-                .move_drag
-                .is_some();
-            if dragging {
+        let interaction = state.state.downcast_ref::<InteractionState>();
+        if !over_chrome {
+            if interaction.move_drag.is_some()
+                || matches!(interaction.drag, Some(MagnifierDrag::Move { .. }))
+            {
                 return cosmic::iced::mouse::Interaction::Grabbing;
             }
-            if let Some(pos) = cursor.position() {
-                let global_x = pos.x + self.output_rect.left as f32;
-                let global_y = pos.y + self.output_rect.top as f32;
+            if matches!(interaction.drag, Some(MagnifierDrag::Resize { .. })) {
+                return cosmic::iced::mouse::Interaction::ResizingDiagonallyDown;
+            }
+        }
+
+        if !over_chrome
+            && !self.text_open
+            && let Some(pos) = cursor.position()
+        {
+            let point = Point::new(
+                pos.x + self.output_rect.left as f32,
+                pos.y + self.output_rect.top as f32,
+            );
+            if self.ui.move_mode {
+                if self.annotations.stack.hit(point).is_some() {
+                    return cosmic::iced::mouse::Interaction::Grab;
+                }
+            } else if self.annotations.magnifier_mode {
+                if let Some(sel) = self.annotations.selected
+                    && let Some(m) = self.annotations.magnifier(sel)
+                    && (point.distance(m.center()) - m.radius()).abs() <= MAGNIFIER_RING_GRAB
+                {
+                    return cosmic::iced::mouse::Interaction::ResizingDiagonallyDown;
+                }
                 if self
                     .annotations
-                    .stack
-                    .hit(Point::new(global_x, global_y))
-                    .is_some()
+                    .magnifiers()
+                    .any(|(_, m)| point.distance(m.center()) <= m.radius())
                 {
                     return cosmic::iced::mouse::Interaction::Grab;
                 }
+            } else if self.own_kind_hit(point).is_some() {
+                return cosmic::iced::mouse::Interaction::Grab;
             }
         }
 
@@ -1521,8 +1547,12 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             }
         }
 
-        // Default to crosshair for rectangle selection area
-        cosmic::iced::mouse::Interaction::Crosshair
+        // A crosshair offers to draw out a region. Picking a screen is a click.
+        if matches!(self.choice, Choice::Output(_)) {
+            cosmic::iced::mouse::Interaction::default()
+        } else {
+            cosmic::iced::mouse::Interaction::Crosshair
+        }
     }
 
     fn overlay<'b>(

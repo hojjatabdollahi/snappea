@@ -24,6 +24,7 @@ All notable changes to SnapPea are listed here. The format follows
 
 - A window closed just before a screenshot could still be picked by a click, the list kept it until the next window event.
 - On a fresh start the overlay could open with no windows to click, it no longer waits on a guess, and takes the list once the compositor has sent it.
+- Pointer shapes are now more consistent and signal the possible action better
 - A screenshot that could not be written to disk, failed silently and left an empty file behind. The file is now removed and a notification is shown.
 - Annotations in "All Screens" mode are now saved.
 - Sometimes when drawing a region, the selection box starts from some random point
