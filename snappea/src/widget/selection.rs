@@ -86,8 +86,25 @@ enum MagnifierDrag {
         grab_dx: f32,
         grab_dy: f32,
     },
-    /// Resizing the loupe (radius follows the cursor)
-    Resize { index: usize },
+    /// Resizing the loupe: by its ring, where the radius is the distance to the
+    /// pointer, or by a corner handle of its dashed box, which stays under it.
+    Resize { index: usize, by_corner: bool },
+}
+
+/// How close a press must be to a corner handle to grab it.
+const HANDLE_GRAB: f32 = 8.0;
+
+/// Whether `point` is on one of the two corner handles of a picked loupe's
+/// dashed box, which [`draw_magnifier_handles`] draws.
+fn on_magnifier_handle(m: &MagnifierOperation, point: Point) -> bool {
+    let c = m.center();
+    let reach = m.radius() + crate::widget::overlays::SELECTION_PAD;
+    [
+        Point::new(c.x - reach, c.y - reach),
+        Point::new(c.x + reach, c.y + reach),
+    ]
+    .into_iter()
+    .any(|corner| point.distance(corner) <= HANDLE_GRAB)
 }
 
 /// Output context for multi-monitor support
@@ -1265,8 +1282,15 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                             && let Some(m) = self.annotations.magnifier(sel)
                         {
                             let Point { x: cx, y: cy } = m.center();
-                            if (dist_to(cx, cy) - m.radius()).abs() <= MAGNIFIER_RING_GRAB {
-                                drag_state.drag = Some(MagnifierDrag::Resize { index: sel });
+                            let by_corner =
+                                on_magnifier_handle(m, Point::new(cursor_gx, cursor_gy));
+                            if by_corner
+                                || (dist_to(cx, cy) - m.radius()).abs() <= MAGNIFIER_RING_GRAB
+                            {
+                                drag_state.drag = Some(MagnifierDrag::Resize {
+                                    index: sel,
+                                    by_corner,
+                                });
                                 shell.capture_event();
                                 return;
                             }
@@ -1317,11 +1341,20 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                             shell.publish(Msg::magnifier_move(index, nx, ny));
                             shell.capture_event();
                         }
-                        Some(MagnifierDrag::Resize { index }) => {
-                            let index = *index;
+                        Some(MagnifierDrag::Resize { index, by_corner }) => {
+                            let (index, by_corner) = (*index, *by_corner);
                             if let Some(m) = self.annotations.magnifier(index) {
                                 let Point { x: cx, y: cy } = m.center();
-                                let r = dist_to(cx, cy);
+                                let d = dist_to(cx, cy);
+                                // A corner handle sits on the box's diagonal, pad outside the disc.
+                                let r = if by_corner {
+                                    d.mul_add(
+                                        std::f32::consts::FRAC_1_SQRT_2,
+                                        -crate::widget::overlays::SELECTION_PAD,
+                                    )
+                                } else {
+                                    d
+                                };
                                 shell.publish(Msg::magnifier_resize(index, r));
                                 shell.capture_event();
                             }
@@ -1431,7 +1464,8 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             } else if self.annotations.magnifier_mode {
                 if let Some(sel) = self.annotations.selected
                     && let Some(m) = self.annotations.magnifier(sel)
-                    && (point.distance(m.center()) - m.radius()).abs() <= MAGNIFIER_RING_GRAB
+                    && (on_magnifier_handle(m, point)
+                        || (point.distance(m.center()) - m.radius()).abs() <= MAGNIFIER_RING_GRAB)
                 {
                     return cosmic::iced::mouse::Interaction::ResizingDiagonallyDown;
                 }
