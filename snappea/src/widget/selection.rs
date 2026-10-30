@@ -1601,9 +1601,11 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 pos.y + self.output_rect.top as f32,
             );
             if self.ui.move_mode {
-                if self.annotations.stack.hit(point).is_some() {
-                    return cosmic::iced::mouse::Interaction::Grab;
-                }
+                return if self.annotations.stack.hit(point).is_some() {
+                    cosmic::iced::mouse::Interaction::Grab
+                } else {
+                    cosmic::iced::mouse::Interaction::default()
+                };
             } else if let Some((handles, _)) = self.handle_at(point) {
                 return if handles.corners {
                     cosmic::iced::mouse::Interaction::ResizingDiagonallyDown
