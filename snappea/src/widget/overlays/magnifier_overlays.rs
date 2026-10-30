@@ -3,17 +3,13 @@
 use cosmic::iced::Color;
 use cosmic::iced::core::{Background, Border, Rectangle, Renderer as _, Shadow, renderer::Quad};
 
-pub fn draw_magnifier_handles(
+pub fn draw_handles(
     renderer: &mut cosmic::Renderer,
     viewport: &Rectangle,
-    cx: f32,
-    cy: f32,
-    radius: f32,
+    handles: [(f32, f32); 2],
     accent: Color,
 ) {
     let handle_r = 6.0_f32;
-    let reach = radius + super::shapes_overlay::SELECTION_PAD;
-    let handles = [(cx - reach, cy - reach), (cx + reach, cy + reach)];
 
     renderer.with_layer(*viewport, |renderer| {
         for (hx, hy) in handles {

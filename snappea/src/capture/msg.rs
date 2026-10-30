@@ -57,6 +57,7 @@ pub enum DrawMsg {
     MagnifierMove(usize, f32, f32),
     MagnifierResize(usize, f32),
     MagnifierSetZoom(usize, f32),
+    ResizeAnnotation(usize, usize, f32, f32),
     Redact(DrawAction),
     Pixelate(DrawAction),
     ToggleMoveMode,
@@ -232,6 +233,9 @@ impl Msg {
     }
     pub const fn magnifier_resize(index: usize, radius: f32) -> Self {
         Self::Draw(DrawMsg::MagnifierResize(index, radius))
+    }
+    pub const fn resize_annotation(index: usize, handle: usize, x: f32, y: f32) -> Self {
+        Self::Draw(DrawMsg::ResizeAnnotation(index, handle, x, y))
     }
     pub const fn magnifier_set_zoom(index: usize, zoom: f32) -> Self {
         Self::Draw(DrawMsg::MagnifierSetZoom(index, zoom))

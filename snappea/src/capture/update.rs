@@ -1117,6 +1117,27 @@ pub fn apply_draw(capture: &mut Capture, msg: DrawMsg) {
                     m.set_geometry(center, radius);
                 });
         }
+        DrawMsg::ResizeAnnotation(index, handle, x, y) => {
+            capture.annotations.selected = Some(index);
+            let point = Point::new(x, y);
+            capture
+                .annotations
+                .edit_selected::<ShapeOperation>(|shape| match shape.kind {
+                    ShapeKind::Line | ShapeKind::Arrow => {
+                        *(if handle == 0 {
+                            &mut shape.start
+                        } else {
+                            &mut shape.end
+                        }) = point;
+                    }
+                    _ => set_box_handle(&mut shape.start, &mut shape.end, handle, point),
+                });
+            capture
+                .annotations
+                .edit_selected::<PixelateOperation>(|pixelate| {
+                    set_box_handle(&mut pixelate.start, &mut pixelate.end, handle, point);
+                });
+        }
         DrawMsg::MagnifierSetZoom(index, zoom) => {
             capture.annotations.selected = Some(index);
             let zoom = zoom.clamp(MAGNIFIER_MIN_ZOOM, MAGNIFIER_MAX_ZOOM);
@@ -1175,6 +1196,7 @@ fn handle_shape(capture: &mut Capture, kind: ShapeKind, action: DrawAction) {
                     capture.ui.shape_color.0,
                     capture.ui.shape_thickness,
                 )));
+                capture.annotations.selected = Some(capture.annotations.stack.len() - 1);
             }
         }
     }
@@ -1292,9 +1314,18 @@ fn handle_pixelate(capture: &mut Capture, action: DrawAction) {
                     Point::new(x, y),
                     capture.ui.pixelation_block_size as f32,
                 )));
+                capture.annotations.selected = Some(capture.annotations.stack.len() - 1);
             }
         }
     }
+}
+
+fn set_box_handle(start: &mut Point, end: &mut Point, which: usize, point: Point) {
+    let min = Point::new(start.x.min(end.x), start.y.min(end.y));
+    let max = Point::new(start.x.max(end.x), start.y.max(end.y));
+    let fixed = if which == 0 { max } else { min };
+    *start = Point::new(fixed.x.min(point.x), fixed.y.min(point.y));
+    *end = Point::new(fixed.x.max(point.x), fixed.y.max(point.y));
 }
 
 /// Handle a `ToolMsg`. Returns whether config needs saving.
