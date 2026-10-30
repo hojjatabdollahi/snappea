@@ -8,7 +8,15 @@ A screenshot and screen recording tool for the COSMIC desktop environment with a
 
 
 
-https://github.com/user-attachments/assets/8091f7e3-5ecb-4111-abaf-0fe365aa1e1d
+
+
+Screenshot Demo
+
+https://github.com/user-attachments/assets/2db24b53-25ca-4890-b2b7-ba115880df75
+
+Screencast Demo
+
+https://github.com/user-attachments/assets/bf64b613-d068-46be-be07-3fec3e95534b
 
 
 Disclaimer: This project is based on xdg-desktop-portal-cosmic with added features. It implements the same screenshot portal interface. When set up correctly, dbus messages sent by `cosmic-screenshot` will be handled by SnapPea instead of `xdg-desktop-portal-cosmic` (only Screenshot Portal messages).
@@ -16,23 +24,21 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 ## Features
 
 - Interactive screenshot selection
-- Screen recording with hardware acceleration (no audio yet)
+- Screen recording with hardware acceleration
   - Multiple container formats (MP4, WebM, MKV)
   - Configurable framerate (24/30/60 fps)
   - Hardware encoder selection
   - Cursor visibility toggle
   - Live annotations while recording
+  - System audio and microphone audio recording
 - Video editor
   - Trim recorded video
   - Save as gif
   - Save as WebM
-- Annotation tools: arrows, circles, squares, freehand drawing
+  - Remove audio
+- Annotation tools: pixelate, arrow, shapes, pencil
 - Text recognition (OCR)
 - QR code detection
-- Redaction and pixelation
-- Multi-window and multi-output support
-- Keyboard shortcuts
-- Configurable settings
 
 ## Installation
 
@@ -84,9 +90,8 @@ Build and install with [just](https://github.com/casey/just):
 just && sudo just install
 ```
 
-This installs the binary to `/usr/bin/snappea` and adds a desktop entry to your application menu.
 
-**Setting up a keyboard shortcut:**
+**Setting up a custom keyboard shortcut:**
 
 1. Open **Settings** > **Keyboard** > **Keyboard Shortcuts** > **Custom Shortcuts**
 2. Add a new shortcut:
@@ -101,14 +106,11 @@ This installs the binary to `/usr/bin/snappea` and adds a desktop entry to your 
 
 To use SnapPea as the default screenshot portal (replacing the COSMIC screenshot tool when `Print Screen` is pressed):
 
-1. Open SnapPea
-2. Click the **Settings** gear icon
-3. Under the **General** tab, enable **Set as Default**
+1. Open SnapPea by running it from cosmic-launcher (super key) or cosmic-app-library (super+a)
+2. Click the **Settings** icon
+3. Enable **Default screenshot app**
 
 This automatically registers SnapPea as the preferred screenshot portal for your user account and restarts `xdg-desktop-portal` to apply the change immediately. No root access or manual config editing required.
-
-> [!IMPORTANT]
-> SnapPea used to install its config to `~/.config/xdg-desktop-portal/portals.conf`. This breaks theming in Flatpaks. If you had an older version of SnapPea, make sure `portals.conf` is deleted.
 
 ### Optional: Better gif quality
 To get better gif quality install [gifski](https://gif.ski/).
@@ -124,15 +126,11 @@ sudo apt install tesseract-ocr
 # Fedora
 sudo dnf install tesseract
 
-# Arch
-sudo pacman -S tesseract
 ```
 
 ### Uninstalling
 
-```sh
-sudo just uninstall
-```
+Remove snappea as the default screenshot tool and run `sudo apt remove snappea` or `sudo just uninstall` if you installed it from source.
 
 The uninstall command will warn you if `~/.config/xdg-desktop-portal/cosmic-portals.conf` still contains SnapPea configuration.
 

@@ -35,6 +35,11 @@
     </keywords>
     <launchable type="desktop-id">io.github.hojjatabdollahi.snappea.desktop</launchable>
     <releases>
+        <release version="1.3.0" date="2026-10-30">
+            <description>
+                <p>Annotations can be selected after drawing to recolor, resize or reshape them, text labels get a background, and the magnifier shows a separate source circle. A click without a drag selects the window under it. Recordings can open in the editor and stop before the disk fills. Fixes for stray shapes on other outputs, failed saves, lost annotations in all-screens captures, and pointer and toolbar glitches.</p>
+            </description>
+        </release>
         <release version="1.2.0" date="2026-10-23">
             <description>
                 <p>Audio recording: system audio, the microphone, or both, with a mute button and live level meter in the recording toolbar. The editor shows the audio track, keeps it when exporting, and can remove it. Default save folders are Screenshots and Screencasts. Fixes the microphone pop at the start of a recording and a stuck portal after a lost Wayland connection.</p>

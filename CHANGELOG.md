@@ -3,7 +3,7 @@
 All notable changes to SnapPea are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
-## Unreleased
+## [1.3.0] - 2026-10-30
 
 ### Added
 
@@ -11,6 +11,7 @@ All notable changes to SnapPea are listed here. The format follows
 - Shapes and pixelate can be edited after drawing.
 - You can select a window instead of drawing a region around it, by just clicking on it. `click_selects_window: false` in the config file turns that off.
 - Add a toggle to edit videos after recording.
+- The magnifier shows a separate circle for the source, its handles sit on the corners, and the zoom level can be changed after drawing.
 - Recording refuses to start/stops, when the save folder has less free space than `video_min_free_mb`.
 
 ### Changed
@@ -19,20 +20,22 @@ All notable changes to SnapPea are listed here. The format follows
 - The toolbar starts a little higher above the bottom edge.
 - Show file name in the video editor header instead of the full path.
 - Use libcosmic's dropdown widget for the video speed dropdown
+- Holding Ctrl constrains a shape while reshaping it too.
 
 ### Fixed
 
 - Annotations in "All Screens" mode are now saved.
+- Toolbar popups open away from the nearest screen edge.
 - A press outside an open toolbar dropdown now only closes it
 - Drawing on one screen no longer shows a stray piece of the shape on another output
 - A color from the custom picker now applies to the selected annotation
 - An annotation that sticks out of the region can be reshaped by the handle outside it.
-- A click without drag does't draw a shape, or pixelate, or magnifier annotation.
+- A click without drag doesn't draw a shape, or pixelate, or magnifier annotation.
 - The toolbar changed width when the text tool was armed or disarmed, since the font button was narrower than the size dropdown it replaces.
 - Changing the picked screen with S then clicking another could pick a third one, the click now names the screen under it.
 - A window closed just before a screenshot could still be picked by a click, the list kept it until the next window event.
 - On a fresh start the overlay could open with no windows to click, it no longer waits on a guess, and takes the list once the compositor has sent it.
-- Pointer shapes are now more consistent and signal the possible action better
+- Pointer shapes are now more consistent and signal the possible action better.
 - A screenshot that could not be written to disk, failed silently and left an empty file behind. The file is now removed and a notification is shown.
 - Sometimes when drawing a region, the selection box starts from some random point.
 - Old text stayed visible while resizing or editing a text label.
