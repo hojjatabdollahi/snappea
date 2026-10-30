@@ -51,6 +51,15 @@ use viewer_tools::annotate::ShapeKind;
 use viewer_tools::annotate::ShapeOperation;
 use wayland_client::protocol::wl_output::WlOutput;
 
+/// Shortest drag that draws a shape, in logical pixels. Anything less was a click.
+const MIN_SHAPE_DRAG: f32 = 8.0;
+
+pub const MAGNIFIER_MIN_ZOOM: f32 = 1.5;
+pub const MAGNIFIER_MAX_ZOOM: f32 = 10.0;
+
+/// Minimum distance between two sampled freehand points, in logical units.
+const PENCIL_MIN_STEP: f32 = 1.5;
+
 /// Drive the color picker and adopt the color it applies. `AppliedColor`,
 /// `ActionFinished` and `ToggleColorPicker` can all carry one, as in cosmic-viewer.
 pub fn handle_color_picker(
@@ -1086,12 +1095,6 @@ pub fn handle_set_as_default_portal(capture: &mut Capture) -> cosmic::Task<AppMs
     cosmic::Task::none()
 }
 
-pub const MAGNIFIER_MIN_ZOOM: f32 = 1.5;
-pub const MAGNIFIER_MAX_ZOOM: f32 = 10.0;
-
-/// Minimum distance between two sampled freehand points, in logical units.
-const PENCIL_MIN_STEP: f32 = 1.5;
-
 pub fn apply_draw(capture: &mut Capture, msg: DrawMsg) {
     match msg {
         DrawMsg::Shape(kind, action) => handle_shape(capture, kind, action),
@@ -1189,6 +1192,10 @@ fn handle_shape(capture: &mut Capture, kind: ShapeKind, action: DrawAction) {
         DrawAction::Move(..) => {}
         DrawAction::End(x, y) => {
             if let Some((sx, sy)) = capture.annotations.shape_drawing.take() {
+                // A click without a drag draws nothing.
+                if (x - sx).hypot(y - sy) < MIN_SHAPE_DRAG {
+                    return;
+                }
                 capture.annotations.commit(Box::new(ShapeOperation::new(
                     kind,
                     Point::new(sx, sy),
@@ -1266,7 +1273,7 @@ fn handle_magnifier(capture: &mut Capture, action: DrawAction) {
                     capture.ui.shape_color.0,
                 );
                 // Ignore a click without a drag.
-                if loupe.radius() < MIN_MAGNIFIER_RADIUS {
+                if loupe.radius() < MIN_SHAPE_DRAG {
                     return;
                 }
                 capture.annotations.commit(Box::new(loupe));
@@ -1276,9 +1283,6 @@ fn handle_magnifier(capture: &mut Capture, action: DrawAction) {
         }
     }
 }
-
-/// Smallest loupe a drag creates, in logical pixels. Anything less was a click.
-const MIN_MAGNIFIER_RADIUS: f32 = 8.0;
 
 fn handle_redact(capture: &mut Capture, action: DrawAction) {
     match action {
@@ -1407,6 +1411,8 @@ pub fn apply_tool(capture: &mut Capture, msg: ToolMsg) -> bool {
             true // needs config save
         }
         ToolMsg::SetShapeThickness(v) => {
+            // Choosing a size closes the popup
+            capture.ui.stroke_popup_open = false;
             // A picked annotation takes the new size itself. The defaults stay.
             if capture.annotations.resize_selected(v) {
                 return false;
