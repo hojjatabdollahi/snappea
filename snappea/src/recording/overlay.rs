@@ -638,6 +638,10 @@ pub fn render_recording_chrome(indicator: &RecordingIndicator) -> cosmic::Elemen
         fade_popup_open: indicator.fade_popup_open,
         thickness: indicator.pencil_thickness,
         thickness_popup_open: indicator.thickness_popup_open,
+        popup_position: crate::widget::toolbar::popup_position(
+            indicator.toolbar_pos,
+            indicator.output_size.1,
+        ),
         audio_muted: indicator.audio_muted,
         audio_levels: indicator.audio_levels.clone(),
         on_mute_toggle: AppMsg::Recording(Msg::ToggleMute),

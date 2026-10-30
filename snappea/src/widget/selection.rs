@@ -274,6 +274,10 @@ impl<'a> ScreenshotSelectionWidget<'a> {
             on_ocr_copy: Msg::ocr_copy_and_close(),
             is_video_mode: ui.is_video_mode,
             is_recording: ui.is_recording,
+            popup_position: crate::widget::toolbar::popup_position(
+                ui.toolbar_pos.get(&output.name).map(|p| (p.x, p.y)),
+                output.logical_size.1 as f32,
+            ),
             progress: ui.toolbar_anim.progress(ui.now),
             on_capture_mode_photo: Msg::toggle_capture_mode(false),
             on_capture_mode_video: Msg::toggle_capture_mode(true),
