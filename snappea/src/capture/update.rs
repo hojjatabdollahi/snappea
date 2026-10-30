@@ -89,9 +89,8 @@ pub fn handle_color_picker(
     if adopts
         && (!closing || was_active)
         && let Some(color) = app.color_picker.get_applied_color()
-        && let Some(capture) = app.capture.as_mut()
     {
-        capture.ui.shape_color = AnnotateColor(color);
+        let _ = handle_tool_msg(app, ToolMsg::SetAnnotateColor(AnnotateColor(color)));
     }
 
     // Confirming closes the panel, like choosing a preset.
