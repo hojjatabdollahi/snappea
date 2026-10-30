@@ -32,7 +32,7 @@ fn outline(ink: Color) -> Color {
 }
 
 /// Clearance between a picked annotation and its selection box.
-const SELECTION_PAD: f32 = 4.0;
+pub const SELECTION_PAD: f32 = 4.0;
 
 /// Width of that box's two strokes.
 const SELECTION_BORDER: f32 = 1.5;

@@ -3,8 +3,6 @@
 use cosmic::iced::Color;
 use cosmic::iced::core::{Background, Border, Rectangle, Renderer as _, Shadow, renderer::Quad};
 
-/// Draw selection handles (an accent ring + 4 cardinal grab handles) around a
-/// magnifier, given its center/radius in output-local logical coordinates.
 pub fn draw_magnifier_handles(
     renderer: &mut cosmic::Renderer,
     viewport: &Rectangle,
@@ -13,36 +11,11 @@ pub fn draw_magnifier_handles(
     radius: f32,
     accent: Color,
 ) {
-    let ring_bounds = Rectangle {
-        x: cx - radius,
-        y: cy - radius,
-        width: radius * 2.0,
-        height: radius * 2.0,
-    };
     let handle_r = 6.0_f32;
-    let handles = [
-        (cx, cy - radius),
-        (cx, cy + radius),
-        (cx - radius, cy),
-        (cx + radius, cy),
-    ];
+    let reach = radius + super::shapes_overlay::SELECTION_PAD;
+    let handles = [(cx - reach, cy - reach), (cx + reach, cy + reach)];
 
     renderer.with_layer(*viewport, |renderer| {
-        // Accent highlight ring
-        renderer.fill_quad(
-            Quad {
-                bounds: ring_bounds,
-                border: Border {
-                    radius: radius.into(),
-                    width: 2.0,
-                    color: accent,
-                },
-                shadow: Shadow::default(),
-                snap: false,
-            },
-            Background::Color(Color::TRANSPARENT),
-        );
-
         for (hx, hy) in handles {
             renderer.fill_quad(
                 Quad {

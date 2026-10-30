@@ -4,4 +4,4 @@ pub mod magnifier_overlays;
 mod shapes_overlay;
 pub mod status_overlays;
 
-pub use shapes_overlay::{ShapesOverlay, draw_operations, samples_pixels};
+pub use shapes_overlay::{SELECTION_PAD, ShapesOverlay, draw_operations, samples_pixels};
