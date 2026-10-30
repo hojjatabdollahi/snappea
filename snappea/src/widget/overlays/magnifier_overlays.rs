@@ -6,13 +6,13 @@ use cosmic::iced::core::{Background, Border, Rectangle, Renderer as _, Shadow, r
 pub fn draw_handles(
     renderer: &mut cosmic::Renderer,
     viewport: &Rectangle,
-    handles: [(f32, f32); 2],
+    handles: &[(f32, f32)],
     accent: Color,
 ) {
     let handle_r = 6.0_f32;
 
     renderer.with_layer(*viewport, |renderer| {
-        for (hx, hy) in handles {
+        for &(hx, hy) in handles {
             renderer.fill_quad(
                 Quad {
                     bounds: Rectangle {

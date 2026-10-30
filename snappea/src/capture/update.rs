@@ -1119,6 +1119,18 @@ pub fn apply_draw(capture: &mut Capture, msg: DrawMsg) {
                     m.set_geometry(center, radius);
                 });
         }
+        DrawMsg::MagnifierMoveSource(index, x, y) => {
+            capture.annotations.selected = Some(index);
+            capture
+                .annotations
+                .edit_selected::<MagnifierOperation>(|m| m.set_source(Point::new(x, y)));
+        }
+        DrawMsg::MagnifierResizeSource(index, radius) => {
+            capture.annotations.selected = Some(index);
+            capture
+                .annotations
+                .edit_selected::<MagnifierOperation>(|m| m.set_source_radius(radius));
+        }
         DrawMsg::ResizeAnnotation(index, handle, x, y) => {
             capture.annotations.selected = Some(index);
             let point = Point::new(x, y);
@@ -1145,7 +1157,7 @@ pub fn apply_draw(capture: &mut Capture, msg: DrawMsg) {
             let zoom = zoom.clamp(MAGNIFIER_MIN_ZOOM, MAGNIFIER_MAX_ZOOM);
             capture
                 .annotations
-                .edit_selected::<MagnifierOperation>(|m| m.magnification = zoom);
+                .edit_selected::<MagnifierOperation>(|m| m.set_zoom(zoom));
         }
         DrawMsg::Redact(action) => handle_redact(capture, action),
         DrawMsg::Pixelate(action) => handle_pixelate(capture, action),
@@ -1263,9 +1275,10 @@ fn handle_magnifier(capture: &mut Capture, action: DrawAction) {
             }
         }
         DrawAction::Move(..) => {}
+        // The second click places the magnifier, the source circle was placed by the first
         DrawAction::End(x, y) => {
             if let Some((sx, sy)) = capture.annotations.magnifier_drawing.take() {
-                let loupe = MagnifierOperation::new(
+                let mut loupe = MagnifierOperation::new(
                     Point::new(sx, sy),
                     Point::new(x, y),
                     capture.ui.magnifier_magnification,
@@ -1275,6 +1288,7 @@ fn handle_magnifier(capture: &mut Capture, action: DrawAction) {
                 if loupe.radius() < MIN_SHAPE_DRAG {
                     return;
                 }
+                loupe.ring_width = capture.ui.magnifier_ring_width;
                 capture.annotations.commit(Box::new(loupe));
                 // Selected straight away, so its zoom can be adjusted.
                 capture.annotations.selected = Some(capture.annotations.stack.len() - 1);
@@ -1424,7 +1438,7 @@ pub fn apply_tool(capture: &mut Capture, msg: ToolMsg) -> bool {
             if capture.annotations.pixelate_mode {
                 capture.ui.pixelation_block_size = v as u32;
             } else if capture.annotations.magnifier_mode {
-                capture.ui.magnifier_magnification = v;
+                capture.ui.magnifier_ring_width = v;
             } else if capture.annotations.highlighter_mode {
                 capture.ui.highlighter_thickness = v;
             } else {
@@ -1474,6 +1488,7 @@ pub fn save_tool_config(capture: &Capture) {
         tx.set("primary_redact_tool", ui.primary_redact_tool)?;
         tx.set("pixelation_block_size", ui.pixelation_block_size)?;
         tx.set("magnifier_magnification", ui.magnifier_magnification)?;
+        tx.set("magnifier_ring_width", ui.magnifier_ring_width)?;
         tx.set("pencil_color", ui.pencil_color)?;
         tx.set("pencil_fade_duration", ui.pencil_fade_duration)?;
         tx.set("pencil_thickness", ui.pencil_thickness)?;
