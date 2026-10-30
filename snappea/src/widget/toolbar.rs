@@ -400,6 +400,7 @@ const MAGNIFIER_PRESETS: &[f32] = &[1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0, 10.0];
 fn build_annotate_row<'a, Msg: Clone + 'static>(
     annotate: AnnotateSection<'a, Msg>,
     space_xxs: u16,
+    popup_position: cosmic::widget::popover::Position,
 ) -> Element<'a, Msg> {
     let tool_btn = |tool: ShapeTool, msg: Msg| -> Element<'a, Msg> {
         let selected = annotate.active_tool == Some(tool);
@@ -476,7 +477,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
             }
             pop = pop
                 .popup(popup_panel(list).width(Length::Fixed(180.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(popup_position)
                 .on_close(annotate.on_freehand_popup.clone());
         }
         pop.into()
@@ -551,7 +552,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
         }
         shapes = shapes
             .popup(popup_panel(list).width(Length::Fixed(180.0)))
-            .position(cosmic::widget::popover::Position::Top)
+            .position(popup_position)
             .on_close(annotate.on_shape_popup.clone());
     }
 
@@ -592,7 +593,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
             }
             pop = pop
                 .popup(popup_panel(list).width(Length::Fixed(110.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(popup_position)
                 .on_close(annotate.on_stroke_popup.clone());
         }
         pop.into()
@@ -631,7 +632,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
             .spacing(space_xxs);
             pop = pop
                 .popup(popup_panel(panel).width(Length::Fixed(296.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(popup_position)
                 .on_close(annotate.on_text_format_popup.clone());
         }
         pop.into()
@@ -683,7 +684,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
     if let Some(panel) = annotate.color_picker_panel {
         picker = picker
             .popup(popup_panel(panel).width(Length::Fixed(264.0)))
-            .position(cosmic::widget::popover::Position::Top)
+            .position(popup_position)
             .on_close(annotate.on_color_picker_toggle.clone());
     }
     swatches = swatches.push(Element::from(picker));
@@ -1521,6 +1522,18 @@ pub fn toolbar_origin(pos: Option<(f32, f32)>, size: (f32, f32), output: (f32, f
     )
 }
 
+/// Popups should open away from the nearer edge of an output.
+#[must_use]
+pub fn popup_position(
+    pos: Option<(f32, f32)>,
+    output_height: f32,
+) -> cosmic::widget::popover::Position {
+    match pos {
+        Some((_, y)) if y < output_height / 2.0 => cosmic::widget::popover::Position::Bottom,
+        _ => cosmic::widget::popover::Position::Top,
+    }
+}
+
 /// A toolbar on a full-output surface: at `pos`, or centered along the bottom.
 /// `on_resize` reports the size it is laid out at, which the surface's input
 /// zone has to cover.
@@ -1627,6 +1640,7 @@ pub struct CaptureToolbar<'a, Msg> {
     pub on_capture_mode_video: Msg,
     pub annotate: AnnotateSection<'a, Msg>,
     pub settings: SettingsMenu<'a, Msg>,
+    pub popup_position: cosmic::widget::popover::Position,
 }
 
 /// State and callbacks for the toolbar while a delayed capture waits.
@@ -1668,6 +1682,7 @@ pub struct RecordingToolbar<'a, Msg> {
     pub on_fade_popup: Msg,
     pub on_select_color: Box<dyn Fn(AnnotateColor) -> Msg + 'a>,
     pub on_select_fade: Box<dyn Fn(f32) -> Msg + 'a>,
+    pub popup_position: cosmic::widget::popover::Position,
     pub on_thickness_popup: Msg,
     pub on_select_thickness: Box<dyn Fn(f32) -> Msg + 'a>,
 }
@@ -1837,7 +1852,7 @@ fn capture_sections<Msg: Clone + 'static>(t: CaptureToolbar<'_, Msg>) -> Section
             }
             pop = pop
                 .popup(popup_panel(list).width(Length::Fixed(150.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(t.popup_position)
                 .on_close(t.on_delay_popup);
         }
         pop.into()
@@ -1854,7 +1869,7 @@ fn capture_sections<Msg: Clone + 'static>(t: CaptureToolbar<'_, Msg>) -> Section
             let on_close = t.settings.on_toggle.clone();
             pop = pop
                 .popup(build_settings_menu(t.settings, t.is_video_mode))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(t.popup_position)
                 .on_close(on_close);
         }
         pop.into()
@@ -1895,7 +1910,10 @@ fn capture_sections<Msg: Clone + 'static>(t: CaptureToolbar<'_, Msg>) -> Section
             p.target,
         )),
         tools: Some((tools, p.tools)),
-        annotate_row: Some((build_annotate_row(t.annotate, t.space_xxs), p.annotate_row)),
+        annotate_row: Some((
+            build_annotate_row(t.annotate, t.space_xxs, t.popup_position),
+            p.annotate_row,
+        )),
         pencil: None,
         pen_settings: None,
         elapsed: None,
@@ -2017,7 +2035,7 @@ fn recording_sections<'a, Msg: Clone + 'static>(t: RecordingToolbar<'a, Msg>) ->
             }
             fade = fade
                 .popup(popup_panel(list).width(Length::Fixed(150.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(t.popup_position)
                 .on_close(t.on_fade_popup.clone());
         }
 
@@ -2038,7 +2056,7 @@ fn recording_sections<'a, Msg: Clone + 'static>(t: RecordingToolbar<'a, Msg>) ->
             }
             thickness = thickness
                 .popup(popup_panel(list).width(Length::Fixed(110.0)))
-                .position(cosmic::widget::popover::Position::Top)
+                .position(t.popup_position)
                 .on_close(t.on_thickness_popup.clone());
         }
 
@@ -2098,5 +2116,23 @@ fn recording_sections<'a, Msg: Clone + 'static>(t: RecordingToolbar<'a, Msg>) ->
         end: 1.0 - transition,
         space_s: spacing.space_s,
         space_xxs: spacing.space_xxs,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use cosmic::widget::popover::Position;
+
+    #[test]
+    fn popups_open_away_from_the_nearer_edge() {
+        assert!(matches!(super::popup_position(None, 1080.0), Position::Top));
+        assert!(matches!(
+            super::popup_position(Some((0.0, 20.0)), 1080.0),
+            Position::Bottom
+        ));
+        assert!(matches!(
+            super::popup_position(Some((0.0, 900.0)), 1080.0),
+            Position::Top
+        ));
     }
 }
