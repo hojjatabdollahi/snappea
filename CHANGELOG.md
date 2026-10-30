@@ -17,6 +17,7 @@ All notable changes to SnapPea are listed here. The format follows
 
 ### Changed
 
+- The toolbar starts a little higher above the bottom edge.
 - Show file name in the video editor header instead of the full path.
 - Default name for the output files is now just the date, with no prefix or suffixes.
 - Use libcosmic's dropdown widget for the video speed dropdown
@@ -26,6 +27,7 @@ All notable changes to SnapPea are listed here. The format follows
 - A press outside an open toolbar dropdown now only closes it
 - Drawing on one screen no longer shows a stray piece of the shape on another output
 - A color from the custom picker now applies to the selected annotation
+- A click without drag does't draw a shape, or pixelate, or magnifier annotation.
 - The toolbar changed width when the text tool was armed or disarmed, since the font button was narrower than the size dropdown it replaces.
 - Changing the picked screen with S then clicking another could pick a third one, the click now names the screen under it.
 - A window closed just before a screenshot could still be picked by a click, the list kept it until the next window event.

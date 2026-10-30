@@ -11,6 +11,9 @@ use cosmic::iced::core::{Background, Border, Color};
 use cosmic::iced::widget::row;
 use cosmic::widget::{button, icon, text, tooltip};
 
+/// Distance between an unmoved toolbar and the bottom of its output.
+pub const BOTTOM_MARGIN: f32 = 64.0;
+
 /// Icon size inside a toolbar button. Smaller than the button so the padding
 /// separates the tools.
 const BTN_SIZE: f32 = 16.0;
@@ -1528,9 +1531,6 @@ fn settings_button<'a, Msg: Clone + 'static>(open: bool, on_press: Msg) -> Eleme
     )
     .into()
 }
-
-/// Distance between an unmoved toolbar and the bottom of its output.
-pub const BOTTOM_MARGIN: f32 = 32.0;
 
 /// Top-left corner of a toolbar of `size` on an output of `output` size: `pos`
 /// if it was moved there, kept on the output, otherwise centered along the bottom.

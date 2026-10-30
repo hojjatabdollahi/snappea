@@ -1312,6 +1312,10 @@ fn handle_pixelate(capture: &mut Capture, action: DrawAction) {
         DrawAction::Move(..) => {}
         DrawAction::End(x, y) => {
             if let Some((sx, sy)) = capture.annotations.pixelate_drawing.take() {
+                // A click without a drag draws nothing.
+                if (x - sx).hypot(y - sy) < MIN_SHAPE_DRAG {
+                    return;
+                }
                 capture.annotations.commit(Box::new(PixelateOperation::new(
                     Point::new(sx, sy),
                     Point::new(x, y),
