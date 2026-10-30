@@ -22,6 +22,7 @@ All notable changes to SnapPea are listed here. The format follows
 
 ### Fixed
 
+- The toolbar changed width when the text tool was armed or disarmed, since the font button was narrower than the size dropdown it replaces.
 - Changing the picked screen with S then clicking another could pick a third one, the click now names the screen under it.
 - A window closed just before a screenshot could still be picked by a click, the list kept it until the next window event.
 - On a fresh start the overlay could open with no windows to click, it no longer waits on a guess, and takes the list once the compositor has sent it.

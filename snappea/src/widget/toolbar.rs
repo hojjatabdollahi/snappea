@@ -319,6 +319,27 @@ fn dropdown_value_face<'a, Msg: 'a>(label: String) -> Element<'a, Msg> {
     .into()
 }
 
+/// A dropdown face for the value slot showing an icon instead of a number, as
+/// wide as [`dropdown_value_face`] so the toolbar keeps its width across tools.
+fn dropdown_icon_value_face<'a, Msg: 'a>(icon_name: &'a str) -> Element<'a, Msg> {
+    row![
+        cosmic::widget::container(
+            toolbar_icon(icon_name, ICON_PX)
+                .width(Length::Fixed(BTN_SIZE))
+                .height(Length::Fixed(BTN_SIZE)),
+        )
+        .width(Length::Fixed(VALUE_FACE_W))
+        .height(Length::Fixed(BTN_SIZE))
+        .align_x(cosmic::iced::core::alignment::Horizontal::Center),
+        toolbar_icon("pan-down-symbolic", 24)
+            .width(Length::Fixed(CHEVRON))
+            .height(Length::Fixed(CHEVRON)),
+    ]
+    .spacing(BTN_GAP)
+    .align_y(cosmic::iced::core::Alignment::Center)
+    .into()
+}
+
 /// A value dropdown's trigger, dead when the armed tool has no number to set.
 fn dropdown_value_trigger_maybe<'a, Msg: Clone + 'static>(
     label: String,
@@ -604,7 +625,7 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
     let text_armed = annotate.active_tool == Some(ShapeTool::Text);
     let text_format_dropdown: Element<'a, Msg> = {
         let trigger = tooltip(
-            button::custom(dropdown_face("font-symbolic"))
+            button::custom(dropdown_icon_value_face("font-symbolic"))
                 .class(if annotate.text_format_popup_open {
                     cosmic::theme::Button::Suggested
                 } else {
