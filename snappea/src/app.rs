@@ -57,6 +57,7 @@ pub struct App {
     pub font_families: Vec<&'static str>,
     pub text_style_model: cosmic::widget::segmented_button::MultiSelectModel,
     pub text_align_model: cosmic::widget::segmented_button::SingleSelectModel,
+    pub text_backdrop_model: cosmic::widget::segmented_button::SingleSelectModel,
     pub countdown: Option<crate::capture::countdown::Countdown>,
     pub recording_indicator: Option<RecordingIndicator>,
     /// Whether running in direct screenshot mode (no D-Bus portal)
@@ -427,6 +428,7 @@ impl cosmic::Application for App {
                 font_families: viewer_tools::annotate::font_families(),
                 text_style_model: crate::capture::text::text_style_model(),
                 text_align_model: crate::capture::text::text_align_model(),
+                text_backdrop_model: crate::capture::text::text_backdrop_model(),
                 countdown: None,
                 recording_indicator: None,
                 direct_screenshot: flags.direct_screenshot,

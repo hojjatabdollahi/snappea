@@ -1385,6 +1385,7 @@ pub fn save_tool_config(capture: &Capture) {
         tx.set("shape_choice", ui.shape_choice)?;
         tx.set("freehand_choice", ui.freehand_choice)?;
         tx.set("shape_color", ui.shape_color)?;
+        tx.set("text_backdrop", ui.text_format.backdrop)?;
         tx.set("shape_thickness", ui.shape_thickness)?;
         tx.set("highlighter_thickness", ui.highlighter_thickness)?;
         tx.set("primary_redact_tool", ui.primary_redact_tool)?;

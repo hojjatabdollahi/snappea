@@ -340,6 +340,9 @@ pub struct Config {
     pub freehand_choice: ShapeTool,
     /// Color for shape annotations
     pub shape_color: AnnotateColor,
+    /// Background behind new text labels: none, white or black
+    #[serde(default)]
+    pub text_backdrop: viewer_tools::annotate::TextBackdrop,
     /// Stroke thickness (logical units) used for new shape annotations
     #[serde(default = "default_shape_thickness")]
     pub shape_thickness: f32,
@@ -538,6 +541,7 @@ impl Default for Config {
             shape_choice: default_shape_choice(),
             freehand_choice: default_freehand_choice(),
             shape_color: AnnotateColor::RED,
+            text_backdrop: viewer_tools::annotate::TextBackdrop::default(),
             highlighter_thickness: default_highlighter_thickness(),
             shape_thickness: SHAPE_THICKNESS_DEFAULT,
             text_font_size: TEXT_SIZE_DEFAULT,

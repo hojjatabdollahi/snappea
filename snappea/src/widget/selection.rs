@@ -161,6 +161,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
         font_families: &'a [&'static str],
         text_style_model: &'a cosmic::widget::segmented_button::MultiSelectModel,
         text_align_model: &'a cosmic::widget::segmented_button::SingleSelectModel,
+        text_backdrop_model: &'a cosmic::widget::segmented_button::SingleSelectModel,
         text: Option<&'a crate::capture::text::TextEdit>,
         output_ctx: OutputContext,
         has_ocr_text: bool,
@@ -361,6 +362,11 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                     .on_activate(move |entity| Msg::text(TextAction::AlignActivated(entity)))
                     .into(),
                     on_text_format_popup: Msg::text(TextAction::TogglePopup),
+                    text_backdrop_control: cosmic::widget::segmented_control::horizontal(
+                        text_backdrop_model,
+                    )
+                    .on_activate(move |entity| Msg::text(TextAction::BackdropActivated(entity)))
+                    .into(),
                     stroke_popup_open: ui.stroke_popup_open,
                     can_undo: annotations.can_undo(),
                     can_redo: annotations.can_redo(),
