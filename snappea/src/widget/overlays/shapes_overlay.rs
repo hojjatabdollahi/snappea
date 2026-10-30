@@ -486,6 +486,31 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
                         .with_width(MIN_RING_STROKE),
                 );
             }
+            const PENCIL_ICON: f32 = 24.0;
+            // The tip of the pencil in `pencil-symbolic.svg` as fractions of its 16px box.
+            const TIP: (f32, f32) = (1.1 / 16.0, 13.9 / 16.0);
+            let pencil = cosmic::widget::icon::Icon::from(
+                cosmic::widget::icon::from_name(crate::config::ShapeTool::Pen.icon_name()).size(24),
+            )
+            .into_svg_handle();
+            if let Some(handle) = pencil {
+                frame.draw_svg(
+                    cosmic::iced::core::Rectangle::new(
+                        Point::new(
+                            TIP.0.mul_add(-PENCIL_ICON, pos.x),
+                            TIP.1.mul_add(-PENCIL_ICON, pos.y),
+                        ),
+                        Size::new(PENCIL_ICON, PENCIL_ICON),
+                    ),
+                    cosmic::iced::core::svg::Svg {
+                        handle,
+                        color: Some(ink),
+                        rotation: cosmic::iced::Radians(0.0),
+                        opacity: 1.0,
+                        border_radius: [0.0; 4],
+                    },
+                );
+            }
         }
 
         vec![frame.into_geometry()]
