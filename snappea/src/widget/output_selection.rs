@@ -225,6 +225,9 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
         let hovered = cursor.is_over(layout.bounds());
         let hover_changed = my_state.hovered != hovered;
         my_state.hovered = hovered;
+        if !self.picker_mode {
+            my_state.entered_published = false;
+        }
 
         // Publish on_enter when the cursor enters, or on the first frame it is already here.
         let should_publish_enter =
@@ -249,6 +252,7 @@ impl<Msg: Clone + 'static> Widget<Msg, cosmic::Theme, cosmic::Renderer> for Outp
             )
             && let Some(on_click) = &self.on_click
         {
+            shell.publish(self.on_enter.clone());
             shell.publish(on_click.clone());
             shell.capture_event();
         }
