@@ -9,6 +9,7 @@ All notable changes to SnapPea are listed here. The format follows
 
 - A background behind text labels
 - Text labels start centered, horizontally and vertically, and keep whatever box height you drag out. Typing more only ever grows the box. Resizing no longer changes the font size.
+- Shapes and pixelate can be reshaped after drawing.
 - A click without a drag selects the window under it. `click_selects_window: false` in the config file turns that off.
 - Add a toggle to edit videos after recording
 - Can select pixelate after drawing one
