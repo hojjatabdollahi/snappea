@@ -45,6 +45,7 @@ pub enum TextAction {
     AlignActivated(segmented_button::Entity),
     /// The font and style popup opened or closed
     TogglePopup,
+    BackdropActivated(segmented_button::Entity),
 }
 
 #[derive(Debug, Clone)]

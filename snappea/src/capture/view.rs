@@ -62,6 +62,7 @@ pub fn view(app: &App, id: window::Id) -> cosmic::Element<'_, Msg> {
         &app.font_families,
         &app.text_style_model,
         &app.text_align_model,
+        &app.text_backdrop_model,
         app.text.as_ref(),
         output_ctx,
         has_ocr_text,

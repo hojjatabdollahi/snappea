@@ -7,6 +7,8 @@ All notable changes to SnapPea are listed here. The format follows
 
 ### Added
 
+- A background behind text labels
+- Text labels start centered, horizontally and vertically, and keep whatever box height you drag out. Typing more only ever grows the box. Resizing no longer changes the font size.
 - Add a toggle to edit videos after recording
 - Can select pixelate after drawing one
 - Recording refuses to start/stops, when the save folder has less free space than `video_min_free_mb`

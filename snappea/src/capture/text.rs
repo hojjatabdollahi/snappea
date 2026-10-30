@@ -6,7 +6,9 @@ use cosmic::iced::alignment::Horizontal;
 use cosmic::iced::{Point, Size};
 use viewer_tools::ToolOperation;
 use viewer_tools::annotate::tool::text::{FONT_SIZE_PRESETS_PT, pt_to_px};
-use viewer_tools::annotate::{KeyOutcome, TextFormat, TextOperation, TextPreview, TextStyle};
+use viewer_tools::annotate::{
+    KeyOutcome, TextBackdrop, TextFormat, TextOperation, TextPreview, TextStyle,
+};
 
 use viewer_tools::annotate::AnnotateColor;
 
@@ -59,18 +61,48 @@ pub fn text_align_model() -> cosmic::widget::segmented_button::SingleSelectModel
         .build()
 }
 
+/// The text backdrop buttons: none, white and black
+#[must_use]
+pub fn text_backdrop_model() -> cosmic::widget::segmented_button::SingleSelectModel {
+    use cosmic::widget::segmented_button;
+
+    let mut builder = segmented_button::Model::builder();
+    for backdrop in TextBackdrop::ALL {
+        builder = builder.insert(move |button| {
+            let label = match backdrop {
+                TextBackdrop::None => crate::fl!("backdrop-none"),
+                TextBackdrop::White => crate::fl!("backdrop-white"),
+                TextBackdrop::Black => crate::fl!("backdrop-black"),
+            };
+            let button = button.text(label).data(backdrop);
+            if backdrop == TextBackdrop::default() {
+                button.activate()
+            } else {
+                button
+            }
+        });
+    }
+    builder.build()
+}
+
 /// Make the segmented controls reflect the text format that edits actually use.
 pub fn sync_format_models(app: &mut crate::app::App) {
     let Some(format) = app.capture.as_ref().map(|capture| capture.ui.text_format) else {
         return;
     };
 
-    sync_model_state(&mut app.text_style_model, &mut app.text_align_model, format);
+    sync_model_state(
+        &mut app.text_style_model,
+        &mut app.text_align_model,
+        &mut app.text_backdrop_model,
+        format,
+    );
 }
 
 fn sync_model_state(
     style_model: &mut cosmic::widget::segmented_button::MultiSelectModel,
     align_model: &mut cosmic::widget::segmented_button::SingleSelectModel,
+    backdrop_model: &mut cosmic::widget::segmented_button::SingleSelectModel,
     format: TextFormat,
 ) {
     use viewer_tools::annotate::TextStyle;
@@ -96,6 +128,13 @@ fn sync_model_state(
         .find(|&entity| align_model.data::<Horizontal>(entity).copied() == Some(format.alignment));
     if let Some(entity) = align_entity {
         align_model.activate(entity);
+    }
+
+    let backdrop_entity = backdrop_model.iter().find(|&entity| {
+        backdrop_model.data::<TextBackdrop>(entity).copied() == Some(format.backdrop)
+    });
+    if let Some(entity) = backdrop_entity {
+        backdrop_model.activate(entity);
     }
 }
 
@@ -325,8 +364,31 @@ pub fn handle(app: &mut App, action: TextAction) -> cosmic::Task<Msg> {
                 capture.ui.text_format_popup_open = !capture.ui.text_format_popup_open;
             }
         }
+        TextAction::BackdropActivated(entity) => {
+            let Some(backdrop) = app
+                .text_backdrop_model
+                .data::<TextBackdrop>(entity)
+                .copied()
+            else {
+                return cosmic::Task::none();
+            };
+            set_backdrop(app, backdrop);
+            sync_format_models(app);
+        }
     }
     cosmic::Task::none()
+}
+
+fn set_backdrop(app: &mut App, backdrop: TextBackdrop) {
+    if let Some(capture) = app.capture.as_mut() {
+        capture.ui.text_format.backdrop = backdrop;
+        capture
+            .annotations
+            .edit_selected::<TextOperation>(|text| text.backdrop = backdrop);
+    }
+    if let Some(edit) = app.text.as_mut() {
+        edit.preview.backdrop = backdrop;
+    }
 }
 
 /// Take the open edit's styling as the styling for the next label too.

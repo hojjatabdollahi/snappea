@@ -225,6 +225,7 @@ pub struct AnnotateSection<'a, Msg> {
     pub text_style_control: Element<'a, Msg>,
     pub text_align_control: Element<'a, Msg>,
     pub on_text_format_popup: Msg,
+    pub text_backdrop_control: Element<'a, Msg>,
     pub stroke_popup_open: bool,
     /// Whether there is anything to take back, and anything to put back
     pub can_undo: bool,
@@ -624,10 +625,12 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
                 font_row,
                 annotate.text_style_control,
                 annotate.text_align_control,
+                text::body(fl!("text-background")),
+                annotate.text_backdrop_control,
             ]
             .spacing(space_xxs);
             pop = pop
-                .popup(popup_panel(panel).width(Length::Shrink))
+                .popup(popup_panel(panel).width(Length::Fixed(296.0)))
                 .position(cosmic::widget::popover::Position::Top)
                 .on_close(annotate.on_text_format_popup.clone());
         }

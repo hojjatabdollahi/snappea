@@ -618,7 +618,10 @@ impl UiState {
             freehand_choice: config.freehand_choice.or_first_of(ShapeTool::FREEHAND),
             shape_popup_open: false,
             freehand_popup_open: false,
-            text_format: viewer_tools::annotate::TextFormat::default(),
+            text_format: viewer_tools::annotate::TextFormat {
+                backdrop: config.text_backdrop,
+                ..Default::default()
+            },
             text_format_popup_open: false,
             shape_color: config.shape_color,
             shape_thickness: config.shape_thickness,
