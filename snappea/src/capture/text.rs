@@ -138,13 +138,13 @@ fn sync_model_state(
     }
 }
 
-/// An open text edit. The preview works in selection-relative coordinates and
-/// clamps to the selection. `origin` maps it back to global coordinates.
+/// An open text edit. The preview works in screen-relative coordinates and
+/// clamps to the screens. `origin` maps it back to global coordinates.
 pub struct TextEdit {
     pub preview: TextPreview,
-    /// Selection top-left in global logical coordinates
+    /// Top-left of every screen together, in global logical coordinates
     pub origin: (f32, f32),
-    /// Size of the selection, which the box is clamped to
+    /// Size of every screen together, which the box is clamped to
     pub bounds: Size,
     /// The operation being re-edited, replaced in place on commit.
     pub editing: Option<usize>,
@@ -224,8 +224,21 @@ use crate::app::{App, Msg};
 use crate::capture::msg::TextAction;
 use viewer_tools::annotate::TextDragHandle;
 
-/// The selection being captured, as an origin and a size in logical units.
-fn selection(app: &App) -> Option<((f32, f32), Size)> {
+/// Every screen together, as an origin and a size in logical units
+fn screen(app: &App) -> Option<((f32, f32), Size)> {
+    let rect = app
+        .outputs
+        .iter()
+        .map(crate::app::OutputState::rect)
+        .reduce(crate::geometry::Rect::union)?;
+    Some((
+        (rect.left as f32, rect.top as f32),
+        Size::new(rect.width() as f32, rect.height() as f32),
+    ))
+}
+
+/// The region being captured, where a new label may start.
+fn selection(app: &App) -> Option<crate::geometry::Rect> {
     use crate::geometry::Choice;
 
     let capture = app.capture.as_ref()?;
@@ -243,10 +256,7 @@ fn selection(app: &App) -> Option<((f32, f32), Size)> {
             .reduce(crate::geometry::Rect::union)?,
         Choice::Output(None) => return None,
     };
-    Some((
-        (rect.left as f32, rect.top as f32),
-        Size::new(rect.width() as f32, rect.height() as f32),
-    ))
+    Some(rect)
 }
 
 /// Finish the open edit. Called by every path that ends an edit.
@@ -439,7 +449,10 @@ fn press(app: &mut App, x: f32, y: f32) {
         return;
     }
 
-    let Some((origin, bounds)) = selection(app) else {
+    let Some((origin, bounds)) = screen(app) else {
+        return;
+    };
+    let Some(selection) = selection(app) else {
         return;
     };
     let Some(capture) = app.capture.as_ref() else {
@@ -462,7 +475,11 @@ fn press(app: &mut App, x: f32, y: f32) {
 
     let mut edit = match existing {
         Some((index, text)) => TextEdit::reopen(index, &text, origin, bounds),
-        None => TextEdit::new(color, format, origin, bounds),
+        // A new label starts inside the region, a re-opened one is wherever it was.
+        None if selection.contains(x as i32, y as i32) => {
+            TextEdit::new(color, format, origin, bounds)
+        }
+        None => return,
     };
     let point = edit.local(x, y);
     edit.preview.on_press(point, bounds);

@@ -227,7 +227,7 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
                     && let Some(ref cb) = self.on_text_drag
                     && let Some(pos) = cursor.position_in(bounds)
                 {
-                    // The preview clamps to the selection itself.
+                    // The preview clamps to the screens itself.
                     let gx = pos.x + self.output_rect.left as f32;
                     let gy = pos.y + self.output_rect.top as f32;
                     return Some(canvas::Action::publish(cb(gx, gy)));
@@ -248,6 +248,16 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
             }
             canvas::Event::Mouse(MouseEvent::ButtonPressed(Button::Left)) => {
                 let pos = cursor.position_in(bounds)?;
+                // A label may stick out of the region, so its presses go through
+                // anywhere, unclamped. The text handler keeps new labels inside.
+                if (self.text_mode || self.text_edit.is_some())
+                    && let Some(ref cb) = self.on_text_press
+                {
+                    state.text_pressed = true;
+                    let gx = pos.x + self.output_rect.left as f32;
+                    let gy = pos.y + self.output_rect.top as f32;
+                    return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
+                }
                 if !self.inside_selection(pos) {
                     return None;
                 }
@@ -257,12 +267,6 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
                 let gx = cx + self.output_rect.left as f32;
                 let gy = cy + self.output_rect.top as f32;
 
-                if (self.text_mode || self.text_edit.is_some())
-                    && let Some(ref cb) = self.on_text_press
-                {
-                    state.text_pressed = true;
-                    return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
-                }
                 if let Some(kind) = self.shape_mode {
                     state.ctrl_latched = state.ctrl_down;
                     if let Some(ref cb) = self.on_shape_start {
@@ -277,17 +281,19 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
             }
             canvas::Event::Mouse(MouseEvent::ButtonReleased(Button::Left)) => {
                 let pos = cursor.position_in(bounds)?;
+                if state.text_pressed
+                    && let Some(ref cb) = self.on_text_release
+                {
+                    state.text_pressed = false;
+                    let gx = pos.x + self.output_rect.left as f32;
+                    let gy = pos.y + self.output_rect.top as f32;
+                    return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
+                }
                 // Clamp and convert to global coordinates
                 let (cx, cy) = clamp_pos(pos.x, pos.y);
                 let gx = cx + self.output_rect.left as f32;
                 let gy = cy + self.output_rect.top as f32;
 
-                if state.text_pressed
-                    && let Some(ref cb) = self.on_text_release
-                {
-                    state.text_pressed = false;
-                    return Some(canvas::Action::publish(cb(gx, gy)).and_capture());
-                }
                 if let Some(kind) = self.shape_mode
                     && let Some((sx, sy)) = self.shape_drawing
                 {
