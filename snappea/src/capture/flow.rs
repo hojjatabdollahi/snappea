@@ -90,15 +90,28 @@ pub fn stitch_outputs(
     annotations: &[Box<dyn ToolOperation>],
 ) -> Option<RgbaImage> {
     let (first, first_rect) = frames.first()?;
-    let scale = first.width() as f32 / first_rect.width() as f32;
+    let scale = pixel_scale(first.width(), first_rect.width().unsigned_abs());
     let bounds = frames.iter().map(|(_, r)| *r).reduce(Rect::union)?;
-    let frames = frames
+    let frames: Vec<_> = frames
         .into_iter()
-        .map(|(img, r)| (img, r.scaled(scale)))
+        .map(|(img, r)| {
+            let at = placed(&img, r.scaled(scale));
+            (img, at)
+        })
         .collect();
-    let mut img = combined_image(bounds.scaled(scale), frames);
+    let canvas = frames.iter().map(|(_, r)| *r).reduce(Rect::union)?;
+    let mut img = combined_image(canvas, frames);
     rasterize(&mut img, annotations, &bounds, scale);
     Some(img)
+}
+
+fn placed(img: &RgbaImage, at: Rect) -> Rect {
+    Rect {
+        left: at.left,
+        top: at.top,
+        right: at.left + img.width().cast_signed(),
+        bottom: at.top + img.height().cast_signed(),
+    }
 }
 
 /// The part of `img`, which shows `output` whole, under `region`: the crop,
@@ -110,14 +123,20 @@ pub fn crop_to_output(
 ) -> Option<(RgbaImage, Rect, f32)> {
     let output_rect = output.rect();
     let visible = region.intersect(output_rect)?;
-    let scale_x = img.width() as f32 / output.logical_size.0 as f32;
-    let scale_y = img.height() as f32 / output.logical_size.1 as f32;
-    let x = ((visible.left - output_rect.left) as f32 * scale_x) as u32;
-    let y = ((visible.top - output_rect.top) as f32 * scale_y) as u32;
-    let w = (visible.width() as f32 * scale_x) as u32;
-    let h = (visible.height() as f32 * scale_y) as u32;
+    let scale = pixel_scale(img.width(), output.logical_size.0);
+    // Rounded like `Rect::scaled`, so the crop lands where the compositor drew the window.
+    let x = ((visible.left - output_rect.left) as f32 * scale).round() as u32;
+    let y = ((visible.top - output_rect.top) as f32 * scale).round() as u32;
+    let w = (visible.width() as f32 * scale).round() as u32;
+    let h = (visible.height() as f32 * scale).round() as u32;
     let cropped = image::imageops::crop_imm(img, x, y, w, h).to_image();
-    Some((cropped, visible, scale_x))
+    Some((cropped, visible, scale))
+}
+
+/// Pixels per logical unit
+pub fn pixel_scale(px: u32, logical: u32) -> f32 {
+    let raw = px as f32 / logical.max(1) as f32;
+    (raw * 120.0).round() / 120.0
 }
 
 /// Burn `ops` into `img`, which shows `region` of the desktop at `scale`
@@ -259,7 +278,7 @@ fn render_selection(
             };
             let mut img = img.rgba;
             if let Some(output) = outputs.iter().find(|o| o.name == output_name) {
-                let scale = img.width() as f32 / output.logical_size.0 as f32;
+                let scale = pixel_scale(img.width(), output.logical_size.0);
                 rasterize(&mut img, annotations, &output.rect(), scale);
             }
             Some(img)
@@ -271,18 +290,20 @@ fn render_selection(
                 .find_map(|output| {
                     let img = images.get(&output.name)?;
                     r.intersect(output.rect())?;
-                    Some(img.rgba.width() as f32 / output.logical_size.0 as f32)
+                    Some(pixel_scale(img.rgba.width(), output.logical_size.0))
                 })
                 .unwrap_or(1.0);
-            let frames = outputs
+            let frames: Vec<_> = outputs
                 .iter()
                 .filter_map(|output| {
                     let img = images.get(&output.name)?;
                     let (cropped, visible, _) = crop_to_output(&img.rgba, output, r)?;
-                    Some((cropped, visible.scaled(target_scale)))
+                    let at = placed(&cropped, visible.scaled(target_scale));
+                    Some((cropped, at))
                 })
                 .collect();
-            let mut img = combined_image(r.scaled(target_scale), frames);
+            let canvas = frames.iter().map(|(_, r)| *r).reduce(Rect::union)?;
+            let mut img = combined_image(canvas, frames);
             rasterize(&mut img, annotations, &r, target_scale);
             Some(img)
         }
@@ -451,6 +472,34 @@ fn restore_last_capture(app: &App, capture: &mut Capture) {
 }
 
 pub fn start(app: &mut App, capture: Capture) -> cosmic::Task<crate::app::Msg> {
+    let session = open(app, capture);
+    cosmic::Task::batch([session, fill_windows(app)])
+}
+
+/// The window list comes from the compositor on its own time
+fn fill_windows(app: &App) -> cosmic::Task<crate::app::Msg> {
+    if app
+        .capture
+        .as_ref()
+        .is_none_or(|c| !c.ui.click_selects_window || !c.windows.is_empty())
+    {
+        return cosmic::Task::none();
+    }
+    let helper = app.wayland_helper.clone();
+    cosmic::Task::perform(
+        async move {
+            let waited = helper.clone();
+            let _ = tokio::task::spawn_blocking(move || {
+                waited.wait_for_toplevels(std::time::Duration::from_secs(2))
+            })
+            .await;
+            crate::capture::windows(&helper, true)
+        },
+        crate::app::Msg::WindowsReady,
+    )
+}
+
+fn open(app: &mut App, capture: Capture) -> cosmic::Task<crate::app::Msg> {
     if app.outputs.len() != capture.output_images.len() {
         log::warn!(
             "Screenshot output count mismatch: {} outputs vs {} images, proceeding anyway (monitor reconnect?)",

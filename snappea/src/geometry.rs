@@ -43,14 +43,16 @@ impl Rect {
         }
     }
 
-    /// Every edge multiplied by `scale` and truncated, for logical to physical.
     #[must_use]
     pub fn scaled(self, scale: f32) -> Self {
+        // Rounding the edges on their own can be a pixel off at either end
+        let left = (self.left as f32 * scale).round() as i32;
+        let top = (self.top as f32 * scale).round() as i32;
         Self {
-            left: (self.left as f32 * scale) as i32,
-            top: (self.top as f32 * scale) as i32,
-            right: (self.right as f32 * scale) as i32,
-            bottom: (self.bottom as f32 * scale) as i32,
+            left,
+            top,
+            right: left + (self.width() as f32 * scale).round() as i32,
+            bottom: top + (self.height() as f32 * scale).round() as i32,
         }
     }
 
@@ -72,6 +74,10 @@ impl Rect {
     /// Get the height of the rectangle
     pub const fn height(&self) -> i32 {
         self.bottom - self.top
+    }
+
+    pub const fn contains(&self, x: i32, y: i32) -> bool {
+        self.left <= x && x < self.right && self.top <= y && y < self.bottom
     }
 
     /// Convert to dimensions (`NonZeroU32` width and height)

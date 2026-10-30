@@ -207,6 +207,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                 r,
                 drag_state,
                 move |s, r| Msg::choice(Choice::Rectangle(r, s)),
+                Msg::window_at,
                 Msg::set_move_offset,
                 screenshot_image,
                 image_scale,
@@ -791,6 +792,28 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 (viewport.width - approx_w) / 2.0,
                 24.0,
                 cosmic::iced::Color::from_rgb(0.95, 0.6, 0.1),
+                8.0,
+            );
+        }
+
+        if let Some((title, _)) = &self.ui.window_title
+            && let Choice::Rectangle(r, _) = &self.choice
+            && self.output_rect.contains(r.left, r.top)
+        {
+            let title = if title.chars().count() > 60 {
+                format!("{}...", title.chars().take(57).collect::<String>())
+            } else {
+                title.clone()
+            };
+            let approx_w = (title.len() as f32 * 16.0).mul_add(0.55, 32.0);
+            let y = if self.ui.exit_armed { 84.0 } else { 24.0 };
+            draw_status_badge(
+                renderer,
+                viewport,
+                &title,
+                (viewport.width - approx_w) / 2.0,
+                y,
+                theme.cosmic().accent_color().into(),
                 8.0,
             );
         }

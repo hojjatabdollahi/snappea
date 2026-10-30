@@ -510,6 +510,49 @@ pub fn handle_capture_msg(app: &mut App, msg: ActionMsg) -> cosmic::Task<crate::
         }
         ActionMsg::RecordRegion => start_recording(app),
         ActionMsg::Choice(c) => set_choice(app, c),
+        ActionMsg::WindowAt(x, y) => {
+            let Some(capture) = app.capture.as_ref() else {
+                return cosmic::Task::none();
+            };
+            let current = match &capture.selection.choice {
+                Choice::Rectangle(r, drag) => Some((*r, *drag)),
+                _ => None,
+            };
+            let picked = crate::capture::window_at(x, y, &capture.windows, current.map(|c| c.0))
+                .map(|(r, _, title)| (*r, title.clone()));
+            let rect = picked
+                .as_ref()
+                .map(|(r, _)| *r)
+                .or_else(|| {
+                    current
+                        .filter(|(_, drag)| *drag == DragState::Move)
+                        .map(|c| c.0)
+                })
+                .unwrap_or_default();
+            let task = set_choice(app, Choice::Rectangle(rect, DragState::None));
+            let Some((capture, (_, title))) = app.capture.as_mut().zip(picked) else {
+                return task;
+            };
+            let shown = Instant::now();
+            capture.ui.window_title = Some((title, shown));
+            let expire = cosmic::Task::perform(
+                tokio::time::sleep(std::time::Duration::from_secs(1)),
+                move |()| AppMsg::Screenshot(Msg::window_title_expired(shown)),
+            );
+            task.chain(expire)
+        }
+        ActionMsg::WindowTitleExpired(shown) => {
+            if let Some(capture) = app.capture.as_mut()
+                && capture
+                    .ui
+                    .window_title
+                    .as_ref()
+                    .is_some_and(|(_, at)| *at == shown)
+            {
+                capture.ui.window_title = None;
+            }
+            cosmic::Task::none()
+        }
         ActionMsg::OutputChanged(wl_output) => focus_output(app, wl_output),
         ActionMsg::OpenUrl(url) => open_url_and_close(app, url),
         ActionMsg::ToggleCaptureMode(is_video) => {

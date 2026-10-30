@@ -9,6 +9,7 @@ All notable changes to SnapPea are listed here. The format follows
 
 - A background behind text labels
 - Text labels start centered, horizontally and vertically, and keep whatever box height you drag out. Typing more only ever grows the box. Resizing no longer changes the font size.
+- A click without a drag selects the window under it. `click_selects_window: false` in the config file turns that off.
 - Add a toggle to edit videos after recording
 - Can select pixelate after drawing one
 - Recording refuses to start/stops, when the save folder has less free space than `video_min_free_mb`
@@ -21,6 +22,8 @@ All notable changes to SnapPea are listed here. The format follows
 
 ### Fixed
 
+- A window closed just before a screenshot could still be picked by a click, the list kept it until the next window event.
+- On a fresh start the overlay could open with no windows to click, it no longer waits on a guess, and takes the list once the compositor has sent it.
 - A screenshot that could not be written to disk, failed silently and left an empty file behind. The file is now removed and a notification is shown.
 - Annotations in "All Screens" mode are now saved.
 - Sometimes when drawing a region, the selection box starts from some random point
