@@ -171,7 +171,7 @@ impl AnnotationState {
             Picked {
                 tool: ShapeTool::Magnifier,
                 color: Some(AnnotateColor(m.color)),
-                size: Some(m.magnification),
+                size: Some(m.ring_width),
             }
         } else {
             let text = any.downcast_ref::<TextOperation>()?;
@@ -216,7 +216,7 @@ impl AnnotationState {
         match picked.tool {
             ShapeTool::Pixelate => self.edit_selected::<PixelateOperation>(|p| p.block_size = size),
             ShapeTool::Magnifier => {
-                self.edit_selected::<MagnifierOperation>(|m| m.magnification = size);
+                self.edit_selected::<MagnifierOperation>(|m| m.ring_width = size);
             }
             ShapeTool::Text => return false,
             _ => {
@@ -555,6 +555,7 @@ pub struct UiState {
     pub tesseract_available: bool,
     /// Magnifier annotation tool: zoom level (1.5-10.0)
     pub magnifier_magnification: f32,
+    pub magnifier_ring_width: f32,
     /// Delay (seconds) for the delayed-screenshot toolbar button
     pub capture_delay_secs: u32,
     pub magnifier_enabled: bool,
@@ -638,6 +639,7 @@ impl UiState {
             click_selects_window: config.click_selects_window,
             tesseract_available: detect::is_tesseract_available(),
             magnifier_magnification: config.magnifier_magnification,
+            magnifier_ring_width: config.magnifier_ring_width,
             capture_delay_secs: config.capture_delay_secs,
             magnifier_enabled: config.magnifier_enabled,
             save_location_setting: config.save_location,

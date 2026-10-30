@@ -364,6 +364,9 @@ pub struct Config {
     /// Magnifier zoom level (range 1.5-10.0)
     #[serde(default = "default_magnifier_magnification")]
     pub magnifier_magnification: f32,
+    /// Ring thickness of new magnifiers, in logical pixels
+    #[serde(default = "default_magnifier_ring_width")]
+    pub magnifier_ring_width: f32,
     /// Delay in seconds for the "delayed screenshot" toolbar button
     #[serde(default)]
     pub capture_delay_secs: u32,
@@ -409,6 +412,10 @@ pub struct Config {
 
 const fn default_magnifier_magnification() -> f32 {
     2.5
+}
+
+const fn default_magnifier_ring_width() -> f32 {
+    3.0
 }
 
 const fn default_click_selects_window() -> bool {
@@ -557,6 +564,7 @@ impl Default for Config {
             recognize_qr_codes: default_recognize_qr_codes(),
             click_selects_window: default_click_selects_window(),
             magnifier_magnification: default_magnifier_magnification(),
+            magnifier_ring_width: default_magnifier_ring_width(),
             capture_delay_secs: 0,
             video_encoder: None,
             video_container: Container::Mp4,

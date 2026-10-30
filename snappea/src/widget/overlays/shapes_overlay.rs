@@ -54,6 +54,7 @@ pub struct ShapesOverlay<'a, Message: Clone + 'static> {
     pub magnifier_drawing: Option<(f32, f32)>,
     pub pixelation_block_size: f32,
     pub magnifier_magnification: f32,
+    pub magnifier_ring_width: f32,
     pub shape_mode: Option<ShapeKind>,
     pub text_mode: bool,
     pub pen_mode: bool,
@@ -421,13 +422,14 @@ impl<Message: Clone + 'static> canvas::Program<Message, cosmic::Theme, cosmic::R
         if let Some(start) = self.magnifier_drawing
             && let Some(c) = cursor_global
         {
-            MagnifierOperation::new(
+            let mut loupe = MagnifierOperation::new(
                 Point::new(start.0, start.1),
                 c,
                 self.magnifier_magnification,
                 ink,
-            )
-            .draw_sampled(&mut frame, size, 1.0, false, Some(&self.source_over_all()));
+            );
+            loupe.ring_width = self.magnifier_ring_width;
+            loupe.draw_sampled(&mut frame, size, 1.0, false, Some(&self.source_over_all()));
         }
         if let Some(points) = self.stroke_drawing.as_ref()
             && points.len() >= 2

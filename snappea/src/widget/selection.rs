@@ -88,13 +88,28 @@ enum MagnifierDrag {
         grab_dx: f32,
         grab_dy: f32,
     },
-    /// Resizing the loupe: by its ring, where the radius is the distance to the
-    /// pointer, or by a corner handle of its dashed box, which stays under it.
-    Resize { index: usize, by_corner: bool },
+    /// Resizing the loupe by its handle
+    Resize { index: usize },
+    /// Moving the source circle. Grab offset is (cursor - source).
+    MoveSource {
+        index: usize,
+        grab_dx: f32,
+        grab_dy: f32,
+    },
+    /// Resizing the source circle by its ring, which sets the zoom.
+    ResizeSource { index: usize },
 }
 
 /// How close a press must be to a handle to grab it.
 const HANDLE_GRAB: f32 = 8.0;
+
+fn loupe_handles(m: &MagnifierOperation) -> [Point; 2] {
+    let on = |center: Point, radius: f32| {
+        let d = radius * std::f32::consts::FRAC_1_SQRT_2;
+        Point::new(center.x + d, center.y + d)
+    };
+    [on(m.center(), m.radius()), on(m.source, m.source_radius)]
+}
 
 /// The two handles of the picked annotation
 #[derive(Clone, Copy)]
@@ -346,9 +361,9 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                         crate::config::ShapeTool::Pixelate,
                         ui.pixelation_block_size as f32,
                     ),
-                    magnification: picked_size(
+                    magnifier_ring_width: picked_size(
                         crate::config::ShapeTool::Magnifier,
-                        ui.magnifier_magnification,
+                        ui.magnifier_ring_width,
                     ),
                     shape_popup_open: ui.shape_popup_open,
                     freehand_popup_open: ui.freehand_popup_open,
@@ -544,6 +559,7 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                 magnifier_drawing: annotations.magnifier_drawing,
                 pixelation_block_size: ui.pixelation_block_size as f32,
                 magnifier_magnification: ui.magnifier_magnification,
+                magnifier_ring_width: ui.magnifier_ring_width,
                 shape_mode: annotations.shape_mode,
                 pen_mode: annotations.pen_mode || annotations.highlighter_mode,
                 highlighter_mode: annotations.highlighter_mode,
@@ -629,31 +645,27 @@ impl<'a> ScreenshotSelectionWidget<'a> {
         let op = a.stack.get(index)?;
         let any = op.as_any();
         let pad = crate::widget::overlays::SELECTION_PAD;
-        let box_handles = |anchors: [Point; 2], kind: Option<ShapeKind>| {
-            let b = op.bounds()?;
-            Some(Handles {
-                index,
-                points: [
-                    Point::new(b.x - pad, b.y - pad),
-                    Point::new(b.x + b.width + pad, b.y + b.height + pad),
-                ],
-                anchors,
-                corners: true,
-                kind,
-            })
-        };
+        let box_handles =
+            |b: cosmic::iced::Rectangle, anchors: [Point; 2], kind: Option<ShapeKind>| {
+                Some(Handles {
+                    index,
+                    points: [
+                        Point::new(b.x - pad, b.y - pad),
+                        Point::new(b.x + b.width + pad, b.y + b.height + pad),
+                    ],
+                    anchors,
+                    corners: true,
+                    kind,
+                })
+            };
         let corners_of = |s: Point, e: Point| {
             [
                 Point::new(s.x.min(e.x), s.y.min(e.y)),
                 Point::new(s.x.max(e.x), s.y.max(e.y)),
             ]
         };
-        if let Some(m) = any.downcast_ref::<MagnifierOperation>() {
-            let c = m.center();
-            return a
-                .magnifier_mode
-                .then(|| box_handles([c, c], None))
-                .flatten();
+        if any.is::<MagnifierOperation>() {
+            return None;
         }
         if let Some(s) = any.downcast_ref::<ShapeOperation>() {
             if a.shape_mode != Some(s.kind) {
@@ -667,13 +679,13 @@ impl<'a> ScreenshotSelectionWidget<'a> {
                     corners: false,
                     kind: Some(s.kind),
                 }),
-                _ => box_handles(corners_of(s.start, s.end), Some(s.kind)),
+                _ => box_handles(op.bounds()?, corners_of(s.start, s.end), Some(s.kind)),
             };
         }
         if let Some(p) = any.downcast_ref::<PixelateOperation>() {
             return a
                 .pixelate_mode
-                .then(|| box_handles(corners_of(p.start, p.end), None))
+                .then(|| box_handles(op.bounds()?, corners_of(p.start, p.end), None))
                 .flatten();
         }
         None
@@ -906,13 +918,17 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 title.clone()
             };
             let approx_w = (title.len() as f32 * 16.0).mul_add(0.55, 32.0);
-            let y = if self.ui.exit_armed { 84.0 } else { 24.0 };
+            let approx_h = 16.0_f32.mul_add(1.4, 20.0);
+            // Inside the window, centered just below its top edge, kept on screen.
+            let left = (r.left - self.output_rect.left) as f32;
+            let top = (r.top - self.output_rect.top) as f32;
+            let x = (r.width() as f32 - approx_w).mul_add(0.5, left);
             draw_status_badge(
                 renderer,
                 viewport,
                 &title,
-                (viewport.width - approx_w) / 2.0,
-                y,
+                x.clamp(0.0, (viewport.width - approx_w).max(0.0)),
+                (top + 12.0).clamp(0.0, (viewport.height - approx_h).max(0.0)),
                 theme.cosmic().accent_color().into(),
                 8.0,
             );
@@ -927,7 +943,22 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     p.y - self.output_rect.top as f32,
                 )
             });
-            draw_handles(renderer, viewport, local, accent);
+            draw_handles(renderer, viewport, &local, accent);
+        }
+        if self.annotations.magnifier_mode
+            && let Some(m) = self
+                .annotations
+                .selected
+                .and_then(|i| self.annotations.magnifier(i))
+        {
+            let accent: cosmic::iced::Color = theme.cosmic().accent_color().into();
+            let local = loupe_handles(m).map(|p| {
+                (
+                    p.x - self.output_rect.left as f32,
+                    p.y - self.output_rect.top as f32,
+                )
+            });
+            draw_handles(renderer, viewport, &local, accent);
         }
 
         // Draw fg_element (selection UI above annotations)
@@ -1403,7 +1434,6 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                 }
             }
 
-            // Handle magnifier tool: create new, or select / move / resize existing
             if self.annotations.magnifier_mode {
                 let drag_state = tree.state.downcast_mut::<InteractionState>();
 
@@ -1413,55 +1443,66 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
 
                 match mouse_event {
                     MouseEvent::ButtonPressed(Button::Left) => {
-                        // 1. Grabbing the ring of the selected magnifier -> resize
                         if let Some(sel) = self.annotations.selected
                             && let Some(m) = self.annotations.magnifier(sel)
                         {
-                            let Point { x: cx, y: cy } = m.center();
-                            let by_corner =
-                                self.handle_at(Point::new(cursor_gx, cursor_gy)).is_some();
-                            if by_corner
-                                || (dist_to(cx, cy) - m.radius()).abs() <= MAGNIFIER_RING_GRAB
-                            {
-                                drag_state.drag = Some(MagnifierDrag::Resize {
-                                    index: sel,
-                                    by_corner,
-                                });
+                            let at = Point::new(cursor_gx, cursor_gy);
+                            let [loupe, source] = loupe_handles(m);
+                            if at.distance(loupe) <= HANDLE_GRAB {
+                                drag_state.drag = Some(MagnifierDrag::Resize { index: sel });
+                                shell.capture_event();
+                                return;
+                            }
+                            if at.distance(source) <= HANDLE_GRAB {
+                                drag_state.drag = Some(MagnifierDrag::ResizeSource { index: sel });
                                 shell.capture_event();
                                 return;
                             }
                         }
 
-                        // 2. Clicking inside an existing loupe -> select + move (topmost first)
-                        let mut hit = None;
-                        for (i, m) in self.annotations.magnifiers().rev() {
+                        let hit = self.annotations.magnifiers().rev().find_map(|(i, m)| {
                             let Point { x: cx, y: cy } = m.center();
                             if dist_to(cx, cy) <= m.radius() {
-                                hit = Some((i, cx, cy));
-                                break;
+                                Some((
+                                    i,
+                                    MagnifierDrag::Move {
+                                        index: i,
+                                        grab_dx: cursor_gx - cx,
+                                        grab_dy: cursor_gy - cy,
+                                    },
+                                ))
+                            } else if dist_to(m.source.x, m.source.y) <= m.source_radius {
+                                Some((
+                                    i,
+                                    MagnifierDrag::MoveSource {
+                                        index: i,
+                                        grab_dx: cursor_gx - m.source.x,
+                                        grab_dy: cursor_gy - m.source.y,
+                                    },
+                                ))
+                            } else {
+                                None
                             }
-                        }
-                        if let Some((i, cx, cy)) = hit {
-                            drag_state.drag = Some(MagnifierDrag::Move {
-                                index: i,
-                                grab_dx: cursor_gx - cx,
-                                grab_dy: cursor_gy - cy,
-                            });
+                        });
+                        if let Some((i, drag)) = hit {
+                            drag_state.drag = Some(drag);
                             shell.publish(Msg::select_annotation(Some(i)));
                             shell.capture_event();
                             return;
                         }
 
-                        // 3. Empty space with a loupe selected -> only deselect it
                         if self.annotations.selected.is_some() {
                             shell.publish(Msg::select_annotation(None));
                             shell.capture_event();
                             return;
                         }
-                        // 4. Empty space inside the selection -> start a new loupe
                         if self.inside_selection(pos) {
                             if let Some((x, y)) = self.clamp_to_selection(pos) {
-                                shell.publish(Msg::magnifier_start(x, y));
+                                shell.publish(if self.annotations.magnifier_drawing.is_some() {
+                                    Msg::magnifier_end(x, y)
+                                } else {
+                                    Msg::magnifier_start(x, y)
+                                });
                             }
                             shell.capture_event();
                         }
@@ -1477,21 +1518,29 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                             shell.publish(Msg::magnifier_move(index, nx, ny));
                             shell.capture_event();
                         }
-                        Some(MagnifierDrag::Resize { index, by_corner }) => {
-                            let (index, by_corner) = (*index, *by_corner);
+                        Some(MagnifierDrag::Resize { index }) => {
+                            let index = *index;
                             if let Some(m) = self.annotations.magnifier(index) {
                                 let Point { x: cx, y: cy } = m.center();
-                                let d = dist_to(cx, cy);
-                                // A corner handle sits on the box's diagonal, pad outside the disc.
-                                let r = if by_corner {
-                                    d.mul_add(
-                                        std::f32::consts::FRAC_1_SQRT_2,
-                                        -crate::widget::overlays::SELECTION_PAD,
-                                    )
-                                } else {
-                                    d
-                                };
-                                shell.publish(Msg::magnifier_resize(index, r));
+                                shell.publish(Msg::magnifier_resize(index, dist_to(cx, cy)));
+                                shell.capture_event();
+                            }
+                        }
+                        Some(MagnifierDrag::MoveSource {
+                            index,
+                            grab_dx,
+                            grab_dy,
+                        }) => {
+                            let (index, nx, ny) =
+                                (*index, cursor_gx - grab_dx, cursor_gy - grab_dy);
+                            shell.publish(Msg::magnifier_move_source(index, nx, ny));
+                            shell.capture_event();
+                        }
+                        Some(MagnifierDrag::ResizeSource { index }) => {
+                            let index = *index;
+                            if let Some(m) = self.annotations.magnifier(index) {
+                                let r = dist_to(m.source.x, m.source.y);
+                                shell.publish(Msg::magnifier_resize_source(index, r));
                                 shell.capture_event();
                             }
                         }
@@ -1500,21 +1549,18 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                     MouseEvent::ButtonReleased(Button::Left) => {
                         if drag_state.drag.take().is_some() {
                             shell.capture_event();
-                            return;
-                        }
-                        if self.annotations.magnifier_drawing.is_some() {
-                            if let Some((x, y)) = self.clamp_to_selection(pos) {
-                                shell.publish(Msg::magnifier_end(x, y));
-                            }
-                            shell.capture_event();
                         }
                     }
                     MouseEvent::WheelScrolled { delta } => {
                         if let Some(sel) = self.annotations.selected
                             && let Some(m) = self.annotations.magnifier(sel)
                         {
-                            let Point { x: cx, y: cy } = m.center();
-                            if dist_to(cx, cy) <= m.radius() {
+                            // Over either circle.
+                            if viewer_tools::ToolOperation::hit_test(
+                                m,
+                                Point::new(cursor_gx, cursor_gy),
+                                false,
+                            ) {
                                 let step = match delta {
                                     cosmic::iced::core::mouse::ScrollDelta::Lines { y, .. } => *y,
                                     cosmic::iced::core::mouse::ScrollDelta::Pixels {
@@ -1522,9 +1568,8 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
                                     } => *y / 40.0,
                                 };
                                 if step != 0.0 {
-                                    let new_zoom = step
-                                        .signum()
-                                        .mul_add(MAGNIFIER_SCROLL_STEP, m.magnification);
+                                    let new_zoom =
+                                        step.signum().mul_add(MAGNIFIER_SCROLL_STEP, m.zoom());
                                     shell.publish(Msg::magnifier_set_zoom(sel, new_zoom));
                                     shell.capture_event();
                                 }
@@ -1576,11 +1621,17 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
         let interaction = state.state.downcast_ref::<InteractionState>();
         if !over_chrome {
             if interaction.move_drag.is_some()
-                || matches!(interaction.drag, Some(MagnifierDrag::Move { .. }))
+                || matches!(
+                    interaction.drag,
+                    Some(MagnifierDrag::Move { .. } | MagnifierDrag::MoveSource { .. })
+                )
             {
                 return cosmic::iced::mouse::Interaction::Grabbing;
             }
-            if matches!(interaction.drag, Some(MagnifierDrag::Resize { .. })) {
+            if matches!(
+                interaction.drag,
+                Some(MagnifierDrag::Resize { .. } | MagnifierDrag::ResizeSource { .. })
+            ) {
                 return cosmic::iced::mouse::Interaction::ResizingDiagonallyDown;
             }
             if interaction.resize.is_some() {
@@ -1615,14 +1666,16 @@ impl cosmic::iced::core::Widget<Msg, cosmic::Theme, cosmic::Renderer>
             } else if self.annotations.magnifier_mode {
                 if let Some(sel) = self.annotations.selected
                     && let Some(m) = self.annotations.magnifier(sel)
-                    && (point.distance(m.center()) - m.radius()).abs() <= MAGNIFIER_RING_GRAB
+                    && loupe_handles(m)
+                        .iter()
+                        .any(|h| point.distance(*h) <= HANDLE_GRAB)
                 {
                     return cosmic::iced::mouse::Interaction::ResizingDiagonallyDown;
                 }
                 if self
                     .annotations
                     .magnifiers()
-                    .any(|(_, m)| point.distance(m.center()) <= m.radius())
+                    .any(|(_, m)| viewer_tools::ToolOperation::hit_test(m, point, false))
                 {
                     return cosmic::iced::mouse::Interaction::Grab;
                 }

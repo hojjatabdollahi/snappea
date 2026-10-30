@@ -103,6 +103,8 @@ const fn ring_fill() -> Color {
         0.3,
     )
 }
+/// Pixelation block sizes.
+const PIXELATE_PRESETS: &[f32] = &[8.0, 12.0, 16.0, 24.0, 32.0, 48.0];
 
 /// A filled color disc the size of a swatch.
 fn swatch_disc<'a, Msg: 'a>(fill: Color) -> Element<'a, Msg> {
@@ -214,8 +216,7 @@ pub struct AnnotateSection<'a, Msg> {
     pub thickness: f32,
     pub highlighter_thickness: f32,
     pub pixelate_block_size: f32,
-    /// Magnifier zoom factor, edited by the same dropdown as the thicknesses
-    pub magnification: f32,
+    pub magnifier_ring_width: f32,
     pub shape_popup_open: bool,
     /// Whether the pen/highlighter dropdown is open
     pub freehand_popup_open: bool,
@@ -415,11 +416,6 @@ fn dropdown_row<Msg: Clone + 'static>(
         .into()
 }
 
-/// Pixelation block sizes.
-const PIXELATE_PRESETS: &[f32] = &[8.0, 12.0, 16.0, 24.0, 32.0, 48.0];
-/// Magnifier zoom factors.
-const MAGNIFIER_PRESETS: &[f32] = &[1.5, 2.0, 2.5, 3.0, 4.0, 6.0, 8.0, 10.0];
-
 /// Build the annotation tools, dropdowns and color swatches.
 fn build_annotate_row<'a, Msg: Clone + 'static>(
     annotate: AnnotateSection<'a, Msg>,
@@ -594,9 +590,11 @@ fn build_annotate_row<'a, Msg: Clone + 'static>(
             px,
         ),
         Some(ShapeTool::Pixelate) => (PIXELATE_PRESETS, annotate.pixelate_block_size, px),
-        Some(ShapeTool::Magnifier) => (MAGNIFIER_PRESETS, annotate.magnification, |v| {
-            format!("{v:.1}x")
-        }),
+        Some(ShapeTool::Magnifier) => (
+            STROKE_PRESETS_PX.as_slice(),
+            annotate.magnifier_ring_width,
+            px,
+        ),
         _ => (STROKE_PRESETS_PX.as_slice(), annotate.thickness, px),
     };
     let size_dropdown: Element<'a, Msg> = {
