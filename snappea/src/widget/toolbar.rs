@@ -168,30 +168,16 @@ fn swatch_slot<'a, Msg: 'a>(face: Element<'a, Msg>, selected: Option<Color>) -> 
     }
 }
 
-/// Helper to create an SVG icon at a fixed pixel size
-fn toolbar_icon(icon_name: &str, size: u16) -> cosmic::iced::widget::svg::Svg<'_, cosmic::Theme> {
-    let icon_handle = icon::Icon::from(icon::from_name(icon_name).size(size))
-        .into_svg_handle()
-        .expect("Icon should be SVG");
-
-    cosmic::iced::widget::svg::Svg::new(icon_handle).symbolic(true)
+/// Helper to create an icon at a fixed pixel size.
+fn toolbar_icon(icon_name: &str, size: u16) -> icon::Icon {
+    icon::from_name(icon_name).size(size).icon()
 }
 
-/// Helper to create an SVG icon tinted with a custom color
-pub fn toolbar_icon_colored(
-    icon_name: &str,
-    size: u16,
-    color: Color,
-) -> cosmic::iced::widget::svg::Svg<'static, cosmic::Theme> {
-    let icon_handle = icon::Icon::from(icon::from_name(icon_name).size(size))
-        .into_svg_handle()
-        .expect("Icon should be SVG");
-
-    cosmic::iced::widget::svg::Svg::new(icon_handle)
-        .symbolic(true)
-        .class(cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
-            cosmic::iced::widget::svg::Style { color: Some(color) }
-        })))
+/// Helper to create an icon tinted with a custom color (tint applies to SVG icons only)
+pub fn toolbar_icon_colored(icon_name: &str, size: u16, color: Color) -> icon::Icon {
+    toolbar_icon(icon_name, size).class(cosmic::theme::Svg::Custom(Rc::new(move |_theme| {
+        cosmic::iced::widget::svg::Style { color: Some(color) }
+    })))
 }
 
 use crate::config::{Container, SaveLocationChoice, ShapeTool, VideoSaveLocationChoice};
@@ -1029,16 +1015,11 @@ fn grip_icon() -> cosmic::iced::widget::svg::Svg<'static, cosmic::Theme> {
 }
 
 /// Screenshot mode icon, embedded for the same reason.
-fn screen_capture_icon() -> cosmic::iced::widget::svg::Svg<'static, cosmic::Theme> {
+fn screen_capture_icon() -> icon::Icon {
     const SCREEN_CAPTURE: &[u8] =
         include_bytes!("../../data/icons/scalable/actions/screen-capture-symbolic.svg");
 
-    cosmic::iced::widget::svg::Svg::new(cosmic::iced::widget::svg::Handle::from_memory(
-        SCREEN_CAPTURE,
-    ))
-    .symbolic(true)
-    .width(Length::Fixed(BTN_SIZE))
-    .height(Length::Fixed(BTN_SIZE))
+    icon::icon(icon::from_svg_bytes(SCREEN_CAPTURE).symbolic(true)).size(ICON_PX)
 }
 
 /// A run of buttons behind its own divider, shown `progress` of the way. The
@@ -1381,11 +1362,11 @@ fn close_button<'a, Msg: Clone + 'static>(on_press: Msg, tip: String) -> Element
 
 /// A toolbar button: an icon in the standard square, lit while `selected`.
 fn tool_button<Msg: Clone + 'static>(
-    icon: cosmic::iced::widget::svg::Svg<'_, cosmic::Theme>,
+    icon: icon::Icon,
     selected: bool,
     on_press: Option<Msg>,
     tip: String,
-) -> Element<'_, Msg> {
+) -> Element<'static, Msg> {
     tooltip(
         button::custom(
             icon.width(Length::Fixed(BTN_SIZE))

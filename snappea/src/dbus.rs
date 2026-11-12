@@ -14,8 +14,7 @@ use std::collections::HashMap;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::Sender;
 use wayland_client::protocol::wl_output::WlOutput;
-use zbus::zvariant;
-use zbus::zvariant::Value;
+use zbus::Variant;
 
 // XDG Desktop Portal types.
 
@@ -25,26 +24,26 @@ pub const PORTAL_RESPONSE_CANCELLED: u32 = 1;
 pub const PORTAL_RESPONSE_OTHER: u32 = 2;
 
 /// Portal response wrapper for D-Bus responses
-#[derive(zvariant::Type)]
-#[zvariant(signature = "(ua{sv})")]
-pub enum PortalResponse<T: zvariant::Type + serde::Serialize> {
+#[derive(zbus::Type)]
+#[zbus(signature = "(ua{sv})")]
+pub enum PortalResponse<T: zbus::Type + serde::Serialize> {
     Success(T),
     Cancelled,
     Other,
 }
 
-impl<T: zvariant::Type + serde::Serialize> serde::Serialize for PortalResponse<T> {
+impl<T: zbus::Type + serde::Serialize> serde::Serialize for PortalResponse<T> {
     fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
         match self {
             Self::Success(res) => (PORTAL_RESPONSE_SUCCESS, res).serialize(serializer),
             Self::Cancelled => (
                 PORTAL_RESPONSE_CANCELLED,
-                HashMap::<String, zvariant::Value>::new(),
+                HashMap::<String, zbus::Variant>::new(),
             )
                 .serialize(serializer),
             Self::Other => (
                 PORTAL_RESPONSE_OTHER,
-                HashMap::<String, zvariant::Value>::new(),
+                HashMap::<String, zbus::Variant>::new(),
             )
                 .serialize(serializer),
         }
@@ -60,8 +59,8 @@ pub const DBUS_PATH: &str = "/org/freedesktop/portal/desktop";
 // zvariant types for the Screenshot portal.
 
 /// Options a portal caller passes to `Screenshot`.
-#[derive(zvariant::DeserializeDict, zvariant::Type, Clone, Debug, Default)]
-#[zvariant(signature = "a{sv}")]
+#[derive(zbus::DeserializeDict, zbus::Type, Clone, Debug, Default)]
+#[zbus(signature = "a{sv}")]
 pub struct ScreenshotOptions {
     /// Whether to show the selection UI. Off means capture every screen at once.
     /// The spec's `modal` option is ignored, since the selection UI is a layer
@@ -70,15 +69,15 @@ pub struct ScreenshotOptions {
 }
 
 /// Result returned from a successful screenshot
-#[derive(zvariant::SerializeDict, zvariant::Type)]
-#[zvariant(signature = "a{sv}")]
+#[derive(zbus::SerializeDict, zbus::Type)]
+#[zbus(signature = "a{sv}")]
 pub struct ScreenshotResult {
     pub uri: String,
 }
 
 /// Result returned from a successful `PickColor`.
-#[derive(zvariant::SerializeDict, zvariant::Type)]
-#[zvariant(signature = "a{sv}")]
+#[derive(zbus::SerializeDict, zbus::Type)]
+#[zbus(signature = "a{sv}")]
 pub struct PickColorResult {
     /// Red, green and blue in 0.0 to 1.0.
     pub color: (f64, f64, f64),
@@ -211,7 +210,7 @@ trait Notifications {
         summary: &str,
         body: &str,
         actions: &[&str],
-        hints: HashMap<&str, &Value<'_>>,
+        hints: HashMap<&str, &Variant<'_>>,
         expire_timeout: i32,
     ) -> zbus::Result<u32>;
 }
@@ -235,7 +234,7 @@ fn send(summary: &str, body: &str) -> Result<(), Box<dyn std::error::Error>> {
     rt.block_on(async {
         let conn = zbus::Connection::session().await?;
         let proxy = NotificationsProxy::new(&conn).await?;
-        let hints: HashMap<&str, &Value<'_>> = HashMap::new();
+        let hints: HashMap<&str, &Variant<'_>> = HashMap::new();
         proxy
             .notify(
                 "SnapPea",
@@ -357,7 +356,7 @@ pub enum Event {
 impl Screenshot {
     async fn screenshot(
         &self,
-        handle: zvariant::ObjectPath<'_>,
+        handle: zbus::ObjectPath<'_>,
         app_id: &str,
         parent_window: &str,
         options: ScreenshotOptions,
@@ -461,10 +460,10 @@ impl Screenshot {
     #[allow(clippy::unused_self, clippy::needless_pass_by_value)]
     fn pick_color(
         &self,
-        handle: zvariant::ObjectPath<'_>,
+        handle: zbus::ObjectPath<'_>,
         app_id: &str,
         parent_window: &str,
-        options: HashMap<String, zvariant::OwnedValue>,
+        options: HashMap<String, zbus::OwnedVariant>,
     ) -> PortalResponse<PickColorResult> {
         // Not implemented. Say so, since the caller gets no other sign.
         log::info!(

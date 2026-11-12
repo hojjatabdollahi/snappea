@@ -928,13 +928,13 @@ pub async fn process_changes(
             let (tx, rx) = tokio::sync::mpsc::channel(10);
             let (ctrl_tx, ctrl_rx) = tokio::sync::mpsc::channel(10);
 
-            let connection = zbus::connection::Builder::session()?
-                .name(DBUS_NAME)?
+            let connection = zbus::connection::Builder::session()
+                .name(DBUS_NAME)
                 .serve_at(
                     DBUS_PATH,
                     crate::dbus::Screenshot::new(wayland_helper.clone(), tx.clone()),
-                )?
-                .serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx))?
+                )
+                .serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx))
                 .build()
                 .await?;
             log::info!(
@@ -1037,9 +1037,9 @@ pub fn direct_screenshot_subscription(
 async fn register_control(
     ctrl_tx: tokio::sync::mpsc::Sender<ControlCommand>,
 ) -> zbus::Result<zbus::Connection> {
-    let connection = zbus::connection::Builder::session()?
-        .name(DBUS_NAME)?
-        .serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx))?
+    let connection = zbus::connection::Builder::session()
+        .name(DBUS_NAME)
+        .serve_at(CONTROL_PATH, ControlInterface::new(ctrl_tx))
         .build()
         .await?;
     log::info!("D-Bus control interface registered at {CONTROL_PATH}");

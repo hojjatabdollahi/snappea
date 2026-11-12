@@ -29,3 +29,5 @@ iced_video_player = { git = "https://github.com/hojjatabdollahi/iced_video_playe
 [patch."https://github.com/pop-os/cosmic-viewer.git"]
 viewer-tools = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
 viewer-widgets = { git = "https://github.com/hojjatabdollahi/cosmic-viewer.git", branch = "viewer-tools/shared-annotate-api" }
+# viewer-tools = { path = "../cosmic-viewer-shared/viewer-tools/" }
+# viewer-widgets = { path = "../cosmic-viewer-shared/viewer-widgets/" }
