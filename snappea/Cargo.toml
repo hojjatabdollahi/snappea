@@ -1,6 +1,6 @@
 [package]
 name = "snappea"
-version = "1.4.0"
+version = "1.4.1"
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
@@ -36,7 +36,11 @@ serde = { version = "1.0", features = ["derive"] }
 tokio = { version = "1.47.1", features = ["macros", "net", "rt", "sync"] }
 wayland-client = "0.31.11"
 wayland-protocols = "0.32.9"
-zbus = { version = "6", default-features = false, features = ["tokio", "proxy", "service"] }
+zbus = { version = "6", default-features = false, features = [
+  "tokio",
+  "proxy",
+  "service",
+] }
 
 
 # Screen recording

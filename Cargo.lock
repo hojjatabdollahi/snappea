@@ -5800,7 +5800,7 @@ dependencies = [
 
 [[package]]
 name = "snappea"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5842,7 +5842,7 @@ dependencies = [
 
 [[package]]
 name = "snappea-edit"
-version = "1.4.0"
+version = "1.4.1"
 dependencies = [
  "env_logger",
  "i18n-embed",
