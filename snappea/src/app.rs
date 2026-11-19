@@ -212,6 +212,18 @@ impl App {
         }))
     }
 
+    /// Open the selection UI on a control command, in `mode` when given.
+    fn open_ui(&self, mode: Option<crate::config::CaptureMode>) {
+        log::info!("Control: open the UI requested ({mode:?})");
+        if let Some(tx) = &self.tx {
+            let tx = tx.clone();
+            let helper = self.wayland_helper.clone();
+            tokio::spawn(async move {
+                trigger_screenshot(helper, tx, mode).await;
+            });
+        }
+    }
+
     /// Hand the selected output's overlay to the recording chrome. The others stay
     /// mapped, empty and click-through.
     pub fn enter_recording<M: 'static>(&self) -> cosmic::iced::Task<M> {
@@ -565,27 +577,23 @@ impl cosmic::Application for App {
                 .as_mut()
                 .map_or_else(cosmic::iced::Task::none, |indicator| indicator.update(m)),
             Msg::Control(cmd) => {
+                let opens_ui = matches!(
+                    cmd,
+                    ControlCommand::TakeScreenshot | ControlCommand::Open(_)
+                );
+                if (opens_ui || matches!(cmd, ControlCommand::ToggleRecording))
+                    && crate::recording::is_recording()
+                {
+                    log::info!("Control: {cmd:?} while recording, stopping the recording");
+                    return self.update(Msg::Screenshot(crate::capture::msg::Msg::Action(
+                        crate::capture::msg::ActionMsg::StopRecording,
+                    )));
+                }
                 match cmd {
-                    ControlCommand::TakeScreenshot => {
-                        log::info!("Control: Take screenshot requested");
-                        if let Some(tx) = &self.tx {
-                            let tx = tx.clone();
-                            let helper = self.wayland_helper.clone();
-                            tokio::spawn(async move {
-                                // Trigger a new screenshot by sending the appropriate event
-                                // This simulates what would happen on PrintScreen
-                                trigger_screenshot(helper, tx).await;
-                            });
-                        }
-                    }
+                    ControlCommand::TakeScreenshot => self.open_ui(None),
+                    ControlCommand::Open(mode) => self.open_ui(Some(mode)),
                     ControlCommand::ToggleRecording => {
-                        log::info!("Control: Toggle recording requested");
-                        if crate::recording::is_recording() {
-                            // Stop recording
-                            return self.update(Msg::Screenshot(crate::capture::msg::Msg::Action(
-                                crate::capture::msg::ActionMsg::StopRecording,
-                            )));
-                        }
+                        log::info!("Control: Toggle recording requested, nothing to stop");
                     }
                     ControlCommand::Quit => {
                         log::info!("Control: Quit requested");
@@ -1110,7 +1118,18 @@ async fn fresh_capture(helper: &crate::wayland::WaylandHelper) -> Option<crate::
 async fn trigger_screenshot(
     helper: crate::wayland::WaylandHelper,
     tx: tokio::sync::mpsc::Sender<crate::dbus::Event>,
+    mode: Option<crate::config::CaptureMode>,
 ) {
+    if let Some(mode) = mode {
+        // Written before the capture, which reads it back when it opens.
+        let written = tokio::task::spawn_blocking(move || {
+            crate::config::Config::store_now("last_mode", mode);
+        })
+        .await;
+        if let Err(e) = written {
+            log::error!("Failed to save the capture mode: {e}");
+        }
+    }
     if let Some(capture) = fresh_capture(&helper).await
         && let Err(e) = tx
             .send(crate::dbus::Event::Screenshot(Box::new(capture)))

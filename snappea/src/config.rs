@@ -508,17 +508,20 @@ impl Config {
     where
         T: serde::Serialize + Send + 'static,
     {
-        std::thread::spawn(move || {
-            use cosmic_config::ConfigSet;
-            match cosmic_config::Config::new(Self::ID, Self::VERSION) {
-                Ok(config) => {
-                    if let Err(err) = config.set(key, value) {
-                        log::error!("Failed to save config key {key}: {err:?}");
-                    }
+        std::thread::spawn(move || Self::store_now(key, value));
+    }
+
+    /// Persist one setting before returning, for when the next step reads it back.
+    pub fn store_now<T: serde::Serialize>(key: &'static str, value: T) {
+        use cosmic_config::ConfigSet;
+        match cosmic_config::Config::new(Self::ID, Self::VERSION) {
+            Ok(config) => {
+                if let Err(err) = config.set(key, value) {
+                    log::error!("Failed to save config key {key}: {err:?}");
                 }
-                Err(err) => log::error!("Could not open config to save {key}: {err:?}"),
             }
-        });
+            Err(err) => log::error!("Could not open config to save {key}: {err:?}"),
+        }
     }
 
     /// Persist several settings as one transaction on a background thread.

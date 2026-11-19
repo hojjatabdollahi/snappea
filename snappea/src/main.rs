@@ -17,13 +17,15 @@ const USAGE: &str = "SnapPea - Screenshot and Screen Recording for Linux/Wayland
 Usage: snappea [OPTION]
 
 Options:
-  --portal        Run as D-Bus portal service (for desktop integration)
-  --record        Start screen recording (requires additional arguments)
-  --version, -V   Show version information
-  --help, -h      Show this help message
+  --mode screenshot|video  Open the UI in that mode instead of the one used last
+  --portal                 Run as D-Bus portal service (for desktop integration)
+  --record                 Start screen recording (requires additional arguments)
+  --version, -V            Show version information
+  --help, -h               Show this help message
 
 When run without arguments, opens the screenshot UI directly.
 If an instance is already running, sends command to it.
+Opening the UI while recording stops the recording instead.
 Use --portal for D-Bus portal mode (system integration).";
 
 const RECORD_USAGE: &str = "Usage: snappea --record --output FILE --output-name NAME \
@@ -46,7 +48,7 @@ fn main() -> cosmic::iced::Result {
 
     let args: Vec<String> = env::args().collect();
 
-    match args.get(1).map(String::as_str) {
+    let open = match args.get(1).map(String::as_str) {
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return Ok(());
@@ -63,8 +65,16 @@ fn main() -> cosmic::iced::Result {
         // Portal mode always starts fresh (it's the background service)
         Some("--portal") => return app::run(),
         Some("--record") => return record(&args[2..]),
-        _ => {}
-    }
+        Some("--mode") => match args.get(2).map(String::as_str) {
+            Some("screenshot") => dbus::ControlCommand::Open(config::CaptureMode::Screenshot),
+            Some("video") => dbus::ControlCommand::Open(config::CaptureMode::Video),
+            _ => {
+                eprintln!("--mode takes screenshot or video\n\n{USAGE}");
+                std::process::exit(2);
+            }
+        },
+        _ => dbus::ControlCommand::TakeScreenshot,
+    };
 
     // Check if another instance is already running
     // If so, send a command to it instead of starting a new instance
@@ -73,36 +83,9 @@ fn main() -> cosmic::iced::Result {
         .build()
         .expect("Failed to create tokio runtime");
 
-    let instance_running = rt.block_on(dbus::is_instance_running());
-
-    if instance_running {
-        log::info!("Another instance is running, sending screenshot command");
-
-        // If recording, stop it. Otherwise take a screenshot
-        let is_recording = rt.block_on(async {
-            let Ok(conn) = zbus::Connection::session().await else {
-                return false;
-            };
-            conn.call_method(
-                Some(dbus::DBUS_NAME),
-                dbus::CONTROL_PATH,
-                Some("io.github.hojjatabdollahi.snappea.Control"),
-                "IsRecording",
-                &(),
-            )
-            .await
-            .ok()
-            .and_then(|r| r.body().deserialize::<bool>().ok())
-            .unwrap_or(false)
-        });
-
-        let command = if is_recording {
-            dbus::ControlCommand::ToggleRecording
-        } else {
-            dbus::ControlCommand::TakeScreenshot
-        };
-
-        match rt.block_on(dbus::send_command(command)) {
+    if rt.block_on(dbus::is_instance_running()) {
+        log::info!("Another instance is running, sending {}", open.method());
+        match rt.block_on(dbus::send_command(open)) {
             Ok(true) => {
                 log::info!("Command sent successfully");
                 return Ok(());
@@ -118,7 +101,10 @@ fn main() -> cosmic::iced::Result {
         }
     }
 
-    // Default: Direct screenshot mode (no D-Bus portal)
+    // The capture reads the mode back when it opens.
+    if let dbus::ControlCommand::Open(mode) = open {
+        config::Config::store_now("last_mode", mode);
+    }
     app::run_with_flags(app::AppFlags {
         direct_screenshot: true,
     })
