@@ -13,8 +13,17 @@ permissions:
 
 jobs:
   build-and-publish:
-    name: Build .deb and publish to Cloudsmith
-    runs-on: ubuntu-24.04
+    name: Build .deb and publish to Cloudsmith (${{ matrix.codename }})
+    # Build on each release so $auto picks up that release's library package names.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            codename: noble
+          - runner: ubuntu-26.04
+            codename: resolute
+    runs-on: ${{ matrix.runner }}
 
     steps:
       - name: Checkout
@@ -58,9 +67,9 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          key: ${{ matrix.codename }}-cargo-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
-            ${{ runner.os }}-cargo-
+            ${{ matrix.codename }}-cargo-
 
       # ── System build dependencies ──────────────────────────────────────────
       - name: Install system dependencies
@@ -90,7 +99,8 @@ jobs:
         run: cargo build --release --locked
 
       - name: Build .deb package
-        run: cargo deb -p snappea --no-build
+        # ~codename keeps file names apart in the GitHub Release and sorts noble < resolute for upgrades
+        run: cargo deb -p snappea --no-build --deb-revision "1~${{ matrix.codename }}"
         # --no-build because we already built above; cargo-deb just packages
 
       - name: Locate .deb file
@@ -108,12 +118,12 @@ jobs:
 
       # ── Publish to Cloudsmith ──────────────────────────────────────────────
       - name: Install Cloudsmith CLI
-        run: pip install --upgrade cloudsmith-cli
+        run: pipx install cloudsmith-cli
 
       - name: Push .deb to Cloudsmith
         env:
           CLOUDSMITH_API_KEY: ${{ secrets.CLOUDSMITH_API_KEY }}
         run: |
           cloudsmith push deb \
-            "cosmetics/snappea/pop/noble" \
+            "cosmetics/snappea/pop/${{ matrix.codename }}" \
             "${{ steps.deb.outputs.path }}"

@@ -48,7 +48,7 @@ Disclaimer: This project is based on xdg-desktop-portal-cosmic with added featur
 
 SnapPea repository hosting is graciously provided by [Cloudsmith](https://cloudsmith.com).
 
-For Ubuntu/Pop!_OS 24.04 (Noble):
+For Ubuntu/Pop!_OS 24.04 (Noble) and 26.04 (Resolute):
 
 ```sh
 # Add the Cloudsmith repository
