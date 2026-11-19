@@ -6,7 +6,7 @@ use crate::capture::Capture;
 use crate::capture::PortalContext;
 use crate::capture::ScreenshotImage;
 use crate::capture::flow::{get_img_path, img_file_name, save_rgba, stitch_outputs};
-use crate::config::{Config, SaveLocationChoice};
+use crate::config::{CaptureMode, Config, SaveLocationChoice};
 use crate::geometry::Rect;
 use crate::wayland::CaptureSource;
 use crate::wayland::WaylandHelper;
@@ -91,8 +91,10 @@ pub const CONTROL_PATH: &str = "/io/github/hojjatabdollahi/snappea";
 /// Commands that can be sent to a running instance
 #[derive(Debug, Clone, Copy)]
 pub enum ControlCommand {
-    /// Take a screenshot (opens the selection UI)
+    /// Open the selection UI in the mode used last
     TakeScreenshot,
+    /// Open the selection UI in this mode
+    Open(CaptureMode),
     /// Stop the recording in progress, if there is one
     ToggleRecording,
     /// Quit the application
@@ -101,9 +103,11 @@ pub enum ControlCommand {
 
 impl ControlCommand {
     /// The D-Bus method on the control interface.
-    const fn method(self) -> &'static str {
+    pub const fn method(self) -> &'static str {
         match self {
             Self::TakeScreenshot => "TakeScreenshot",
+            Self::Open(CaptureMode::Screenshot) => "OpenScreenshot",
+            Self::Open(CaptureMode::Video) => "OpenRecording",
             Self::ToggleRecording => "ToggleRecording",
             Self::Quit => "Quit",
         }
@@ -123,10 +127,24 @@ impl ControlInterface {
 
 #[zbus::interface(name = "io.github.hojjatabdollahi.snappea.Control")]
 impl ControlInterface {
-    /// Take a screenshot: opens the selection UI
+    /// Open the selection UI in the mode used last
     async fn take_screenshot(&self) -> bool {
         log::info!("D-Bus: TakeScreenshot command received");
         self.tx.send(ControlCommand::TakeScreenshot).await.is_ok()
+    }
+
+    /// Open the selection UI in screenshot mode
+    async fn open_screenshot(&self) -> bool {
+        log::info!("D-Bus: OpenScreenshot command received");
+        let open = ControlCommand::Open(CaptureMode::Screenshot);
+        self.tx.send(open).await.is_ok()
+    }
+
+    /// Open the selection UI in video mode
+    async fn open_recording(&self) -> bool {
+        log::info!("D-Bus: OpenRecording command received");
+        let open = ControlCommand::Open(CaptureMode::Video);
+        self.tx.send(open).await.is_ok()
     }
 
     /// Toggle recording: stops recording if active
